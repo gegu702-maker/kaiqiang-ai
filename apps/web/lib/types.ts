@@ -1,0 +1,75 @@
+export type TaskStatus = "pending" | "scripting" | "producing" | "processing" | "completed" | "failed";
+export type CosyVoiceStatus = "pending" | "generating" | "completed" | "failed";
+
+export type SellingPoint = {
+  index: number;
+  point: string;
+  consumer_benefit: string;
+  proof_angle: string;
+};
+
+export type ShotItem = {
+  index: number;
+  duration: string;
+  scene: string;
+  camera: string;
+  action: string;
+  narration: string;
+  visual_prompt: string;
+  tool_suggestion: string;
+};
+
+export type WorkflowItem = {
+  step: number;
+  tool: string;
+  action: string;
+};
+
+export type VideoTask = {
+  id: string;
+  user_email: string;
+  product_name: string;
+  script: string;
+  language: string;
+  image_url: string;
+  personal_image_url: string | null;
+  product_highlights: string;
+  target_audience: string;
+  video_style: string;
+  use_digital_human: boolean;
+  production_mode: string;
+  avatar_id: string;
+  voice_url: string;
+  tts_language: "zh" | "en";
+  tts_voice_name: string;
+  admin_notes: string;
+  status: TaskStatus;
+  result_video_url: string | null;
+  subtitle_url: string | null;
+  subtitle_status: "pending" | "completed" | "failed";
+  cloned_voice_url: string | null;
+  cosyvoice_status: CosyVoiceStatus;
+  heygen_avatar_id: string;
+  heygen_voice_id: string;
+  heygen_video_id: string;
+  heygen_video_url: string;
+  selling_points: SellingPoint[];
+  hook: string;
+  shot_list: ShotItem[];
+  title_options: string[];
+  caption: string;
+  cover_text: string;
+  cover_prompt: string;
+  hashtags: string[];
+  comment_prompt: string;
+  closing_cta: string;
+  admin_workflow: WorkflowItem[];
+  created_at: string;
+};
+
+export type ActionState = {
+  ok: boolean;
+  message: string;
+  audioUrl?: string;
+  cosyvoiceStatus?: CosyVoiceStatus;
+};

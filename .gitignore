@@ -1,0 +1,41 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# production
+dist/
+build/
+
+# env files
+.env
+.env.*
+!.env.example
+!.env.production.example
+apps/web/.env.local
+apps/web/.env.production.local
+apps/api/.env
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# logs and local artifacts
+*.log
+*.out.log
+*.err.log
+tmp_test/
+apps/api/tmp/
+video-materials-night/
+wsl-status.txt
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
