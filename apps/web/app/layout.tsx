@@ -3,13 +3,14 @@ import Link from "next/link";
 import { Inter } from "next/font/google";
 import { Clapperboard } from "lucide-react";
 
+import { AuthNav } from "@/components/AuthNav";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "AI Digital Human MVP",
-  description: "Semi-automated AI avatar video SaaS MVP",
+  title: "kaiqiang.ai - AI Video Agent Studio",
+  description: "AI 带货视频脚本、分镜和半自动交付工作流平台",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 <Link className="rounded-md px-3 py-2 hover:bg-white/10" href="/admin">
                   管理后台
                 </Link>
+                <AuthNav />
               </div>
             </nav>
           </header>

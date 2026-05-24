@@ -1,0 +1,25 @@
+"use client";
+
+import { useActionState } from "react";
+import { CreditCard } from "lucide-react";
+
+import { createPlaceholderOrderAction } from "@/app/actions/billing";
+
+const initialState = { ok: false, message: "" };
+
+export function PlanCheckoutButton({ plan }: { plan: "pro" | "business" }) {
+  const [state, action] = useActionState(createPlaceholderOrderAction, initialState);
+
+  return (
+    <form action={action} className="mt-6 space-y-3">
+      <input type="hidden" name="plan" value={plan} />
+      <input type="hidden" name="provider" value="manual" />
+      <input type="hidden" name="currency" value="CNY" />
+      <button className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-cyan px-4 text-sm font-semibold text-ink hover:bg-cyan/90">
+        <CreditCard size={16} />
+        {plan === "pro" ? "创建 Pro 占位订单" : "创建 Business 咨询订单"}
+      </button>
+      {state.message ? <p className={state.ok ? "text-xs text-lime" : "text-xs text-rose-200"}>{state.message}</p> : null}
+    </form>
+  );
+}

@@ -13,6 +13,7 @@ TABLE = "video_tasks"
 def create_task(
     supabase: Client,
     *,
+    user_id: str,
     user_email: str,
     product_name: str,
     script: str,
@@ -30,6 +31,7 @@ def create_task(
     tts_voice_name: str,
 ) -> dict[str, Any]:
     payload = {
+        "user_id": user_id,
         "user_email": user_email,
         "product_name": product_name,
         "script": script,
@@ -96,6 +98,7 @@ def create_task(
                 "comment_prompt",
                 "closing_cta",
                 "admin_workflow",
+                "user_id",
             }
         }
         result = supabase.table(TABLE).insert(fallback_payload).execute()
@@ -171,11 +174,11 @@ def with_commerce_ai_fallback(task: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def list_user_tasks(supabase: Client, user_email: str) -> list[dict[str, Any]]:
+def list_user_tasks(supabase: Client, user_id: str) -> list[dict[str, Any]]:
     result = (
         supabase.table(TABLE)
         .select("*")
-        .eq("user_email", user_email)
+        .eq("user_id", user_id)
         .order("created_at", desc=True)
         .execute()
     )
@@ -184,6 +187,18 @@ def list_user_tasks(supabase: Client, user_email: str) -> list[dict[str, Any]]:
 
 def get_task(supabase: Client, task_id: str) -> dict[str, Any] | None:
     result = supabase.table(TABLE).select("*").eq("id", task_id).limit(1).execute()
+    return with_commerce_ai_fallback(result.data[0]) if result.data else None
+
+
+def get_user_task(supabase: Client, task_id: str, user_id: str) -> dict[str, Any] | None:
+    result = (
+        supabase.table(TABLE)
+        .select("*")
+        .eq("id", task_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
     return with_commerce_ai_fallback(result.data[0]) if result.data else None
 
 

@@ -1,4 +1,4 @@
-import type { VideoTask } from "@/lib/types";
+import type { UsageSummary, VideoTask } from "@/lib/types";
 
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -17,9 +17,14 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function createVideoTask(formData: FormData): Promise<VideoTask> {
+function authHeaders(accessToken?: string): HeadersInit {
+  return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+}
+
+export async function createVideoTask(formData: FormData, accessToken?: string): Promise<VideoTask> {
   const response = await fetch(`${API_URL}/api/tasks`, {
     method: "POST",
+    headers: authHeaders(accessToken),
     body: formData,
     cache: "no-store",
   });
@@ -27,20 +32,40 @@ export async function createVideoTask(formData: FormData): Promise<VideoTask> {
   return payload.task;
 }
 
-export async function getUserTasks(email: string): Promise<VideoTask[]> {
-  if (!email) return [];
-  const params = new URLSearchParams({ user_email: email });
-  const response = await fetch(`${API_URL}/api/tasks?${params}`, {
+export async function getUserTasks(accessToken?: string): Promise<VideoTask[]> {
+  if (!accessToken) return [];
+  const response = await fetch(`${API_URL}/api/tasks`, {
+    headers: authHeaders(accessToken),
     cache: "no-store",
   });
   return parseResponse<VideoTask[]>(response);
 }
 
-export async function getTask(taskId: string): Promise<VideoTask> {
+export async function getTask(taskId: string, accessToken?: string): Promise<VideoTask> {
   const response = await fetch(`${API_URL}/api/tasks/${taskId}`, {
+    headers: authHeaders(accessToken),
     cache: "no-store",
   });
   return parseResponse<VideoTask>(response);
+}
+
+export async function getUsageSummary(accessToken?: string): Promise<UsageSummary | null> {
+  if (!accessToken) return null;
+  const response = await fetch(`${API_URL}/api/billing/usage`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<UsageSummary>(response);
+}
+
+export async function createPlaceholderOrder(formData: FormData, accessToken?: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_URL}/api/billing/orders`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: formData,
+    cache: "no-store",
+  });
+  return parseResponse<{ message: string }>(response);
 }
 
 export async function getAdminTasks(): Promise<VideoTask[]> {

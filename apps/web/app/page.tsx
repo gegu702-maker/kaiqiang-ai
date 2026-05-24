@@ -3,8 +3,25 @@ import { ArrowRight, ImagePlus, Languages, Layers3, Mic2, ShieldCheck, Sparkles,
 import { HomeVideoAgentPreview } from "@/components/HomeVideoAgentPreview";
 import { StudioNavigation } from "@/components/StudioNavigation";
 import { TaskForm } from "@/components/TaskForm";
+import { getUsageSummary } from "@/lib/api";
+import { createClient } from "@/lib/supabase/server";
 
-export default function HomePage() {
+export default async function HomePage() {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  let remainingQuota: number | null | undefined = undefined;
+
+  if (session?.access_token) {
+    try {
+      const usage = await getUsageSummary(session.access_token);
+      remainingQuota = usage?.remaining ?? null;
+    } catch {
+      remainingQuota = undefined;
+    }
+  }
+
   return (
     <main className="grid min-h-[calc(100vh-86px)] lg:grid-cols-[72px_1fr]">
       <StudioNavigation />
@@ -76,7 +93,7 @@ export default function HomePage() {
           </div>
         </section>
         <section>
-          <TaskForm />
+          <TaskForm userEmail={session?.user.email} remainingQuota={remainingQuota} />
         </section>
         <section>
           <HomeVideoAgentPreview />

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { ChangeEvent, useActionState, useState } from "react";
 import { ImagePlus, Mail, Package, ScrollText, Target, Video } from "lucide-react";
 
@@ -12,7 +13,12 @@ const initialState = { ok: false, message: "" };
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
-export function TaskForm() {
+type TaskFormProps = {
+  userEmail?: string | null;
+  remainingQuota?: number | null;
+};
+
+export function TaskForm({ userEmail, remainingQuota }: TaskFormProps) {
   const [state, action] = useActionState(submitTaskAction, initialState);
   const [imageError, setImageError] = useState("");
   const [personalImageError, setPersonalImageError] = useState("");
@@ -47,7 +53,9 @@ export function TaskForm() {
             required
             type="email"
             name="user_email"
-            placeholder="you@company.com"
+            value={userEmail ?? ""}
+            readOnly
+            placeholder="登录后自动填入"
             className="h-11 w-full rounded-md border border-white/10 bg-white/5 px-3 outline-none ring-cyan/40 placeholder:text-slate-500 focus:ring-2"
           />
         </label>
@@ -157,8 +165,23 @@ export function TaskForm() {
       <VoiceUpload />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className={state.ok ? "text-sm text-lime" : "text-sm text-rose-200"}>{state.message}</p>
-        <SubmitButton label="生成带货视频方案" pendingLabel="正在生成" />
+        <div className="space-y-1">
+          <p className={state.ok ? "text-sm text-lime" : "text-sm text-rose-200"}>{state.message}</p>
+          <p className="text-xs text-slate-500">
+            {userEmail
+              ? remainingQuota === null
+                ? "Business 套餐：自定义额度"
+                : `本月剩余 ${Math.max(remainingQuota ?? 0, 0)} 次生成`
+              : "登录后可生成，每月免费 3 次。"}
+          </p>
+        </div>
+        {userEmail ? (
+          <SubmitButton label="生成带货视频方案" pendingLabel="正在生成" />
+        ) : (
+          <Link className="rounded-md bg-cyan px-5 py-3 text-sm font-semibold text-ink hover:bg-cyan/90" href="/login?next=/">
+            登录后生成
+          </Link>
+        )}
       </div>
       </Card>
     </form>

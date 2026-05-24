@@ -29,6 +29,7 @@ class CosyVoiceStatus(str, Enum):
 
 class VideoTask(BaseModel):
     id: str
+    user_id: Optional[str] = None
     user_email: EmailStr
     product_name: str
     script: str

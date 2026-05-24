@@ -27,6 +27,7 @@ export type WorkflowItem = {
 
 export type VideoTask = {
   id: string;
+  user_id: string | null;
   user_email: string;
   product_name: string;
   script: string;
@@ -72,4 +73,14 @@ export type ActionState = {
   message: string;
   audioUrl?: string;
   cosyvoiceStatus?: CosyVoiceStatus;
+};
+
+export type PlanCode = "free" | "pro" | "business";
+
+export type UsageSummary = {
+  plan: PlanCode;
+  monthly_quota: number | null;
+  used: number;
+  remaining: number | null;
+  period_start: string;
 };

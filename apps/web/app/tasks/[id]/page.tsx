@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 
 import { RefreshOnInterval } from "@/components/RefreshOnInterval";
@@ -8,6 +9,7 @@ import { VideoPlayer } from "@/components/VideoPlayer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getTask } from "@/lib/api";
+import { createClient } from "@/lib/supabase/server";
 import type { VideoTask } from "@/lib/types";
 
 type Props = {
@@ -16,11 +18,20 @@ type Props = {
 
 export default async function UserTaskDetailPage({ params }: Props) {
   const { id } = await params;
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.user) {
+    redirect(`/login?next=/tasks/${id}`);
+  }
+
   let task: VideoTask | null = null;
   let error = "";
 
   try {
-    task = await getTask(id);
+    task = await getTask(id, session.access_token);
   } catch (err) {
     error = err instanceof Error ? err.message : "任务加载失败";
   }
@@ -43,7 +54,7 @@ export default async function UserTaskDetailPage({ params }: Props) {
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <RefreshOnInterval seconds={10} />
       <Button asChild variant="ghost" size="sm" className="-ml-3 mb-5">
-        <Link href={`/tasks?email=${encodeURIComponent(task.user_email)}`}>
+        <Link href="/tasks">
           <ArrowLeft size={16} />
           返回任务列表
         </Link>
