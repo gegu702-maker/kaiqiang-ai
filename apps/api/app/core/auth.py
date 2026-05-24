@@ -1,11 +1,19 @@
-from fastapi import Header, HTTPException
+from fastapi import HTTPException, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client
 
 
-def get_bearer_token(authorization: str | None = Header(default=None)) -> str:
-    if not authorization or not authorization.lower().startswith("bearer "):
+bearer_scheme = HTTPBearer(
+    scheme_name="Supabase Bearer Token",
+    description="Paste your Supabase access_token. Swagger will send it as Authorization: Bearer <token>.",
+    auto_error=False,
+)
+
+
+def get_bearer_token(credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme)) -> str:
+    if not credentials or credentials.scheme.lower() != "bearer" or not credentials.credentials:
         raise HTTPException(status_code=401, detail="请先登录后再生成视频。")
-    return authorization.split(" ", 1)[1].strip()
+    return credentials.credentials.strip()
 
 
 def get_authenticated_user(supabase: Client, token: str) -> dict:
