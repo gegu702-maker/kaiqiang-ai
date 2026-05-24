@@ -1,6 +1,7 @@
 export type TaskStatus =
   | "waiting"
   | "generating_script"
+  | "cloning_voice"
   | "generating_voice"
   | "generating_avatar"
   | "rendering"
@@ -53,6 +54,8 @@ export type VideoTask = {
   production_mode: string;
   avatar_id: string;
   voice_url: string;
+  voice_clone_id: string | null;
+  use_cloned_voice: boolean;
   tts_language: "zh" | "en";
   tts_voice_name: string;
   admin_notes: string;
@@ -90,7 +93,7 @@ export type ActionState = {
   cosyvoiceStatus?: CosyVoiceStatus;
 };
 
-export type PlanCode = "free" | "pro" | "business";
+export type PlanCode = "free" | "plus" | "pro" | "business";
 
 export type UsageSummary = {
   plan: PlanCode;
@@ -98,6 +101,8 @@ export type UsageSummary = {
   used: number;
   remaining: number | null;
   period_start: string;
+  voice_clone_enabled: boolean;
+  default_voice_id: string | null;
 };
 
 export type OrderStatus = "pending" | "paid" | "failed" | "refunded";
@@ -132,6 +137,9 @@ export type AdminUser = {
   plan: PlanCode;
   monthly_quota: number | null;
   custom_quota: number | null;
+  voice_clone_enabled: boolean;
+  default_voice_id: string | null;
+  voice_clone_count: number;
   status: "active" | "banned";
   created_at: string;
 };
@@ -142,4 +150,15 @@ export type CheckoutResponse = {
   provider_status: "created" | "not_configured" | "manual_review" | "pending";
   payment_status: OrderStatus;
   message: string;
+};
+
+export type VoiceClone = {
+  id: string;
+  user_id: string;
+  provider: "mock" | "elevenlabs" | "minimax" | "fishaudio" | "openvoice";
+  voice_id: string;
+  name: string;
+  sample_audio_url: string;
+  status: "uploaded" | "pending" | "ready" | "completed" | "failed" | "deleted";
+  created_at: string;
 };

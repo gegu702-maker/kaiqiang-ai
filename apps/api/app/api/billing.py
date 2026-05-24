@@ -34,7 +34,7 @@ async def create_checkout_order(
     supabase: Client = Depends(get_supabase),
 ) -> dict:
     user = get_authenticated_user(supabase, token)
-    if plan not in {"pro", "business"}:
+    if plan not in {"plus", "pro", "business"}:
         raise HTTPException(status_code=400, detail="Only paid plans can create checkout orders.")
     if provider not in {"wechat", "alipay", "pingpp", "stripe", "paypal", "manual"}:
         raise HTTPException(status_code=400, detail="Unsupported payment provider.")

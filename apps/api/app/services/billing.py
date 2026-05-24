@@ -9,14 +9,19 @@ from app.core.config import settings
 
 PLAN_QUOTAS: dict[str, int | None] = {
     "free": 3,
-    "pro": 100,
+    "plus": 100,
+    "pro": 1000,
     "business": None,
 }
 
 PLAN_PRICES: dict[str, dict[str, dict[str, int]]] = {
-    "pro": {
+    "plus": {
         "monthly": {"CNY": 19900, "USD": 2900},
         "yearly": {"CNY": 199000, "USD": 29000},
+    },
+    "pro": {
+        "monthly": {"CNY": 79900, "USD": 10900},
+        "yearly": {"CNY": 799000, "USD": 109000},
     },
     "business": {
         "monthly": {"CNY": 0, "USD": 0},
@@ -26,9 +31,12 @@ PLAN_PRICES: dict[str, dict[str, dict[str, int]]] = {
 
 PLAN_MONTHLY_QUOTAS = {
     "free": 3,
-    "pro": 100,
+    "plus": 100,
+    "pro": 1000,
     "business": None,
 }
+
+VOICE_CLONE_PLANS = {"pro", "business"}
 
 
 def current_period_start() -> str:
@@ -49,6 +57,7 @@ def ensure_profile(supabase: Client, *, user_id: str, email: str) -> dict[str, A
         "email": email,
         "plan": "free",
         "monthly_quota": PLAN_QUOTAS["free"],
+        "voice_clone_enabled": False,
         "status": "active",
     }
     created = supabase.table("profiles").insert(payload).execute()
@@ -84,6 +93,8 @@ def get_usage_summary(supabase: Client, *, user_id: str, email: str) -> dict[str
         "used": used,
         "remaining": remaining,
         "period_start": period,
+        "voice_clone_enabled": bool(profile.get("voice_clone_enabled")) or plan in VOICE_CLONE_PLANS,
+        "default_voice_id": profile.get("default_voice_id"),
     }
 
 
@@ -92,9 +103,17 @@ def get_generation_limits(supabase: Client, *, user_id: str, email: str) -> dict
     plan = usage["plan"]
     return {
         "plan": plan,
-        "max_seconds": 15 if plan == "free" else 45,
+        "max_seconds": 15 if plan == "free" else 90 if plan in {"pro", "business"} else 45,
         "watermark": plan == "free",
+        "voice_clone_enabled": usage.get("voice_clone_enabled", False),
     }
+
+
+def assert_voice_clone_allowed(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
+    usage = get_usage_summary(supabase, user_id=user_id, email=email)
+    if not usage.get("voice_clone_enabled"):
+        raise HTTPException(status_code=403, detail="声音克隆仅 Pro / Business 用户可用，请升级到 Pro。")
+    return usage
 
 
 def assert_generation_quota(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
@@ -141,7 +160,23 @@ def list_user_usage_logs(supabase: Client, *, user_id: str) -> list[dict[str, An
 
 def list_admin_users(supabase: Client) -> list[dict[str, Any]]:
     result = supabase.table("profiles").select("*").order("created_at", desc=True).execute()
-    return result.data
+    users = result.data
+    if not users:
+        return users
+
+    clone_counts: dict[str, int] = {}
+    try:
+        clone_result = supabase.table("voice_clones").select("user_id").execute()
+        for clone in clone_result.data or []:
+            user_id = clone.get("user_id")
+            if user_id:
+                clone_counts[user_id] = clone_counts.get(user_id, 0) + 1
+    except Exception:
+        clone_counts = {}
+
+    for user in users:
+        user["voice_clone_count"] = clone_counts.get(user["id"], 0)
+    return users
 
 
 def list_admin_orders(supabase: Client) -> list[dict[str, Any]]:
@@ -156,16 +191,20 @@ def update_profile_admin(
     plan: str | None = None,
     monthly_quota: int | None = None,
     custom_quota: int | None = None,
+    voice_clone_enabled: bool | None = None,
     status: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"updated_at": datetime.now(UTC).isoformat()}
     if plan:
         payload["plan"] = plan
         payload["monthly_quota"] = PLAN_MONTHLY_QUOTAS.get(plan)
+        payload["voice_clone_enabled"] = plan in VOICE_CLONE_PLANS
     if monthly_quota is not None:
         payload["monthly_quota"] = monthly_quota
     if custom_quota is not None:
         payload["custom_quota"] = custom_quota
+    if voice_clone_enabled is not None:
+        payload["voice_clone_enabled"] = voice_clone_enabled
     if status:
         payload["status"] = status
     result = supabase.table("profiles").update(payload).eq("id", user_id).execute()
@@ -199,6 +238,7 @@ def mark_order_paid_and_upgrade(supabase: Client, *, order_id: str, provider_pay
         {
             "plan": plan,
             "monthly_quota": quota,
+            "voice_clone_enabled": plan in VOICE_CLONE_PLANS,
             "custom_quota": None,
             "status": "active",
             "updated_at": now.isoformat(),

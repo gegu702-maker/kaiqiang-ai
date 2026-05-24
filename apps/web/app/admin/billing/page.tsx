@@ -29,7 +29,7 @@ export default async function AdminBillingPage() {
       <div className="mb-6">
         <p className="text-sm text-cyan">Commercial Console</p>
         <h1 className="mt-2 text-3xl font-semibold text-white">用户、订单与额度</h1>
-        <p className="mt-2 text-slate-400">查看全部用户、支付状态，手动调整套餐额度或封禁账户。</p>
+        <p className="mt-2 text-slate-400">查看全部用户、支付状态、声音克隆数量，手动调整套餐额度或封禁账户。</p>
       </div>
 
       {error ? <p className="mb-5 rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-rose-100">{error}</p> : null}
@@ -44,12 +44,20 @@ export default async function AdminBillingPage() {
             <div key={user.id} className="rounded-md border border-white/10 bg-white/[0.03] p-3">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-3 text-sm">
                 <span className="text-slate-400">{user.id}</span>
-                {user.status === "banned" ? (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-rose-300/30 px-2 py-1 text-xs text-rose-200">
-                    <Ban size={12} />
-                    banned
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-cyan/20 bg-cyan/10 px-2 py-1 text-xs text-cyan">
+                    voice clones {user.voice_clone_count ?? 0}
                   </span>
-                ) : null}
+                  <span className={user.voice_clone_enabled ? "rounded-full border border-lime/20 bg-lime/10 px-2 py-1 text-xs text-lime" : "rounded-full border border-white/10 px-2 py-1 text-xs text-slate-400"}>
+                    {user.voice_clone_enabled ? "clone enabled" : "clone disabled"}
+                  </span>
+                  {user.status === "banned" ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-rose-300/30 px-2 py-1 text-xs text-rose-200">
+                      <Ban size={12} />
+                      banned
+                    </span>
+                  ) : null}
+                </div>
               </div>
               <AdminUserForm user={user} />
             </div>

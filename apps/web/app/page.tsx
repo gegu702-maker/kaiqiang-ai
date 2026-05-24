@@ -3,8 +3,9 @@ import { ArrowRight, ImagePlus, Languages, Layers3, Mic2, ShieldCheck, Sparkles,
 import { HomeVideoAgentPreview } from "@/components/HomeVideoAgentPreview";
 import { StudioNavigation } from "@/components/StudioNavigation";
 import { TaskForm } from "@/components/TaskForm";
-import { getUsageSummary } from "@/lib/api";
+import { getUsageSummary, getVoiceClones } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
+import type { VoiceClone } from "@/lib/types";
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -12,11 +13,15 @@ export default async function HomePage() {
     data: { session },
   } = await supabase.auth.getSession();
   let remainingQuota: number | null | undefined = undefined;
+  let voiceCloneEnabled = false;
+  let voiceClones: VoiceClone[] = [];
 
   if (session?.access_token) {
     try {
       const usage = await getUsageSummary(session.access_token);
       remainingQuota = usage?.remaining ?? null;
+      voiceCloneEnabled = Boolean(usage?.voice_clone_enabled);
+      voiceClones = await getVoiceClones(session.access_token);
     } catch {
       remainingQuota = undefined;
     }
@@ -93,7 +98,7 @@ export default async function HomePage() {
           </div>
         </section>
         <section>
-          <TaskForm userEmail={session?.user.email} remainingQuota={remainingQuota} />
+          <TaskForm userEmail={session?.user.email} remainingQuota={remainingQuota} voiceCloneEnabled={voiceCloneEnabled} voiceClones={voiceClones} />
         </section>
         <section>
           <HomeVideoAgentPreview />

@@ -8,6 +8,7 @@ import { submitTaskAction } from "@/app/actions/tasks";
 import { SubmitButton } from "@/components/SubmitButton";
 import { VoiceUpload } from "@/components/VoiceUpload";
 import { Card } from "@/components/ui/card";
+import type { VoiceClone } from "@/lib/types";
 
 const initialState = { ok: false, message: "" };
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -16,9 +17,11 @@ const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 type TaskFormProps = {
   userEmail?: string | null;
   remainingQuota?: number | null;
+  voiceCloneEnabled?: boolean;
+  voiceClones?: VoiceClone[];
 };
 
-export function TaskForm({ userEmail, remainingQuota }: TaskFormProps) {
+export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false, voiceClones = [] }: TaskFormProps) {
   const [state, action] = useActionState(submitTaskAction, initialState);
   const [imageError, setImageError] = useState("");
   const [personalImageError, setPersonalImageError] = useState("");
@@ -165,6 +168,25 @@ export function TaskForm({ userEmail, remainingQuota }: TaskFormProps) {
       </label>
 
       <input type="hidden" name="avatar_id" value="heygen_custom" />
+      {voiceCloneEnabled && voiceClones.length > 0 ? (
+        <div className="rounded-md border border-cyan/20 bg-cyan/[0.06] p-3">
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input type="checkbox" name="use_cloned_voice" value="true" />
+            使用我的克隆声音
+          </label>
+          <select name="voice_clone_id" className="mt-3 h-10 w-full rounded-md border border-white/10 bg-ink/70 px-3 text-sm">
+            {voiceClones.map((clone) => (
+              <option key={clone.id} value={clone.id}>
+                {clone.name} · {clone.voice_id || clone.status}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        <p className="rounded-md border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-500">
+          升级到 Pro 解锁声音克隆，后续视频可直接使用你的专属 voice_id。
+        </p>
+      )}
       <VoiceUpload />
 
       <div className="flex flex-wrap items-center justify-between gap-3">

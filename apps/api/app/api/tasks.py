@@ -11,6 +11,7 @@ from app.services.content_ai import generate_commerce_package
 from app.services.billing import assert_generation_quota, log_generation_usage
 from app.services.storage import upload_public_file
 from app.services.tasks import create_task, delete_user_task, get_user_task, list_user_tasks, requeue_user_task
+from app.services.voice_clone_provider import assert_clone_owner, assert_user_can_clone
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -43,9 +44,11 @@ async def create_video_task(
     use_digital_human: bool = Form(default=True),
     language: str = Form(...),
     avatar_id: str = Form(...),
+    use_cloned_voice: bool = Form(default=False),
+    voice_clone_id: str | None = Form(default=None),
     image: UploadFile = File(...),
     personal_image: UploadFile = File(...),
-    voice: UploadFile = File(...),
+    voice: UploadFile | None = File(default=None),
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> TaskCreateResponse:
@@ -89,15 +92,24 @@ async def create_video_task(
         allowed_content_types=IMAGE_TYPES,
         max_bytes=10 * MB,
     )
-    voice_url = await upload_public_file(
-        supabase,
-        settings.supabase_voice_bucket,
-        voice,
-        "voices",
-        allowed_extensions=VOICE_EXTENSIONS,
-        allowed_content_types=VOICE_TYPES,
-        max_bytes=20 * MB,
-    )
+    voice_url = ""
+    selected_clone = None
+    if use_cloned_voice:
+        assert_user_can_clone(supabase, user_id=user["id"], email=user["email"])
+        if not voice_clone_id:
+            raise HTTPException(status_code=400, detail="voice_clone_id is required when use_cloned_voice=true")
+        selected_clone = assert_clone_owner(supabase, user_id=user["id"], voice_clone_id=voice_clone_id)
+        voice_url = selected_clone.get("sample_audio_url") or ""
+    elif voice and voice.filename:
+        voice_url = await upload_public_file(
+            supabase,
+            settings.supabase_voice_bucket,
+            voice,
+            "voices",
+            allowed_extensions=VOICE_EXTENSIONS,
+            allowed_content_types=VOICE_TYPES,
+            max_bytes=20 * MB,
+        )
     task = create_task(
         supabase,
         user_id=user["id"],
@@ -114,6 +126,8 @@ async def create_video_task(
         personal_image_url=personal_image_url,
         avatar_id=avatar_id,
         voice_url=voice_url,
+        voice_clone_id=voice_clone_id if use_cloned_voice else None,
+        use_cloned_voice=use_cloned_voice,
         tts_language=tts_voice.language,
         tts_voice_name=tts_voice.voice_name,
     )

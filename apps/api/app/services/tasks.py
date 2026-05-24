@@ -27,6 +27,8 @@ def create_task(
     personal_image_url: str,
     avatar_id: str,
     voice_url: str,
+    voice_clone_id: str | None,
+    use_cloned_voice: bool,
     tts_language: str,
     tts_voice_name: str,
 ) -> dict[str, Any]:
@@ -45,6 +47,8 @@ def create_task(
         "personal_image_url": personal_image_url,
         "avatar_id": avatar_id,
         "voice_url": voice_url,
+        "voice_clone_id": voice_clone_id,
+        "use_cloned_voice": use_cloned_voice,
         "tts_language": tts_language,
         "tts_voice_name": tts_voice_name,
         "admin_notes": "",
@@ -99,6 +103,8 @@ def create_task(
                 "closing_cta",
                 "admin_workflow",
                 "user_id",
+                "voice_clone_id",
+                "use_cloned_voice",
             }
         }
         result = supabase.table(TABLE).insert(fallback_payload).execute()
@@ -125,6 +131,8 @@ def create_task(
                 "use_digital_human": use_digital_human,
                 "production_mode": "semi_auto",
                 "personal_image_url": personal_image_url,
+                "voice_clone_id": voice_clone_id,
+                "use_cloned_voice": use_cloned_voice,
                 "selling_points": ai_package["selling_points"],
                 "hook": ai_package["hook"],
                 "shot_list": ai_package["shot_list"],

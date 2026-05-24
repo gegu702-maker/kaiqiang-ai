@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice: str = "alloy"
+    llm_provider: str = "deepseek"
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
     heygen_api_key: str = ""
@@ -42,6 +46,7 @@ class Settings(BaseSettings):
     enable_task_worker: bool = True
     task_worker_poll_seconds: int = 8
     ffmpeg_path: str = "ffmpeg"
+    voice_clone_provider: str = "mock"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

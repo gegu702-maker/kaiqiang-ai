@@ -17,10 +17,13 @@ async def synthesize_speech_to_storage(
     supabase: Client,
     *,
     text: str,
+    voice_clone: dict | None = None,
     folder: str = "tts",
 ) -> dict:
-    if settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
-        audio = await _elevenlabs_tts(text)
+    if voice_clone and voice_clone.get("provider") == "elevenlabs" and voice_clone.get("voice_id"):
+        audio = await _elevenlabs_tts(text, voice_id=voice_clone["voice_id"])
+    elif settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
+        audio = await _elevenlabs_tts(text, voice_id=settings.elevenlabs_voice_id)
     elif settings.openai_api_key:
         audio = await _openai_tts(text)
     else:
@@ -55,10 +58,10 @@ async def _openai_tts(text: str) -> bytes:
     return response.content
 
 
-async def _elevenlabs_tts(text: str) -> bytes:
+async def _elevenlabs_tts(text: str, *, voice_id: str) -> bytes:
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{settings.elevenlabs_voice_id}",
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
             headers={"xi-api-key": settings.elevenlabs_api_key},
             json={
                 "text": text,

@@ -77,7 +77,6 @@ export function VoiceUpload() {
         <input
           key={inputKey}
           ref={inputRef}
-          required
           type="file"
           name="voice"
           accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/m4a,audio/x-m4a,audio/mp4,.mp3,.wav,.m4a"

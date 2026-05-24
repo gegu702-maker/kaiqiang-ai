@@ -8,6 +8,7 @@ from pydantic import BaseModel, EmailStr
 class TaskStatus(str, Enum):
     waiting = "waiting"
     generating_script = "generating_script"
+    cloning_voice = "cloning_voice"
     generating_voice = "generating_voice"
     generating_avatar = "generating_avatar"
     rendering = "rendering"
@@ -49,6 +50,8 @@ class VideoTask(BaseModel):
     production_mode: str = "semi_auto"
     avatar_id: str
     voice_url: str
+    voice_clone_id: Optional[str] = None
+    use_cloned_voice: bool = False
     tts_language: str
     tts_voice_name: str
     admin_notes: str = ""

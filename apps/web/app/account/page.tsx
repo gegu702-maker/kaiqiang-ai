@@ -3,8 +3,10 @@ import { redirect } from "next/navigation";
 import { CreditCard, Download, Gauge, KeyRound, ReceiptText, ShieldCheck } from "lucide-react";
 
 import { getUserOrders, getUserTasks, getUserUsageLogs, getUsageSummary } from "@/lib/api";
+import { getVoiceClones } from "@/lib/api";
+import { VoiceCloneManager } from "@/components/VoiceCloneManager";
 import { createClient } from "@/lib/supabase/server";
-import type { Order, UsageLog, UsageSummary, VideoTask } from "@/lib/types";
+import type { Order, UsageLog, UsageSummary, VideoTask, VoiceClone } from "@/lib/types";
 
 export default async function AccountPage() {
   const supabase = await createClient();
@@ -20,12 +22,14 @@ export default async function AccountPage() {
   let orders: Order[] = [];
   let usageLogs: UsageLog[] = [];
   let tasks: VideoTask[] = [];
+  let voiceClones: VoiceClone[] = [];
   let error = "";
   try {
     usage = await getUsageSummary(session.access_token);
     orders = await getUserOrders(session.access_token);
     usageLogs = await getUserUsageLogs(session.access_token);
     tasks = await getUserTasks(session.access_token);
+    voiceClones = await getVoiceClones(session.access_token);
   } catch (err) {
     error = err instanceof Error ? err.message : "额度信息加载失败";
   }
@@ -143,6 +147,8 @@ export default async function AccountPage() {
         </div>
         <p className="mt-2 text-sm text-slate-400">API Key 数据表和权限已预留，后续开放开放平台时可直接接入。</p>
       </section>
+
+      <VoiceCloneManager enabled={Boolean(usage?.voice_clone_enabled)} clones={voiceClones} />
     </main>
   );
 }

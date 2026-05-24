@@ -12,11 +12,12 @@ export function AdminUserForm({ user }: { user: AdminUser }) {
   const [state, action] = useActionState(updateAdminUserAction, initialState);
 
   return (
-    <form action={action} className="grid gap-2 md:grid-cols-[1fr_120px_120px_120px_auto]">
+    <form action={action} className="grid gap-2 md:grid-cols-[1fr_110px_120px_120px_130px_auto]">
       <input type="hidden" name="user_id" value={user.id} />
       <input readOnly value={user.email} className="h-10 rounded-md border border-white/10 bg-white/[0.04] px-3 text-sm text-slate-300" />
       <select name="plan" defaultValue={user.plan} className="h-10 rounded-md border border-white/10 bg-ink/70 px-2 text-sm">
         <option value="free">free</option>
+        <option value="plus">plus</option>
         <option value="pro">pro</option>
         <option value="business">business</option>
       </select>
@@ -25,8 +26,12 @@ export function AdminUserForm({ user }: { user: AdminUser }) {
         <option value="active">active</option>
         <option value="banned">banned</option>
       </select>
+      <select name="voice_clone_enabled" defaultValue={String(Boolean(user.voice_clone_enabled))} className="h-10 rounded-md border border-white/10 bg-ink/70 px-2 text-sm">
+        <option value="true">clone on</option>
+        <option value="false">clone off</option>
+      </select>
       <SubmitButton label="保存" pendingLabel="保存中" />
-      {state.message ? <p className={state.ok ? "text-sm text-lime md:col-span-5" : "text-sm text-rose-200 md:col-span-5"}>{state.message}</p> : null}
+      {state.message ? <p className={state.ok ? "text-sm text-lime md:col-span-6" : "text-sm text-rose-200 md:col-span-6"}>{state.message}</p> : null}
     </form>
   );
 }

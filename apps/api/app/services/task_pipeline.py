@@ -8,6 +8,7 @@ from app.services.avatar_video import generate_avatar_video
 from app.services.billing import get_generation_limits
 from app.services.script_generator import generate_video_script
 from app.services.tts import synthesize_speech_to_storage
+from app.services.voice_clone_provider import assert_clone_owner
 from app.services.video_render import render_product_video
 
 
@@ -74,9 +75,16 @@ async def process_video_task(supabase: Client, task: dict[str, Any]) -> dict[str
     log_task(supabase, task_id=task_id, level="info", message="Script generated")
 
     update_task_status(supabase, task_id, "generating_voice")
+    voice_clone = None
+    if task.get("use_cloned_voice") and task.get("voice_clone_id"):
+        update_task_status(supabase, task_id, "cloning_voice")
+        voice_clone = assert_clone_owner(supabase, user_id=user_id, voice_clone_id=task["voice_clone_id"])
+        log_task(supabase, task_id=task_id, level="info", message="Using cloned voice", data={"voice_id": voice_clone.get("voice_id"), "provider": voice_clone.get("provider")})
+
     tts_result = await synthesize_speech_to_storage(
         supabase,
         text=script_package["narration_script"],
+        voice_clone=voice_clone,
         folder=f"tts/{task_id}",
     )
     supabase.table("video_tasks").update(

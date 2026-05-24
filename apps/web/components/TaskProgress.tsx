@@ -3,6 +3,7 @@ import type { TaskStatus } from "@/lib/types";
 const progressByStatus: Record<TaskStatus, number> = {
   waiting: 16,
   generating_script: 32,
+  cloning_voice: 42,
   generating_voice: 48,
   generating_avatar: 62,
   rendering: 72,
@@ -18,6 +19,7 @@ const progressByStatus: Record<TaskStatus, number> = {
 const labelByStatus: Record<TaskStatus, string> = {
   waiting: "任务已进入队列",
   generating_script: "GPT 正在生成脚本",
+  cloning_voice: "正在准备克隆声音",
   generating_voice: "TTS 正在生成配音",
   generating_avatar: "数字人口播处理中",
   rendering: "视频工作流生成中",

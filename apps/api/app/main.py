@@ -7,6 +7,7 @@ from app.api.cosyvoice import router as cosyvoice_router
 from app.api.debug import router as debug_router
 from app.api.health import router as health_router
 from app.api.tasks import router as tasks_router
+from app.api.voice_clone import router as voice_clone_router
 from app.core.config import settings
 from app.services.task_worker import worker_loop
 import asyncio
@@ -34,6 +35,7 @@ def root_health() -> dict[str, str]:
 app.include_router(health_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(billing_router, prefix="/api")
+app.include_router(voice_clone_router, prefix="/api")
 app.include_router(admin_router, prefix="/api/admin")
 app.include_router(cosyvoice_router, prefix="/api")
 app.include_router(debug_router)

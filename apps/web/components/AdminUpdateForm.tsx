@@ -12,6 +12,7 @@ const initialState = { ok: false, message: "" };
 const statusStyles = {
   waiting: "border-amber-300/30 bg-amber-300/10 text-amber-100",
   generating_script: "border-fuchsia-300/30 bg-fuchsia-300/10 text-fuchsia-100",
+  cloning_voice: "border-purple-300/30 bg-purple-300/10 text-purple-100",
   generating_voice: "border-blue-300/30 bg-blue-300/10 text-blue-100",
   generating_avatar: "border-violet-300/30 bg-violet-300/10 text-violet-100",
   rendering: "border-cyan/30 bg-cyan/10 text-cyan",
@@ -58,6 +59,7 @@ export function AdminUpdateForm({ task }: { task: VideoTask }) {
       >
         <option value="waiting">waiting</option>
         <option value="generating_script">generating_script</option>
+        <option value="cloning_voice">cloning_voice</option>
         <option value="generating_voice">generating_voice</option>
         <option value="generating_avatar">generating_avatar</option>
         <option value="rendering">rendering</option>

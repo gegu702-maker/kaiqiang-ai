@@ -1,4 +1,4 @@
-import type { AdminUser, CheckoutResponse, Order, UsageLog, UsageSummary, VideoTask } from "@/lib/types";
+import type { AdminUser, CheckoutResponse, Order, UsageLog, UsageSummary, VideoTask, VoiceClone } from "@/lib/types";
 
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -102,6 +102,44 @@ export async function getUserUsageLogs(accessToken?: string): Promise<UsageLog[]
     cache: "no-store",
   });
   return parseResponse<UsageLog[]>(response);
+}
+
+export async function getVoiceClones(accessToken?: string): Promise<VoiceClone[]> {
+  if (!accessToken) return [];
+  const response = await fetch(`${API_URL}/api/voice-clone/list`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<VoiceClone[]>(response);
+}
+
+export async function uploadVoiceClone(formData: FormData, accessToken?: string): Promise<VoiceClone> {
+  const response = await fetch(`${API_URL}/api/voice-clone/upload`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: formData,
+    cache: "no-store",
+  });
+  return parseResponse<VoiceClone>(response);
+}
+
+export async function createVoiceClone(formData: FormData, accessToken?: string): Promise<VoiceClone> {
+  const response = await fetch(`${API_URL}/api/voice-clone/create`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: formData,
+    cache: "no-store",
+  });
+  return parseResponse<VoiceClone>(response);
+}
+
+export async function deleteVoiceClone(voiceCloneId: string, accessToken?: string): Promise<{ ok: boolean }> {
+  const response = await fetch(`${API_URL}/api/voice-clone/${voiceCloneId}`, {
+    method: "DELETE",
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<{ ok: boolean }>(response);
 }
 
 export async function getAdminTasks(): Promise<VideoTask[]> {

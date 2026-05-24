@@ -13,20 +13,25 @@ const plans = [
     cta: "免费开始",
   },
   {
-    name: "Pro",
+    name: "Plus",
     priceCny: "¥199/月",
     priceUsd: "$29/mo",
     quota: "每月 100 次生成",
-    desc: "适合稳定测试带货账号和小团队",
-    cta: "预留升级",
+    desc: "去水印、优先队列，适合稳定测试带货账号",
+  },
+  {
+    name: "Pro",
+    priceCny: "¥799/月",
+    priceUsd: "$109/mo",
+    quota: "每月 1000 次生成",
+    desc: "支持声音克隆、上传声音训练、API 权限预留",
   },
   {
     name: "Business",
     priceCny: "定制",
     priceUsd: "Custom",
     quota: "自定义额度",
-    desc: "适合矩阵号、代运营和批量交付",
-    cta: "联系开通",
+    desc: "企业级 AI 视频生成、并发和商用支持",
   },
 ];
 
@@ -52,7 +57,12 @@ export default function PricingPage() {
             <p className="mt-3 text-slate-300">{plan.quota}</p>
             <p className="mt-2 text-sm text-slate-500">{plan.desc}</p>
             <ul className="mt-5 space-y-3 text-sm text-slate-300">
-              {["AI 卖点分析", "爆款脚本和分镜", "HeyGen 半自动交付", "剪映执行清单"].map((item) => (
+              {[
+                "AI 卖点分析 / DeepSeek 文案",
+                "自动脚本、分镜、封面 Prompt",
+                plan.name === "Pro" || plan.name === "Business" ? "AI 声音克隆 / 专属数字人声音" : "Plus 暂不支持声音克隆",
+                "FFmpeg 自动合成 MP4",
+              ].map((item) => (
                 <li key={item} className="flex items-center gap-2">
                   <CheckCircle2 size={16} className="text-lime" />
                   {item}
@@ -67,7 +77,7 @@ export default function PricingPage() {
                 {plan.cta}
               </Link>
             ) : (
-              <PlanCheckoutButton plan={plan.name === "Pro" ? "pro" : "business"} />
+              <PlanCheckoutButton plan={plan.name === "Plus" ? "plus" : plan.name === "Pro" ? "pro" : "business"} />
             )}
           </section>
         ))}

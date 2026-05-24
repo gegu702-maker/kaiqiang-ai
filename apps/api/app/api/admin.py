@@ -111,10 +111,11 @@ def patch_user_profile(
     plan: str | None = Form(default=None),
     monthly_quota: int | None = Form(default=None),
     custom_quota: int | None = Form(default=None),
+    voice_clone_enabled: bool | None = Form(default=None),
     status: str | None = Form(default=None),
     supabase: Client = Depends(get_supabase),
 ) -> dict:
-    if plan and plan not in {"free", "pro", "business"}:
+    if plan and plan not in {"free", "plus", "pro", "business"}:
         raise HTTPException(status_code=400, detail="Invalid plan")
     if status and status not in {"active", "banned"}:
         raise HTTPException(status_code=400, detail="Invalid user status")
@@ -124,6 +125,7 @@ def patch_user_profile(
         plan=plan,
         monthly_quota=monthly_quota,
         custom_quota=custom_quota,
+        voice_clone_enabled=voice_clone_enabled,
         status=status,
     )
 

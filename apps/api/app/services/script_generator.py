@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
-import httpx
-from fastapi import HTTPException
-
-from app.core.config import settings
 from app.services.content_ai import generate_commerce_package
+from app.services.llm_provider import LLMProvider
 
 
 STYLE_LABELS = {
@@ -30,9 +26,6 @@ async def generate_video_script(
     max_seconds: int,
     use_digital_human: bool,
 ) -> dict[str, Any]:
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY 未配置，无法生成真实 GPT 脚本。")
-
     style_label = STYLE_LABELS.get(video_style, STYLE_LABELS.get("hard_sell", "硬核带货"))
     prompt = {
         "product_name": product_name,
@@ -63,30 +56,10 @@ async def generate_video_script(
         },
     }
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-            json={
-                "model": settings.openai_model,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "你是短视频带货导演和商业编导。只输出合法 JSON。",
-                    },
-                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-                ],
-            },
-        )
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"OpenAI script generation failed: {response.text}")
-
-    raw = response.json()["choices"][0]["message"]["content"]
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise HTTPException(status_code=502, detail=f"OpenAI returned invalid JSON: {raw[:500]}") from error
+    data = await LLMProvider().generate_json(
+        system="你是短视频带货导演和商业编导。只输出合法 JSON。",
+        payload=prompt,
+    )
 
     fallback = generate_commerce_package(
         product_name=product_name,
