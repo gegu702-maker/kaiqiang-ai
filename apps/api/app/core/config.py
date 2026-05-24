@@ -18,6 +18,18 @@ class Settings(BaseSettings):
     cosyvoice_timeout_seconds: int = 1800
     cosyvoice_prompt_text: str = "这是一段用于克隆音色的参考声音。"
     cosyvoice_sample_rate: int = 22050
+    public_site_url: str = "http://localhost:3000"
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    paypal_client_id: str = ""
+    paypal_client_secret: str = ""
+    paypal_api_base: str = "https://api-m.sandbox.paypal.com"
+    pingpp_api_key: str = ""
+    pingpp_app_id: str = ""
+    wechat_pay_mch_id: str = ""
+    wechat_pay_api_key: str = ""
+    alipay_app_id: str = ""
+    alipay_private_key: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -1,4 +1,4 @@
-import type { UsageSummary, VideoTask } from "@/lib/types";
+import type { AdminUser, CheckoutResponse, Order, UsageLog, UsageSummary, VideoTask } from "@/lib/types";
 
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -58,14 +58,32 @@ export async function getUsageSummary(accessToken?: string): Promise<UsageSummar
   return parseResponse<UsageSummary>(response);
 }
 
-export async function createPlaceholderOrder(formData: FormData, accessToken?: string): Promise<{ message: string }> {
+export async function createPlaceholderOrder(formData: FormData, accessToken?: string): Promise<CheckoutResponse> {
   const response = await fetch(`${API_URL}/api/billing/orders`, {
     method: "POST",
     headers: authHeaders(accessToken),
     body: formData,
     cache: "no-store",
   });
-  return parseResponse<{ message: string }>(response);
+  return parseResponse<CheckoutResponse>(response);
+}
+
+export async function getUserOrders(accessToken?: string): Promise<Order[]> {
+  if (!accessToken) return [];
+  const response = await fetch(`${API_URL}/api/billing/orders`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<Order[]>(response);
+}
+
+export async function getUserUsageLogs(accessToken?: string): Promise<UsageLog[]> {
+  if (!accessToken) return [];
+  const response = await fetch(`${API_URL}/api/billing/usage-logs`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<UsageLog[]>(response);
 }
 
 export async function getAdminTasks(): Promise<VideoTask[]> {
@@ -76,6 +94,50 @@ export async function getAdminTasks(): Promise<VideoTask[]> {
     cache: "no-store",
   });
   return parseResponse<VideoTask[]>(response);
+}
+
+export async function getAdminUsers(): Promise<AdminUser[]> {
+  const response = await fetch(`${API_URL}/api/admin/users`, {
+    headers: {
+      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
+    },
+    cache: "no-store",
+  });
+  return parseResponse<AdminUser[]>(response);
+}
+
+export async function getAdminOrders(): Promise<Order[]> {
+  const response = await fetch(`${API_URL}/api/admin/orders`, {
+    headers: {
+      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
+    },
+    cache: "no-store",
+  });
+  return parseResponse<Order[]>(response);
+}
+
+export async function updateAdminUser(userId: string, formData: FormData): Promise<AdminUser> {
+  const response = await fetch(`${API_URL}/api/admin/users/${userId}`, {
+    method: "PATCH",
+    headers: {
+      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
+    },
+    body: formData,
+    cache: "no-store",
+  });
+  return parseResponse<AdminUser>(response);
+}
+
+export async function markAdminOrderPaid(orderId: string, formData: FormData): Promise<{ ok: boolean; order: Order }> {
+  const response = await fetch(`${API_URL}/api/admin/orders/${orderId}/mark-paid`, {
+    method: "POST",
+    headers: {
+      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
+    },
+    body: formData,
+    cache: "no-store",
+  });
+  return parseResponse<{ ok: boolean; order: Order }>(response);
 }
 
 export async function getAdminTask(taskId: string): Promise<VideoTask> {

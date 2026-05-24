@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { cloneVoice, updateAdminTask } from "@/lib/api";
+import { cloneVoice, markAdminOrderPaid, updateAdminTask, updateAdminUser } from "@/lib/api";
 import type { ActionState } from "@/lib/types";
 
 export async function updateTaskAction(
@@ -51,6 +51,49 @@ export async function cloneVoiceAction(
       ok: false,
       message: error instanceof Error ? error.message : "Clone voice 生成失败，请检查 CosyVoice 服务。",
       cosyvoiceStatus: "failed",
+    };
+  }
+}
+
+export async function updateAdminUserAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const userId = String(formData.get("user_id") ?? "");
+  formData.delete("user_id");
+  for (const key of Array.from(formData.keys())) {
+    if (String(formData.get(key) ?? "") === "") {
+      formData.delete(key);
+    }
+  }
+
+  try {
+    await updateAdminUser(userId, formData);
+    revalidatePath("/admin/billing");
+    return { ok: true, message: "用户额度已更新。" };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "用户更新失败。",
+    };
+  }
+}
+
+export async function markOrderPaidAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const orderId = String(formData.get("order_id") ?? "");
+  formData.delete("order_id");
+
+  try {
+    await markAdminOrderPaid(orderId, formData);
+    revalidatePath("/admin/billing");
+    return { ok: true, message: "订单已标记支付，并已升级套餐。" };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "订单处理失败。",
     };
   }
 }

@@ -10,6 +10,9 @@ import { cn } from "@/lib/utils";
 
 const initialState = { ok: false, message: "" };
 const statusStyles = {
+  waiting: "border-amber-300/30 bg-amber-300/10 text-amber-100",
+  rendering: "border-cyan/30 bg-cyan/10 text-cyan",
+  success: "border-lime/30 bg-lime/10 text-lime",
   pending: "border-amber-300/30 bg-amber-300/10 text-amber-100",
   scripting: "border-fuchsia-300/30 bg-fuchsia-300/10 text-fuchsia-100",
   producing: "border-cyan/30 bg-cyan/10 text-cyan",
@@ -50,6 +53,9 @@ export function AdminUpdateForm({ task }: { task: VideoTask }) {
         onChange={(event) => setStatus(event.target.value as VideoTask["status"])}
         className={cn("h-10 rounded-md border px-3 text-sm outline-none ring-cyan/40 focus:ring-2", statusStyles[status])}
       >
+        <option value="waiting">waiting</option>
+        <option value="rendering">rendering</option>
+        <option value="success">success</option>
         <option value="pending">pending</option>
         <option value="scripting">scripting</option>
         <option value="producing">producing</option>

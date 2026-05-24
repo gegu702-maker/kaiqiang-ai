@@ -32,6 +32,9 @@ export default async function AdminPage() {
         <div className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-300">
           共 {tasks.length} 个任务
         </div>
+        <Button asChild variant="outline">
+          <Link href="/admin/billing">商业化后台</Link>
+        </Button>
       </div>
 
       {error ? <p className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-rose-100">{error}</p> : null}

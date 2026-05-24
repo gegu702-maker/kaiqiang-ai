@@ -61,7 +61,7 @@ def create_task(
         "comment_prompt": ai_package["comment_prompt"],
         "closing_cta": ai_package["closing_cta"],
         "admin_workflow": ai_package["admin_workflow"],
-        "status": TaskStatus.pending.value,
+        "status": TaskStatus.waiting.value,
     }
     used_fallback = False
     try:
@@ -104,6 +104,18 @@ def create_task(
         result = supabase.table(TABLE).insert(fallback_payload).execute()
         used_fallback = True
     task = result.data[0]
+    try:
+        supabase.table("task_queue").insert(
+            {
+                "task_id": task["id"],
+                "user_id": user_id,
+                "status": "waiting",
+            }
+        ).execute()
+    except APIError:
+        # Older databases may not have task_queue until the commercial SaaS
+        # migration is applied. The task itself remains valid.
+        pass
     if used_fallback:
         task.update(
             {

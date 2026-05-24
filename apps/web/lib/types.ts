@@ -1,4 +1,13 @@
-export type TaskStatus = "pending" | "scripting" | "producing" | "processing" | "completed" | "failed";
+export type TaskStatus =
+  | "waiting"
+  | "rendering"
+  | "success"
+  | "pending"
+  | "scripting"
+  | "producing"
+  | "processing"
+  | "completed"
+  | "failed";
 export type CosyVoiceStatus = "pending" | "generating" | "completed" | "failed";
 
 export type SellingPoint = {
@@ -83,4 +92,48 @@ export type UsageSummary = {
   used: number;
   remaining: number | null;
   period_start: string;
+};
+
+export type OrderStatus = "pending" | "paid" | "failed" | "refunded";
+export type PaymentProvider = "wechat" | "alipay" | "pingpp" | "stripe" | "paypal" | "manual";
+
+export type Order = {
+  id: string;
+  user_id: string;
+  plan: PlanCode;
+  currency: "CNY" | "USD";
+  amount: number;
+  provider: PaymentProvider;
+  status: OrderStatus;
+  billing_cycle: "monthly" | "yearly";
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type UsageLog = {
+  id: string;
+  user_id: string;
+  task_id: string | null;
+  action: string;
+  quantity: number;
+  period_start: string;
+  created_at: string;
+};
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  plan: PlanCode;
+  monthly_quota: number | null;
+  custom_quota: number | null;
+  status: "active" | "banned";
+  created_at: string;
+};
+
+export type CheckoutResponse = {
+  order: Order;
+  checkout_url: string | null;
+  provider_status: "created" | "not_configured" | "manual_review" | "pending";
+  payment_status: OrderStatus;
+  message: string;
 };

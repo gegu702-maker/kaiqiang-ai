@@ -4,6 +4,7 @@ from supabase import Client
 from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.models.video_task import TaskStatus, VideoTask
+from app.services.billing import list_admin_orders, list_admin_users, mark_order_paid_and_upgrade, update_profile_admin
 from app.services.storage import upload_public_bytes, upload_public_file
 from app.services.subtitles import build_script_webvtt
 from app.services.tasks import get_task, list_all_tasks, update_task
@@ -61,7 +62,7 @@ async def patch_admin_task(
             allowed_content_types=VIDEO_TYPES,
             max_bytes=200 * MB,
         )
-        final_status = TaskStatus.completed
+        final_status = TaskStatus.success
         source_task = get_task(supabase, task_id)
         if not source_task:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -92,3 +93,46 @@ async def patch_admin_task(
         heygen_video_url=heygen_video_url,
     )
     return VideoTask(**task)
+
+
+@router.get("/users", dependencies=[Depends(verify_admin)])
+def get_admin_users(supabase: Client = Depends(get_supabase)) -> list[dict]:
+    return list_admin_users(supabase)
+
+
+@router.get("/orders", dependencies=[Depends(verify_admin)])
+def get_orders(supabase: Client = Depends(get_supabase)) -> list[dict]:
+    return list_admin_orders(supabase)
+
+
+@router.patch("/users/{user_id}", dependencies=[Depends(verify_admin)])
+def patch_user_profile(
+    user_id: str,
+    plan: str | None = Form(default=None),
+    monthly_quota: int | None = Form(default=None),
+    custom_quota: int | None = Form(default=None),
+    status: str | None = Form(default=None),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    if plan and plan not in {"free", "pro", "business"}:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+    if status and status not in {"active", "banned"}:
+        raise HTTPException(status_code=400, detail="Invalid user status")
+    return update_profile_admin(
+        supabase,
+        user_id=user_id,
+        plan=plan,
+        monthly_quota=monthly_quota,
+        custom_quota=custom_quota,
+        status=status,
+    )
+
+
+@router.post("/orders/{order_id}/mark-paid", dependencies=[Depends(verify_admin)])
+def mark_order_paid(
+    order_id: str,
+    provider_payment_id: str = Form(default="manual-admin"),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    order = mark_order_paid_and_upgrade(supabase, order_id=order_id, provider_payment_id=provider_payment_id)
+    return {"ok": True, "order": order}

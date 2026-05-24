@@ -44,7 +44,7 @@ export function TaskCard({ task }: { task: VideoTask }) {
           </a>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3 text-sm text-slate-400">
-          {task.status === "completed" && task.result_video_url ? (
+          {(task.status === "completed" || task.status === "success") && task.result_video_url ? (
             <a
               className="inline-flex items-center gap-2 rounded-md border border-lime/30 px-3 py-2 text-lime hover:bg-lime/10"
               href={task.result_video_url}

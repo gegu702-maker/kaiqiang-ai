@@ -6,6 +6,9 @@ from pydantic import BaseModel, EmailStr
 
 
 class TaskStatus(str, Enum):
+    waiting = "waiting"
+    rendering = "rendering"
+    success = "success"
     pending = "pending"
     scripting = "scripting"
     producing = "producing"

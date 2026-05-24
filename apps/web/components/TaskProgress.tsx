@@ -1,6 +1,9 @@
 import type { TaskStatus } from "@/lib/types";
 
 const progressByStatus: Record<TaskStatus, number> = {
+  waiting: 16,
+  rendering: 72,
+  success: 100,
   pending: 18,
   scripting: 38,
   producing: 68,
@@ -10,6 +13,9 @@ const progressByStatus: Record<TaskStatus, number> = {
 };
 
 const labelByStatus: Record<TaskStatus, string> = {
+  waiting: "任务已进入队列",
+  rendering: "视频工作流生成中",
+  success: "视频已完成",
   pending: "等待管理员处理",
   scripting: "AI 脚本和分镜已生成",
   producing: "管理员正在制作视频",
@@ -19,12 +25,12 @@ const labelByStatus: Record<TaskStatus, string> = {
 };
 
 export function TaskProgress({ status }: { status: TaskStatus }) {
-  const value = progressByStatus[status];
+  const value = progressByStatus[status] ?? 18;
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
-        <span className="text-slate-300">{labelByStatus[status]}</span>
+        <span className="text-slate-300">{labelByStatus[status] ?? "任务处理中"}</span>
         <span className={status === "failed" ? "text-rose-200" : "text-cyan"}>{value}%</span>
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-white/10">

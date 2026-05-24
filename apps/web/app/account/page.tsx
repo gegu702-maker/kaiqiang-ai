@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CreditCard, Gauge, ShieldCheck } from "lucide-react";
+import { CreditCard, Download, Gauge, KeyRound, ReceiptText, ShieldCheck } from "lucide-react";
 
-import { getUsageSummary } from "@/lib/api";
+import { getUserOrders, getUserTasks, getUserUsageLogs, getUsageSummary } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
+import type { Order, UsageLog, UsageSummary, VideoTask } from "@/lib/types";
 
 export default async function AccountPage() {
   const supabase = await createClient();
@@ -15,10 +16,16 @@ export default async function AccountPage() {
     redirect("/login?next=/account");
   }
 
-  let usage = null;
+  let usage: UsageSummary | null = null;
+  let orders: Order[] = [];
+  let usageLogs: UsageLog[] = [];
+  let tasks: VideoTask[] = [];
   let error = "";
   try {
     usage = await getUsageSummary(session.access_token);
+    orders = await getUserOrders(session.access_token);
+    usageLogs = await getUserUsageLogs(session.access_token);
+    tasks = await getUserTasks(session.access_token);
   } catch (err) {
     error = err instanceof Error ? err.message : "额度信息加载失败";
   }
@@ -62,6 +69,80 @@ export default async function AccountPage() {
           我的任务
         </Link>
       </div>
+
+      <div className="mt-8 grid gap-5 lg:grid-cols-2">
+        <section className="rounded-lg border border-white/10 bg-panel/80 p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <ReceiptText className="text-cyan" size={20} />
+            <h2 className="text-lg font-semibold text-white">我的订单</h2>
+          </div>
+          <div className="space-y-3">
+            {orders.slice(0, 6).map((order) => (
+              <div key={order.id} className="rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-white">{order.plan.toUpperCase()} · {order.billing_cycle}</span>
+                  <span className="rounded-full border border-white/10 px-2 py-1 text-xs text-slate-300">{order.status}</span>
+                </div>
+                <p className="mt-2 text-slate-400">{order.currency} {(order.amount / 100).toFixed(2)} · {order.provider}</p>
+              </div>
+            ))}
+            {orders.length === 0 ? <p className="text-sm text-slate-500">暂无订单。</p> : null}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-white/10 bg-panel/80 p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <Gauge className="text-lime" size={20} />
+            <h2 className="text-lg font-semibold text-white">消费记录</h2>
+          </div>
+          <div className="space-y-3">
+            {usageLogs.slice(0, 6).map((log) => (
+              <div key={log.id} className="rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-white">{log.action}</span>
+                  <span className="text-slate-400">-{log.quantity}</span>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">{new Date(log.created_at).toLocaleString()}</p>
+              </div>
+            ))}
+            {usageLogs.length === 0 ? <p className="text-sm text-slate-500">暂无消耗记录。</p> : null}
+          </div>
+        </section>
+      </div>
+
+      <section className="mt-5 rounded-lg border border-white/10 bg-panel/80 p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <Download className="text-cyan" size={20} />
+          <h2 className="text-lg font-semibold text-white">可下载视频</h2>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {tasks
+            .filter((task) => task.result_video_url)
+            .slice(0, 6)
+            .map((task) => (
+              <a
+                key={task.id}
+                href={task.result_video_url ?? "#"}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm text-slate-300 hover:border-cyan/40 hover:text-cyan"
+              >
+                {task.product_name}
+              </a>
+            ))}
+          {tasks.filter((task) => task.result_video_url).length === 0 ? (
+            <p className="text-sm text-slate-500">暂无已完成视频。</p>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="mt-5 rounded-lg border border-white/10 bg-white/[0.04] p-5">
+        <div className="flex items-center gap-2">
+          <KeyRound className="text-cyan" size={20} />
+          <h2 className="text-lg font-semibold text-white">API Key（预留）</h2>
+        </div>
+        <p className="mt-2 text-sm text-slate-400">API Key 数据表和权限已预留，后续开放开放平台时可直接接入。</p>
+      </section>
     </main>
   );
 }

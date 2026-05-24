@@ -13,8 +13,24 @@ export function PlanCheckoutButton({ plan }: { plan: "pro" | "business" }) {
   return (
     <form action={action} className="mt-6 space-y-3">
       <input type="hidden" name="plan" value={plan} />
-      <input type="hidden" name="provider" value="manual" />
-      <input type="hidden" name="currency" value="CNY" />
+      <div className="grid gap-2 sm:grid-cols-3">
+        <select name="billing_cycle" defaultValue="monthly" className="h-10 rounded-md border border-white/10 bg-ink/70 px-2 text-xs text-slate-200">
+          <option value="monthly">月付</option>
+          <option value="yearly">年付 省约 17%</option>
+        </select>
+        <select name="currency" defaultValue="CNY" className="h-10 rounded-md border border-white/10 bg-ink/70 px-2 text-xs text-slate-200">
+          <option value="CNY">人民币</option>
+          <option value="USD">USD</option>
+        </select>
+        <select name="provider" defaultValue="pingpp" className="h-10 rounded-md border border-white/10 bg-ink/70 px-2 text-xs text-slate-200">
+          <option value="pingpp">Ping++</option>
+          <option value="wechat">微信支付</option>
+          <option value="alipay">支付宝</option>
+          <option value="stripe">Stripe</option>
+          <option value="paypal">PayPal</option>
+          <option value="manual">人工开通</option>
+        </select>
+      </div>
       <button className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-cyan px-4 text-sm font-semibold text-ink hover:bg-cyan/90">
         <CreditCard size={16} />
         {plan === "pro" ? "创建 Pro 占位订单" : "创建 Business 咨询订单"}

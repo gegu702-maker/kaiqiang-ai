@@ -19,13 +19,24 @@ export async function createPlaceholderOrderAction(
     redirect("/login?next=/pricing");
   }
 
+  let checkoutUrl = "";
   try {
     const result = await createPlaceholderOrder(formData, session.access_token);
-    return { ok: true, message: result.message };
+    checkoutUrl = result.checkout_url ?? "";
+    if (checkoutUrl) {
+      // Continue after the try/catch so Next.js redirect is not swallowed.
+    } else {
+      return { ok: true, message: result.message };
+    }
   } catch (error) {
     return {
       ok: false,
       message: error instanceof Error ? error.message : "订单创建失败，请稍后重试。",
     };
   }
+
+  if (checkoutUrl) {
+    redirect(checkoutUrl);
+  }
+  return { ok: true, message: "订单已创建。" };
 }
