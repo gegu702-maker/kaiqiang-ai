@@ -2,6 +2,7 @@ import Link from "next/link";
 import { LogOut, UserCircle } from "lucide-react";
 
 import { signOutAction } from "@/app/actions/auth";
+import { HeaderAuthLabel } from "@/components/HeaderAuthLabel";
 import { getCurrentUser } from "@/lib/supabase/server";
 
 export async function AuthNav() {
@@ -10,11 +11,8 @@ export async function AuthNav() {
   if (!user) {
     return (
       <div className="flex items-center gap-2">
-        <Link className="rounded-md px-3 py-2 hover:bg-white/10" href="/pricing">
-          价格
-        </Link>
-        <Link className="rounded-md px-3 py-2 hover:bg-white/10" href="/login">
-          登录 / 注册
+        <Link className="rounded-md px-3 py-2 hover:bg-white/10" href="/login" title="Login">
+          <HeaderAuthLabel />
         </Link>
       </div>
     );

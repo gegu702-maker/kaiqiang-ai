@@ -1,5 +1,6 @@
-import { ArrowRight, ImagePlus, Languages, Layers3, Mic2, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { ArrowRight, ImagePlus, Languages, Layers3, Mic2, ShieldCheck, UserRound } from "lucide-react";
 
+import { BrandHero } from "@/components/BrandHero";
 import { HomeVideoAgentPreview } from "@/components/HomeVideoAgentPreview";
 import { StudioNavigation } from "@/components/StudioNavigation";
 import { TaskForm } from "@/components/TaskForm";
@@ -32,16 +33,7 @@ export default async function HomePage() {
       <StudioNavigation />
       <div className="mx-auto grid w-full max-w-[1500px] gap-5 px-4 py-5 sm:px-6 xl:grid-cols-[0.92fr_0.98fr_0.9fr] xl:py-6">
         <section className="space-y-4">
-          <div className="inline-flex w-fit items-center gap-2 rounded-full border border-cyan/30 bg-cyan/10 px-3 py-1 text-sm text-cyan">
-            <Sparkles size={15} />
-            AI Video Agent Studio
-          </div>
-          <h1 className="max-w-xl text-4xl font-semibold leading-[1.04] text-white sm:text-5xl xl:text-[48px]">
-            AI 带货视频导演系统
-          </h1>
-          <p className="max-w-xl text-base leading-7 text-slate-300">
-            上传商品，一键生成 AI 带货视频脚本、分镜和数字人口播工作流。
-          </p>
+          <BrandHero />
           <div className="grid gap-3">
             {[
               ["AI Agent", "卖点、标题、脚本自动拆解"],
