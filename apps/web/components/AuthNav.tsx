@@ -20,9 +20,6 @@ export async function AuthNav() {
 
   return (
     <div className="flex items-center gap-2">
-      <Link className="hidden rounded-md px-3 py-2 hover:bg-white/10 sm:inline-flex" href="/pricing">
-        定价
-      </Link>
       <Link className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-white/10" href="/account">
         <UserCircle size={16} />
         <span className="hidden max-w-[180px] truncate sm:inline">{user.email}</span>

@@ -46,7 +46,13 @@ export function LandingPage({ startHref }: { startHref: string }) {
   const current = copy[locale];
 
   return (
-    <main className="min-h-[calc(100vh-65px)] overflow-hidden bg-[#f8f9ff] text-slate-950">
+    <main
+      className="min-h-[calc(100vh-65px)] overflow-hidden text-slate-950"
+      style={{
+        background:
+          "radial-gradient(circle at 79% 30%, rgba(122, 112, 255, 0.22), transparent 34%), radial-gradient(circle at 60% 8%, rgba(147, 197, 253, 0.16), transparent 28%), linear-gradient(180deg, #fbfcff 0%, #f7f8ff 56%, #ffffff 100%)",
+      }}
+    >
       <section className="relative mx-auto grid min-h-[calc(100vh-65px)] max-w-[1440px] items-center gap-12 px-6 pb-12 pt-20 sm:px-10 lg:grid-cols-[0.86fr_1.14fr] lg:px-16 lg:pb-16 lg:pt-24">
         <div className="pointer-events-none absolute -right-24 top-0 size-[720px] rounded-full bg-[radial-gradient(circle,rgba(113,102,255,0.18),rgba(255,255,255,0)_68%)]" />
         <div className="pointer-events-none absolute right-10 top-14 hidden size-[560px] rounded-full border border-white/70 lg:block" />
@@ -92,8 +98,9 @@ export function LandingPage({ startHref }: { startHref: string }) {
 
         <div className="relative z-10 flex justify-center lg:justify-end">
           <div className="relative flex size-[260px] items-center justify-center sm:size-[380px] lg:size-[560px]">
-            <div className="absolute inset-0 rounded-full bg-gradient-to-br from-white via-indigo-100 to-violet-100 shadow-[inset_0_0_60px_rgba(255,255,255,0.9),0_40px_110px_rgba(100,92,255,0.22)]" />
-            <div className="absolute inset-10 rounded-full border border-white/80" />
+            <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle,rgba(236,239,255,0.96)_0%,rgba(218,222,255,0.56)_43%,rgba(255,255,255,0)_70%)] shadow-[0_42px_120px_rgba(100,92,255,0.20)]" />
+            <div className="absolute inset-3 rounded-full border border-white/70" />
+            <div className="absolute inset-16 rounded-full border border-white/80" />
             <div className="absolute -right-6 top-8 size-4 rounded-full bg-indigo-200" />
             <div className="absolute left-10 top-20 size-2 rounded-full bg-violet-300" />
             <div className="absolute bottom-24 right-2 size-3 rounded-full bg-blue-200" />
@@ -102,7 +109,7 @@ export function LandingPage({ startHref }: { startHref: string }) {
               alt="KAIQIANG.AI brand logo"
               fill
               sizes="(min-width: 1024px) 560px, (min-width: 640px) 380px, 260px"
-              className="relative scale-110 object-contain drop-shadow-[0_28px_55px_rgba(80,76,150,0.22)]"
+              className="relative scale-110 object-contain mix-blend-multiply drop-shadow-[0_28px_55px_rgba(80,76,150,0.22)]"
               priority
             />
           </div>
