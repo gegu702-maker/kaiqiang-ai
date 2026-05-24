@@ -135,6 +135,23 @@ def log_generation_usage(supabase: Client, *, user_id: str, task_id: str) -> Non
     ).execute()
 
 
+def refund_generation_usage(supabase: Client, *, user_id: str, task_id: str) -> None:
+    try:
+        usage = (
+            supabase.table("usage_logs")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("task_id", task_id)
+            .eq("action", "generate_video")
+            .limit(1)
+            .execute()
+        )
+        if usage.data:
+            supabase.table("usage_logs").delete().eq("id", usage.data[0]["id"]).execute()
+    except Exception:
+        pass
+
+
 def list_user_orders(supabase: Client, *, user_id: str) -> list[dict[str, Any]]:
     result = (
         supabase.table("orders")

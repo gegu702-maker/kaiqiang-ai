@@ -62,7 +62,7 @@ async def patch_admin_task(
             allowed_content_types=VIDEO_TYPES,
             max_bytes=200 * MB,
         )
-        final_status = TaskStatus.success
+        final_status = TaskStatus.completed
         source_task = get_task(supabase, task_id)
         if not source_task:
             raise HTTPException(status_code=404, detail="Task not found")

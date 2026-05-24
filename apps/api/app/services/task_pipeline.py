@@ -30,7 +30,18 @@ def update_task_status(supabase: Client, task_id: str, status: str, error: str =
     payload: dict[str, Any] = {"status": status}
     if error:
         payload["generation_error"] = error
+    elif status in {"processing", "completed"}:
+        payload["generation_error"] = ""
     supabase.table("video_tasks").update(payload).eq("id", task_id).execute()
+    queue_status = {"waiting": "waiting", "failed": "failed", "completed": "success"}.get(status)
+    if queue_status:
+        try:
+            supabase.table("task_queue").update({"status": queue_status, "error_message": error}).eq("task_id", task_id).execute()
+        except Exception:
+            pass
+
+
+def update_queue_status(supabase: Client, task_id: str, status: str, error: str = "") -> None:
     try:
         supabase.table("task_queue").update({"status": status, "error_message": error}).eq("task_id", task_id).execute()
     except Exception:
@@ -47,7 +58,8 @@ async def process_video_task(supabase: Client, task: dict[str, Any]) -> dict[str
     limits = get_generation_limits(supabase, user_id=user_id, email=user_email)
     log_task(supabase, task_id=task_id, level="info", message="Pipeline started", data=limits)
 
-    update_task_status(supabase, task_id, "generating_script")
+    update_task_status(supabase, task_id, "processing")
+    update_queue_status(supabase, task_id, "generating_script")
     script_package = await generate_video_script(
         product_name=task["product_name"],
         product_highlights=task.get("product_highlights") or task.get("script") or "",
@@ -74,10 +86,10 @@ async def process_video_task(supabase: Client, task: dict[str, Any]) -> dict[str
     ).eq("id", task_id).execute()
     log_task(supabase, task_id=task_id, level="info", message="Script generated")
 
-    update_task_status(supabase, task_id, "generating_voice")
+    update_queue_status(supabase, task_id, "generating_voice")
     voice_clone = None
     if task.get("use_cloned_voice") and task.get("voice_clone_id"):
-        update_task_status(supabase, task_id, "cloning_voice")
+        update_queue_status(supabase, task_id, "cloning_voice")
         voice_clone = assert_clone_owner(supabase, user_id=user_id, voice_clone_id=task["voice_clone_id"])
         log_task(supabase, task_id=task_id, level="info", message="Using cloned voice", data={"voice_id": voice_clone.get("voice_id"), "provider": voice_clone.get("provider")})
 
@@ -95,7 +107,7 @@ async def process_video_task(supabase: Client, task: dict[str, Any]) -> dict[str
     ).eq("id", task_id).execute()
     log_task(supabase, task_id=task_id, level="info", message="TTS generated", data={"duration": tts_result["duration"]})
 
-    update_task_status(supabase, task_id, "generating_avatar")
+    update_queue_status(supabase, task_id, "generating_avatar")
     avatar = await generate_avatar_video(
         supabase,
         audio_url=tts_result["audio_url"],
@@ -110,7 +122,7 @@ async def process_video_task(supabase: Client, task: dict[str, Any]) -> dict[str
     ).eq("id", task_id).execute()
     log_task(supabase, task_id=task_id, level="info", message="Avatar step completed", data=avatar)
 
-    update_task_status(supabase, task_id, "rendering")
+    update_queue_status(supabase, task_id, "rendering")
     final_video_url = await render_product_video(
         supabase,
         product_name=task["product_name"],
@@ -123,12 +135,13 @@ async def process_video_task(supabase: Client, task: dict[str, Any]) -> dict[str
     supabase.table("video_tasks").update(
         {
             "result_video_url": final_video_url,
-            "status": "success",
+            "status": "completed",
             "subtitle_status": "completed",
+            "generation_error": "",
         }
     ).eq("id", task_id).execute()
     try:
-        supabase.table("task_queue").update({"status": "success"}).eq("task_id", task_id).execute()
+        supabase.table("task_queue").update({"status": "success", "error_message": ""}).eq("task_id", task_id).execute()
     except Exception:
         pass
     log_task(supabase, task_id=task_id, level="info", message="Pipeline success", data={"final_video_url": final_video_url})
