@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Download, FileAudio2, UserRound } from "lucide-react";
 
 import { StatusBadge } from "@/components/StatusBadge";
+import { TaskActions } from "@/components/TaskActions";
 import { getAvatarProfile } from "@/lib/avatars";
 import { getLanguageLabel, getTTSVoiceLabel } from "@/lib/tts";
 import type { VideoTask } from "@/lib/types";
@@ -26,6 +27,7 @@ export function TaskCard({ task }: { task: VideoTask }) {
           <StatusBadge status={task.status} />
         </div>
         <p className="line-clamp-3 text-sm leading-6 text-slate-300">{task.script}</p>
+        {task.generation_error ? <p className="rounded-md border border-rose-300/20 bg-rose-400/10 p-2 text-xs text-rose-100">{task.generation_error}</p> : null}
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-400">
           <span>语言：{getLanguageLabel(task.tts_language || task.language)}</span>
           <span>Voice：{getTTSVoiceLabel(task.tts_voice_name)}</span>
@@ -44,6 +46,7 @@ export function TaskCard({ task }: { task: VideoTask }) {
           </a>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3 text-sm text-slate-400">
+          <TaskActions taskId={task.id} />
           {(task.status === "completed" || task.status === "success") && task.result_video_url ? (
             <a
               className="inline-flex items-center gap-2 rounded-md border border-lime/30 px-3 py-2 text-lime hover:bg-lime/10"

@@ -30,6 +30,18 @@ class Settings(BaseSettings):
     wechat_pay_api_key: str = ""
     alipay_app_id: str = ""
     alipay_private_key: str = ""
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    openai_tts_model: str = "gpt-4o-mini-tts"
+    openai_tts_voice: str = "alloy"
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = ""
+    heygen_api_key: str = ""
+    heygen_avatar_id: str = ""
+    heygen_voice_id: str = ""
+    enable_task_worker: bool = True
+    task_worker_poll_seconds: int = 8
+    ffmpeg_path: str = "ffmpeg"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

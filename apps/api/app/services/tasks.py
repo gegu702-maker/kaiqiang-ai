@@ -151,6 +151,9 @@ def with_commerce_ai_fallback(task: dict[str, Any]) -> dict[str, Any]:
         and normalized.get("admin_workflow")
     )
     if has_ai_package:
+        normalized.setdefault("generation_error", "")
+        normalized.setdefault("voice_duration", None)
+        normalized.setdefault("talking_video_url", None)
         return normalized
 
     product_highlights = normalized.get("product_highlights") or normalized.get("script") or ""
@@ -183,6 +186,9 @@ def with_commerce_ai_fallback(task: dict[str, Any]) -> dict[str, Any]:
     normalized["comment_prompt"] = normalized.get("comment_prompt") or package["comment_prompt"]
     normalized["closing_cta"] = normalized.get("closing_cta") or package["closing_cta"]
     normalized["admin_workflow"] = normalized.get("admin_workflow") or package["admin_workflow"]
+    normalized.setdefault("generation_error", "")
+    normalized.setdefault("voice_duration", None)
+    normalized.setdefault("talking_video_url", None)
     return normalized
 
 
@@ -234,6 +240,7 @@ def update_task(
     heygen_video_id: str | None = None,
     heygen_video_url: str | None = None,
     admin_notes: str | None = None,
+    generation_error: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if status:
@@ -258,6 +265,28 @@ def update_task(
         payload["heygen_video_url"] = heygen_video_url
     if admin_notes is not None:
         payload["admin_notes"] = admin_notes
+    if generation_error is not None:
+        payload["generation_error"] = generation_error
 
     result = supabase.table(TABLE).update(payload).eq("id", task_id).execute()
     return with_commerce_ai_fallback(result.data[0])
+
+
+def delete_user_task(supabase: Client, task_id: str, user_id: str) -> None:
+    supabase.table(TABLE).delete().eq("id", task_id).eq("user_id", user_id).execute()
+
+
+def requeue_user_task(supabase: Client, task_id: str, user_id: str) -> dict[str, Any]:
+    task = get_user_task(supabase, task_id, user_id)
+    if not task:
+        raise ValueError("Task not found")
+    supabase.table(TABLE).update({"status": "waiting", "generation_error": ""}).eq("id", task_id).execute()
+    try:
+        existing = supabase.table("task_queue").select("id").eq("task_id", task_id).limit(1).execute()
+        if existing.data:
+            supabase.table("task_queue").update({"status": "waiting", "attempts": 0, "error_message": ""}).eq("task_id", task_id).execute()
+        else:
+            supabase.table("task_queue").insert({"task_id": task_id, "user_id": user_id, "status": "waiting"}).execute()
+    except APIError:
+        pass
+    return get_user_task(supabase, task_id, user_id) or task

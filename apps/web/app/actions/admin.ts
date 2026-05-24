@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { cloneVoice, markAdminOrderPaid, updateAdminTask, updateAdminUser } from "@/lib/api";
+import { cloneVoice, markAdminOrderPaid, retryAdminTask, updateAdminTask, updateAdminUser } from "@/lib/api";
 import type { ActionState } from "@/lib/types";
 
 export async function updateTaskAction(
@@ -95,5 +95,20 @@ export async function markOrderPaidAction(
       ok: false,
       message: error instanceof Error ? error.message : "订单处理失败。",
     };
+  }
+}
+
+export async function retryAdminTaskAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const taskId = String(formData.get("task_id") ?? "");
+  try {
+    await retryAdminTask(taskId);
+    revalidatePath("/admin");
+    revalidatePath(`/admin/tasks/${taskId}`);
+    return { ok: true, message: "任务已重新进入队列。" };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "重试失败。" };
   }
 }

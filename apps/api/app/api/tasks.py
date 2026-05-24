@@ -10,13 +10,13 @@ from app.models.video_task import TaskCreateResponse, VideoTask
 from app.services.content_ai import generate_commerce_package
 from app.services.billing import assert_generation_quota, log_generation_usage
 from app.services.storage import upload_public_file
-from app.services.tasks import create_task, get_user_task, list_user_tasks
+from app.services.tasks import create_task, delete_user_task, get_user_task, list_user_tasks, requeue_user_task
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 ALLOWED_AVATARS = {"emily", "david", "sophia", "alex", "heygen_custom"}
 ALLOWED_LANGUAGES = set(MINIMAX_TTS_VOICES.keys())
-ALLOWED_VIDEO_STYLES = {"hard_sell", "emotional_seed", "review", "story"}
+ALLOWED_VIDEO_STYLES = {"hard_sell", "emotional_seed", "premium", "factory_boss", "tiktok", "review", "story"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 VOICE_EXTENSIONS = {".mp3", ".wav", ".m4a"}
@@ -140,4 +140,29 @@ def get_task_detail(
     task = get_user_task(supabase, task_id, user["id"])
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    return VideoTask(**task)
+
+
+@router.delete("/{task_id}")
+def delete_task(
+    task_id: str,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    user = get_authenticated_user(supabase, token)
+    delete_user_task(supabase, task_id, user["id"])
+    return {"ok": True}
+
+
+@router.post("/{task_id}/retry", response_model=VideoTask)
+def retry_task(
+    task_id: str,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> VideoTask:
+    user = get_authenticated_user(supabase, token)
+    try:
+        task = requeue_user_task(supabase, task_id, user["id"])
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Task not found") from None
     return VideoTask(**task)

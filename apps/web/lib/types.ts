@@ -1,5 +1,8 @@
 export type TaskStatus =
   | "waiting"
+  | "generating_script"
+  | "generating_voice"
+  | "generating_avatar"
   | "rendering"
   | "success"
   | "pending"
@@ -58,6 +61,9 @@ export type VideoTask = {
   subtitle_url: string | null;
   subtitle_status: "pending" | "completed" | "failed";
   cloned_voice_url: string | null;
+  voice_duration: number | null;
+  talking_video_url: string | null;
+  generation_error: string;
   cosyvoice_status: CosyVoiceStatus;
   heygen_avatar_id: string;
   heygen_voice_id: string;

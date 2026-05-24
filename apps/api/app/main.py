@@ -8,8 +8,16 @@ from app.api.debug import router as debug_router
 from app.api.health import router as health_router
 from app.api.tasks import router as tasks_router
 from app.core.config import settings
+from app.services.task_worker import worker_loop
+import asyncio
 
 app = FastAPI(title="AI Digital Human API", version="0.1.0")
+
+
+@app.on_event("startup")
+async def start_worker() -> None:
+    if settings.enable_task_worker:
+        asyncio.create_task(worker_loop())
 
 app.add_middleware(
     CORSMiddleware,

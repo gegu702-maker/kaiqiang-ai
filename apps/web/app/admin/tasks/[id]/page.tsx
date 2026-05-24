@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { ArrowLeft, Download, ExternalLink, FileAudio2, Languages, Mail, UserRound, WandSparkles } from "lucide-react";
 
 import { AdminUpdateForm } from "@/components/AdminUpdateForm";
+import { AdminTaskRetryForm } from "@/components/AdminTaskRetryForm";
 import { CommerceAiOutput } from "@/components/CommerceAiOutput";
 import { CopyButton } from "@/components/CopyButton";
 import { RefreshOnInterval } from "@/components/RefreshOnInterval";
@@ -73,6 +74,7 @@ export default async function AdminTaskDetailPage({ params }: Props) {
             </Link>
           </Button>
           <CopyButton value={task.script} label="复制视频文案" />
+          <AdminTaskRetryForm taskId={task.id} />
           <Button asChild variant="outline" size="sm">
             <a href={task.voice_url} target="_blank" rel="noreferrer" download>
               <Download size={15} />
@@ -130,6 +132,11 @@ export default async function AdminTaskDetailPage({ params }: Props) {
             </CardHeader>
             <CardContent className="space-y-4">
               <TaskProgress status={task.status} />
+              {task.generation_error ? (
+                <div className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-3 text-sm text-rose-100">
+                  {task.generation_error}
+                </div>
+              ) : null}
               <AdminUpdateForm task={task} />
               <p className="text-xs leading-6 text-slate-500">
                 管理员可复制 AI 脚本、分镜和提示词，手动粘贴到 HeyGen、即梦、可灵完成视频处理后，在这里上传最终 MP4。

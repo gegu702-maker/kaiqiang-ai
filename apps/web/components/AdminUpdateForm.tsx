@@ -11,6 +11,9 @@ import { cn } from "@/lib/utils";
 const initialState = { ok: false, message: "" };
 const statusStyles = {
   waiting: "border-amber-300/30 bg-amber-300/10 text-amber-100",
+  generating_script: "border-fuchsia-300/30 bg-fuchsia-300/10 text-fuchsia-100",
+  generating_voice: "border-blue-300/30 bg-blue-300/10 text-blue-100",
+  generating_avatar: "border-violet-300/30 bg-violet-300/10 text-violet-100",
   rendering: "border-cyan/30 bg-cyan/10 text-cyan",
   success: "border-lime/30 bg-lime/10 text-lime",
   pending: "border-amber-300/30 bg-amber-300/10 text-amber-100",
@@ -54,6 +57,9 @@ export function AdminUpdateForm({ task }: { task: VideoTask }) {
         className={cn("h-10 rounded-md border px-3 text-sm outline-none ring-cyan/40 focus:ring-2", statusStyles[status])}
       >
         <option value="waiting">waiting</option>
+        <option value="generating_script">generating_script</option>
+        <option value="generating_voice">generating_voice</option>
+        <option value="generating_avatar">generating_avatar</option>
         <option value="rendering">rendering</option>
         <option value="success">success</option>
         <option value="pending">pending</option>

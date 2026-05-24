@@ -109,6 +109,9 @@ export function TaskForm({ userEmail, remainingQuota }: TaskFormProps) {
           >
             <option value="hard_sell">硬核带货</option>
             <option value="emotional_seed">情绪种草</option>
+            <option value="premium">高端质感</option>
+            <option value="factory_boss">工厂老板风</option>
+            <option value="tiktok">TikTok 风格</option>
             <option value="review">测评解说</option>
             <option value="story">剧情短片</option>
           </select>

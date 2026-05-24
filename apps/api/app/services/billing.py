@@ -57,6 +57,8 @@ def ensure_profile(supabase: Client, *, user_id: str, email: str) -> dict[str, A
 
 def get_usage_summary(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
     profile = ensure_profile(supabase, user_id=user_id, email=email)
+    if profile.get("status") == "banned":
+        raise HTTPException(status_code=403, detail="账户已被禁用，请联系管理员。")
     plan = profile.get("plan") or "free"
     quota = profile.get("custom_quota")
     if quota is None:
@@ -82,6 +84,16 @@ def get_usage_summary(supabase: Client, *, user_id: str, email: str) -> dict[str
         "used": used,
         "remaining": remaining,
         "period_start": period,
+    }
+
+
+def get_generation_limits(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
+    usage = get_usage_summary(supabase, user_id=user_id, email=email)
+    plan = usage["plan"]
+    return {
+        "plan": plan,
+        "max_seconds": 15 if plan == "free" else 45,
+        "watermark": plan == "free",
     }
 
 

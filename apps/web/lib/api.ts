@@ -49,6 +49,24 @@ export async function getTask(taskId: string, accessToken?: string): Promise<Vid
   return parseResponse<VideoTask>(response);
 }
 
+export async function deleteTask(taskId: string, accessToken?: string): Promise<{ ok: boolean }> {
+  const response = await fetch(`${API_URL}/api/tasks/${taskId}`, {
+    method: "DELETE",
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<{ ok: boolean }>(response);
+}
+
+export async function retryTask(taskId: string, accessToken?: string): Promise<VideoTask> {
+  const response = await fetch(`${API_URL}/api/tasks/${taskId}/retry`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<VideoTask>(response);
+}
+
 export async function getUsageSummary(accessToken?: string): Promise<UsageSummary | null> {
   if (!accessToken) return null;
   const response = await fetch(`${API_URL}/api/billing/usage`, {
@@ -138,6 +156,17 @@ export async function markAdminOrderPaid(orderId: string, formData: FormData): P
     cache: "no-store",
   });
   return parseResponse<{ ok: boolean; order: Order }>(response);
+}
+
+export async function retryAdminTask(taskId: string): Promise<VideoTask> {
+  const response = await fetch(`${API_URL}/api/admin/tasks/${taskId}/retry`, {
+    method: "POST",
+    headers: {
+      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
+    },
+    cache: "no-store",
+  });
+  return parseResponse<VideoTask>(response);
 }
 
 export async function getAdminTask(taskId: string): Promise<VideoTask> {

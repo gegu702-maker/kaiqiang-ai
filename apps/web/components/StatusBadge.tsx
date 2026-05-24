@@ -4,6 +4,9 @@ import type { TaskStatus } from "@/lib/types";
 
 const styles: Record<TaskStatus, string> = {
   waiting: "border-amber-300/30 bg-amber-300/10 text-amber-200",
+  generating_script: "border-fuchsia-300/30 bg-fuchsia-300/10 text-fuchsia-100",
+  generating_voice: "border-blue-300/30 bg-blue-300/10 text-blue-100",
+  generating_avatar: "border-violet-300/30 bg-violet-300/10 text-violet-100",
   rendering: "border-cyan/30 bg-cyan/10 text-cyan",
   success: "border-lime/30 bg-lime/10 text-lime",
   pending: "border-amber-300/30 bg-amber-300/10 text-amber-200",

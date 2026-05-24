@@ -7,6 +7,9 @@ from pydantic import BaseModel, EmailStr
 
 class TaskStatus(str, Enum):
     waiting = "waiting"
+    generating_script = "generating_script"
+    generating_voice = "generating_voice"
+    generating_avatar = "generating_avatar"
     rendering = "rendering"
     success = "success"
     pending = "pending"
@@ -54,6 +57,9 @@ class VideoTask(BaseModel):
     subtitle_url: Optional[str] = None
     subtitle_status: SubtitleStatus = SubtitleStatus.pending
     cloned_voice_url: Optional[str] = None
+    voice_duration: Optional[float] = None
+    talking_video_url: Optional[str] = None
+    generation_error: str = ""
     cosyvoice_status: CosyVoiceStatus = CosyVoiceStatus.pending
     heygen_avatar_id: str = ""
     heygen_voice_id: str = ""

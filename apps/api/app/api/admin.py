@@ -136,3 +136,31 @@ def mark_order_paid(
 ) -> dict:
     order = mark_order_paid_and_upgrade(supabase, order_id=order_id, provider_payment_id=provider_payment_id)
     return {"ok": True, "order": order}
+
+
+@router.get("/tasks/{task_id}/logs", dependencies=[Depends(verify_admin)])
+def get_task_logs(task_id: str, supabase: Client = Depends(get_supabase)) -> list[dict]:
+    result = (
+        supabase.table("task_logs")
+        .select("*")
+        .eq("task_id", task_id)
+        .order("created_at", desc=True)
+        .limit(100)
+        .execute()
+    )
+    return result.data
+
+
+@router.post("/tasks/{task_id}/retry", response_model=VideoTask, dependencies=[Depends(verify_admin)])
+def retry_admin_task(task_id: str, supabase: Client = Depends(get_supabase)) -> VideoTask:
+    task = get_task(supabase, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    supabase.table("video_tasks").update({"status": "waiting", "generation_error": ""}).eq("id", task_id).execute()
+    existing = supabase.table("task_queue").select("id").eq("task_id", task_id).limit(1).execute()
+    if existing.data:
+        supabase.table("task_queue").update({"status": "waiting", "attempts": 0, "error_message": ""}).eq("task_id", task_id).execute()
+    else:
+        supabase.table("task_queue").insert({"task_id": task_id, "user_id": task.get("user_id"), "status": "waiting"}).execute()
+    updated = get_task(supabase, task_id)
+    return VideoTask(**updated)
