@@ -47,20 +47,18 @@ export function LandingPage({ startHref }: { startHref: string }) {
 
   return (
     <main
-      className="min-h-[calc(100vh-88px)] overflow-hidden text-slate-950"
+      className="min-h-[calc(100vh-80px)] overflow-hidden text-slate-950"
       style={{
         background:
-          "radial-gradient(circle at 73% 25%, rgba(122, 114, 255, 0.24), transparent 38%), radial-gradient(circle at 58% 8%, rgba(191, 219, 254, 0.16), transparent 30%), radial-gradient(circle at 50% 82%, rgba(255, 255, 255, 0.92), transparent 42%), linear-gradient(180deg, #fcfdff 0%, #f8f9ff 48%, #ffffff 100%)",
+          "radial-gradient(circle at 74% 25%, rgba(122, 114, 255, 0.13), transparent 40%), radial-gradient(circle at 58% 8%, rgba(191, 219, 254, 0.08), transparent 30%), radial-gradient(circle at 50% 84%, rgba(255, 255, 255, 0.96), transparent 44%), linear-gradient(180deg, #ffffff 0%, #fafbff 48%, #ffffff 100%)",
       }}
     >
       <section className="relative mx-auto grid min-h-[590px] max-w-[1536px] items-center gap-8 px-6 pb-2 pt-16 sm:px-10 lg:grid-cols-[0.46fr_0.54fr] lg:px-[92px] lg:pb-0 lg:pt-16">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-100 to-transparent" />
-        <div className="pointer-events-none absolute right-[-12%] top-[-18%] size-[980px] rounded-full bg-[radial-gradient(circle,rgba(120,112,255,0.18),rgba(219,225,255,0.15)_42%,rgba(255,255,255,0)_72%)] blur-sm" />
-        <div className="pointer-events-none absolute right-[2%] top-[1%] hidden size-[760px] rounded-full border border-white/55 lg:block" />
-        <div className="pointer-events-none absolute right-[7.5%] top-[9%] hidden size-[590px] rounded-full border border-white/65 lg:block" />
-        <div className="pointer-events-none absolute right-[13.5%] top-[17%] hidden size-[430px] rounded-full border border-indigo-100/45 lg:block" />
-        <div className="pointer-events-none absolute right-[10%] top-[12%] hidden size-3.5 rounded-full bg-indigo-200/55 lg:block" />
-        <div className="pointer-events-none absolute right-[4.8%] top-[42%] hidden size-3 rounded-full bg-blue-200/60 lg:block" />
+        <div className="pointer-events-none absolute right-[-12%] top-[-18%] size-[920px] rounded-full bg-[radial-gradient(circle,rgba(120,112,255,0.1),rgba(219,225,255,0.08)_42%,rgba(255,255,255,0)_72%)]" />
+        <div className="pointer-events-none absolute right-[3%] top-[2%] hidden size-[740px] rounded-full border border-white/42 lg:block" />
+        <div className="pointer-events-none absolute right-[10%] top-[12%] hidden size-[540px] rounded-full border border-indigo-100/35 lg:block" />
+        <div className="pointer-events-none absolute right-[10%] top-[12%] hidden size-3 rounded-full bg-indigo-200/35 lg:block" />
         <div className="pointer-events-none absolute right-[44%] top-[25%] hidden size-1.5 rounded-full bg-violet-300/50 lg:block" />
 
         <div className="relative z-10 max-w-[650px] space-y-7 lg:-mt-7 lg:pl-0">
@@ -104,20 +102,18 @@ export function LandingPage({ startHref }: { startHref: string }) {
 
         <div className="relative z-10 flex justify-center lg:justify-center lg:-ml-8 lg:pr-8">
           <div className="relative flex size-[220px] items-center justify-center sm:size-[350px] lg:size-[500px]">
-            <div className="absolute inset-[-24%] rounded-full bg-[radial-gradient(circle,rgba(126,116,255,0.26)_0%,rgba(219,225,255,0.36)_38%,rgba(255,255,255,0)_72%)] blur-2xl" />
-            <div className="absolute inset-[-3%] rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.72)_0%,rgba(236,239,255,0.46)_42%,rgba(255,255,255,0)_68%)]" />
-            <div className="absolute inset-0 rounded-full border border-white/65" />
-            <div className="absolute inset-12 rounded-full border border-white/72" />
-            <div className="absolute inset-24 hidden rounded-full border border-indigo-100/55 sm:block" />
-            <div className="absolute -right-3 top-12 size-3.5 rounded-full bg-indigo-200/65 shadow-[0_0_24px_rgba(99,102,241,0.26)]" />
-            <div className="absolute left-16 top-24 size-1.5 rounded-full bg-violet-300/60" />
-            <div className="absolute bottom-28 right-6 size-2.5 rounded-full bg-blue-200/60" />
+            <div className="absolute inset-[-20%] rounded-full bg-[radial-gradient(circle,rgba(126,116,255,0.14)_0%,rgba(219,225,255,0.18)_38%,rgba(255,255,255,0)_72%)] blur-xl" />
+            <div className="absolute inset-[-2%] rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.45)_0%,rgba(236,239,255,0.2)_42%,rgba(255,255,255,0)_68%)]" />
+            <div className="absolute inset-0 rounded-full border border-white/42" />
+            <div className="absolute inset-16 rounded-full border border-indigo-100/34" />
+            <div className="absolute -right-3 top-12 size-3 rounded-full bg-indigo-200/38 shadow-[0_0_18px_rgba(99,102,241,0.18)]" />
+            <div className="absolute bottom-28 right-6 size-2 rounded-full bg-blue-200/36" />
             <Image
               src="/logo-transparent.png"
               alt="KAIQIANG.AI brand logo"
               fill
               sizes="(min-width: 1024px) 500px, (min-width: 640px) 350px, 220px"
-              className="relative scale-[1.08] object-contain opacity-[0.86] drop-shadow-[0_30px_58px_rgba(80,76,150,0.25)] [filter:invert(1)_drop-shadow(0_10px_20px_rgba(83,78,150,0.22))]"
+              className="relative scale-[1.08] object-contain opacity-[0.92] drop-shadow-[0_26px_48px_rgba(80,76,150,0.18)]"
               priority
             />
           </div>
