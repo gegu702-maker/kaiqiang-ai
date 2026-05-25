@@ -220,6 +220,21 @@ def _sync_user_quota(
         pass
 
 
+def _get_user_quota(supabase: Client, *, user_id: str) -> dict[str, Any] | None:
+    try:
+        result = (
+            supabase.table("user_quotas")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("reset_month", current_reset_month())
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except APIError:
+        return None
+
+
 def _quota_for_user(supabase: Client, *, user_id: str) -> tuple[str, int | None]:
     try:
         result = (
@@ -255,9 +270,16 @@ def get_usage_summary(supabase: Client, *, user_id: str, email: str) -> dict[str
         quota = PLAN_QUOTAS[plan]
 
     period = current_period_start()
-    used = _count_generation_usage(supabase, user_id=user_id, period=period)
-    remaining = None if quota is None else max(int(quota) - used, 0)
-    _sync_user_quota(supabase, user_id=user_id, plan=plan, quota=quota, used=used)
+    quota_record = _get_user_quota(supabase, user_id=user_id)
+    if quota_record:
+        plan = quota_record.get("plan") or plan
+        quota = quota_record.get("monthly_limit")
+        used = int(quota_record.get("used_count") or 0)
+        remaining = int(quota_record.get("remaining_count") or 0)
+    else:
+        used = _count_generation_usage(supabase, user_id=user_id, period=period)
+        remaining = None if quota is None else max(int(quota) - used, 0)
+        _sync_user_quota(supabase, user_id=user_id, plan=plan, quota=quota, used=used)
 
     return {
         "plan": plan,

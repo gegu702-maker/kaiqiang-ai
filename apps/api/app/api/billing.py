@@ -13,6 +13,7 @@ from app.services.billing import (
 )
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+quota_router = APIRouter(tags=["billing"])
 
 
 @router.get("/usage")
@@ -22,6 +23,31 @@ def get_current_usage(
 ) -> dict:
     user = get_authenticated_user(supabase, token)
     return get_usage_summary(supabase, user_id=user["id"], email=user["email"])
+
+
+@router.get("/quota")
+def get_current_quota(
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    user = get_authenticated_user(supabase, token)
+    usage = get_usage_summary(supabase, user_id=user["id"], email=user["email"])
+    return {
+        "plan": usage["plan"],
+        "monthly_limit": usage["monthly_quota"],
+        "used_count": usage["used"],
+        "remaining_count": usage["remaining"],
+        "remaining": usage["remaining"],
+        "reset_month": usage["period_start"][:7],
+    }
+
+
+@quota_router.get("/quota")
+def get_current_quota_alias(
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    return get_current_quota(token=token, supabase=supabase)
 
 
 @router.post("/orders")

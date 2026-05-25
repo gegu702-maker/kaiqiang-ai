@@ -38,6 +38,7 @@ const copy = {
     loginHint: "可以先填写和上传素材，点击生成时再登录，登录后回到工作台。",
     draftRestored: "已恢复上次填写的工作台草稿。",
     businessQuota: "Business 套餐：自定义额度",
+    quotaLoadFailed: "额度加载失败，请刷新后重试。",
     remaining: (quota: number) => `本月剩余 ${quota} 次生成`,
     loggedOutQuota: "登录后可生成，每月免费 3 次。",
     submit: "生成带货视频方案",
@@ -79,6 +80,7 @@ const copy = {
     loginHint: "You can fill in details and upload assets first. Sign in when you click generate, then return to the studio.",
     draftRestored: "Your previous studio draft has been restored.",
     businessQuota: "Business plan: custom quota",
+    quotaLoadFailed: "Quota failed to load. Please refresh and try again.",
     remaining: (quota: number) => `${quota} generations left this month`,
     loggedOutQuota: "Sign in to generate. Free plan includes 3 generations per month.",
     submit: "Generate Now",
@@ -101,13 +103,15 @@ const copy = {
 type TaskFormProps = {
   userEmail?: string | null;
   remainingQuota?: number | null;
+  quotaLoadFailed?: boolean;
   voiceCloneEnabled?: boolean;
   voiceClones?: VoiceClone[];
 };
 
-export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false, voiceClones = [] }: TaskFormProps) {
+export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [] }: TaskFormProps) {
   const { locale } = useLanguage();
   const current = copy[locale];
+  const displayedRemainingQuota = userEmail && remainingQuota === undefined ? 3 : remainingQuota;
   const [state, action] = useActionState(submitTaskAction, initialState);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const personalImageInputRef = useRef<HTMLInputElement>(null);
@@ -362,10 +366,12 @@ export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false,
           {!userEmail ? <p className="text-xs text-cyan">{current.loginHint}</p> : null}
           {draftRestored ? <p className="text-xs text-lime">{current.draftRestored}</p> : null}
           <p className="text-xs text-slate-500">
-            {userEmail
-              ? remainingQuota === null
+            {quotaLoadFailed
+              ? current.quotaLoadFailed
+              : userEmail
+              ? displayedRemainingQuota === null
                 ? current.businessQuota
-                : current.remaining(Math.max(remainingQuota ?? 0, 0))
+                : current.remaining(Math.max(displayedRemainingQuota ?? 3, 0))
               : current.loggedOutQuota}
           </p>
         </div>

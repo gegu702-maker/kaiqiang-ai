@@ -9,6 +9,7 @@ export default async function StudioPage() {
     data: { session },
   } = await supabase.auth.getSession();
   let remainingQuota: number | null | undefined = undefined;
+  let quotaLoadFailed = false;
   let voiceCloneEnabled = false;
   let voiceClones: VoiceClone[] = [];
 
@@ -20,6 +21,7 @@ export default async function StudioPage() {
     } catch (err) {
       console.error("[StudioPage] usage fallback", err);
       remainingQuota = 3;
+      quotaLoadFailed = true;
     }
     try {
       voiceClones = await getVoiceClones(session.access_token);
@@ -28,5 +30,13 @@ export default async function StudioPage() {
     }
   }
 
-  return <StudioWorkspace userEmail={session?.user.email} remainingQuota={remainingQuota} voiceCloneEnabled={voiceCloneEnabled} voiceClones={voiceClones} />;
+  return (
+    <StudioWorkspace
+      userEmail={session?.user.email}
+      remainingQuota={remainingQuota}
+      quotaLoadFailed={quotaLoadFailed}
+      voiceCloneEnabled={voiceCloneEnabled}
+      voiceClones={voiceClones}
+    />
+  );
 }

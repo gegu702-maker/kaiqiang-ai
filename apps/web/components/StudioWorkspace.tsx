@@ -46,11 +46,12 @@ const copy = {
 type StudioWorkspaceProps = {
   userEmail?: string | null;
   remainingQuota?: number | null;
+  quotaLoadFailed?: boolean;
   voiceCloneEnabled?: boolean;
   voiceClones?: VoiceClone[];
 };
 
-export function StudioWorkspace({ userEmail, remainingQuota, voiceCloneEnabled = false, voiceClones = [] }: StudioWorkspaceProps) {
+export function StudioWorkspace({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [] }: StudioWorkspaceProps) {
   const { locale } = useLanguage();
   const current = copy[locale];
 
@@ -119,7 +120,13 @@ export function StudioWorkspace({ userEmail, remainingQuota, voiceCloneEnabled =
           </div>
         </section>
         <section>
-          <TaskForm userEmail={userEmail} remainingQuota={remainingQuota} voiceCloneEnabled={voiceCloneEnabled} voiceClones={voiceClones} />
+          <TaskForm
+            userEmail={userEmail}
+            remainingQuota={remainingQuota}
+            quotaLoadFailed={quotaLoadFailed}
+            voiceCloneEnabled={voiceCloneEnabled}
+            voiceClones={voiceClones}
+          />
         </section>
         <section>
           <HomeVideoAgentPreview />
