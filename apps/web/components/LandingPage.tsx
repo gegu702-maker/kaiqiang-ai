@@ -47,31 +47,30 @@ export function LandingPage({ startHref }: { startHref: string }) {
 
   return (
     <main
-      className="min-h-[calc(100vh-96px)] overflow-hidden text-slate-950"
+      className="min-h-[calc(100vh-88px)] overflow-hidden text-slate-950"
       style={{
         background:
-          "radial-gradient(circle at 73% 29%, rgba(122, 114, 255, 0.24), transparent 34%), radial-gradient(circle at 56% 10%, rgba(191, 219, 254, 0.18), transparent 28%), radial-gradient(circle at 23% 80%, rgba(238, 242, 255, 0.9), transparent 35%), linear-gradient(180deg, #fbfcff 0%, #f8f9ff 55%, #ffffff 100%)",
+          "radial-gradient(circle at 73% 25%, rgba(122, 114, 255, 0.24), transparent 38%), radial-gradient(circle at 58% 8%, rgba(191, 219, 254, 0.16), transparent 30%), radial-gradient(circle at 50% 82%, rgba(255, 255, 255, 0.92), transparent 42%), linear-gradient(180deg, #fcfdff 0%, #f8f9ff 48%, #ffffff 100%)",
       }}
     >
-      <section className="relative mx-auto grid min-h-[660px] max-w-[1536px] items-center gap-10 px-6 pb-8 pt-[92px] sm:px-10 lg:grid-cols-[0.48fr_0.52fr] lg:px-[92px] lg:pb-8 lg:pt-[92px]">
+      <section className="relative mx-auto grid min-h-[590px] max-w-[1536px] items-center gap-8 px-6 pb-2 pt-16 sm:px-10 lg:grid-cols-[0.46fr_0.54fr] lg:px-[92px] lg:pb-0 lg:pt-16">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-100 to-transparent" />
-        <div className="pointer-events-none absolute right-[-6%] top-[-8%] size-[820px] rounded-full bg-[radial-gradient(circle,rgba(120,112,255,0.18),rgba(255,255,255,0)_68%)] blur-sm" />
-        <div className="pointer-events-none absolute right-[5.5%] top-[7%] hidden size-[690px] rounded-full border border-white/70 lg:block" />
-        <div className="pointer-events-none absolute right-[10.5%] top-[14%] hidden size-[540px] rounded-full border border-white/75 lg:block" />
-        <div className="pointer-events-none absolute right-[15.5%] top-[21%] hidden size-[405px] rounded-full border border-indigo-100/55 lg:block" />
-        <div className="pointer-events-none absolute right-[11%] top-[12%] hidden size-4 rounded-full bg-indigo-200/80 lg:block" />
-        <div className="pointer-events-none absolute right-[4.8%] top-[39%] hidden size-3.5 rounded-full bg-blue-200/80 lg:block" />
-        <div className="pointer-events-none absolute right-[43%] top-[25%] hidden size-2 rounded-full bg-violet-300/70 lg:block" />
-        <div className="pointer-events-none absolute right-[20%] top-[41%] hidden size-1.5 rounded-full bg-indigo-300/70 lg:block" />
+        <div className="pointer-events-none absolute right-[-12%] top-[-18%] size-[980px] rounded-full bg-[radial-gradient(circle,rgba(120,112,255,0.18),rgba(219,225,255,0.15)_42%,rgba(255,255,255,0)_72%)] blur-sm" />
+        <div className="pointer-events-none absolute right-[2%] top-[1%] hidden size-[760px] rounded-full border border-white/55 lg:block" />
+        <div className="pointer-events-none absolute right-[7.5%] top-[9%] hidden size-[590px] rounded-full border border-white/65 lg:block" />
+        <div className="pointer-events-none absolute right-[13.5%] top-[17%] hidden size-[430px] rounded-full border border-indigo-100/45 lg:block" />
+        <div className="pointer-events-none absolute right-[10%] top-[12%] hidden size-3.5 rounded-full bg-indigo-200/55 lg:block" />
+        <div className="pointer-events-none absolute right-[4.8%] top-[42%] hidden size-3 rounded-full bg-blue-200/60 lg:block" />
+        <div className="pointer-events-none absolute right-[44%] top-[25%] hidden size-1.5 rounded-full bg-violet-300/50 lg:block" />
 
-        <div className="relative z-10 max-w-[690px] space-y-8 lg:pl-0">
-          <div className="inline-flex items-center gap-2 rounded-full border border-indigo-100/80 bg-[#f2f0ff]/70 px-5 py-2.5 text-lg font-medium text-slate-800 shadow-[0_12px_40px_rgba(79,70,229,0.06)] backdrop-blur-xl max-sm:text-sm">
+        <div className="relative z-10 max-w-[650px] space-y-7 lg:-mt-7 lg:pl-0">
+          <div className="inline-flex items-center gap-2 rounded-full border border-indigo-100/80 bg-[#f2f0ff]/70 px-5 py-2 text-base font-medium text-slate-800 shadow-[0_12px_40px_rgba(79,70,229,0.05)] backdrop-blur-xl max-sm:text-sm">
             <Sparkles size={15} className="text-violet-500" />
             {current.badge}
           </div>
 
-          <div className="space-y-7">
-            <h1 className="max-w-[740px] text-5xl font-semibold leading-[1.1] tracking-[-0.045em] text-slate-900 sm:text-6xl lg:text-[76px]">
+          <div className="space-y-6">
+            <h1 className="max-w-[700px] text-5xl font-semibold leading-[1.14] tracking-[-0.043em] text-slate-900 sm:text-6xl lg:text-[68px]">
               <span className="block">{current.titlePrefix}</span>
               <span className="block whitespace-normal lg:whitespace-nowrap">
                 <span className="bg-gradient-to-br from-blue-500 via-violet-500 to-indigo-600 bg-clip-text font-bold text-transparent">
@@ -80,22 +79,22 @@ export function LandingPage({ startHref }: { startHref: string }) {
                 {current.titleSuffix}
               </span>
             </h1>
-            <p className="max-w-[600px] whitespace-pre-line text-[22px] font-normal leading-[1.75] text-slate-500 max-sm:text-lg">
+            <p className="max-w-[580px] whitespace-pre-line text-xl font-normal leading-[1.75] text-slate-500 max-sm:text-lg">
               {current.subtitle}
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-5">
+          <div className="flex flex-wrap gap-5 pt-1">
             <Link
               href={startHref}
-              className="inline-flex h-[62px] min-w-[170px] items-center justify-center gap-2 rounded-xl bg-slate-950 px-8 text-xl font-semibold text-white shadow-[0_18px_45px_rgba(15,23,42,0.16)] transition hover:-translate-y-0.5 hover:bg-slate-800 max-sm:h-12 max-sm:min-w-0 max-sm:text-base"
+              className="inline-flex h-14 min-w-[162px] items-center justify-center gap-2 rounded-xl bg-slate-950 px-7 text-lg font-semibold text-white shadow-[0_18px_45px_rgba(15,23,42,0.14)] transition hover:-translate-y-0.5 hover:bg-slate-800 max-sm:h-12 max-sm:min-w-0 max-sm:text-base"
             >
               {current.start}
               <ArrowUpRight size={18} />
             </Link>
             <a
               href="#examples"
-              className="inline-flex h-[62px] min-w-[190px] items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white/70 px-8 text-xl font-semibold text-slate-900 shadow-[0_10px_35px_rgba(15,23,42,0.06)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/90 max-sm:h-12 max-sm:min-w-0 max-sm:text-base"
+              className="inline-flex h-14 min-w-[178px] items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white/70 px-7 text-lg font-semibold text-slate-900 shadow-[0_10px_35px_rgba(15,23,42,0.055)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/90 max-sm:h-12 max-sm:min-w-0 max-sm:text-base"
             >
               <PlayCircle size={21} />
               {current.examples}
@@ -103,38 +102,39 @@ export function LandingPage({ startHref }: { startHref: string }) {
           </div>
         </div>
 
-        <div className="relative z-10 flex justify-center lg:justify-end lg:pr-2">
-          <div className="relative flex size-[230px] items-center justify-center sm:size-[380px] lg:size-[570px]">
-            <div className="absolute inset-[-20%] rounded-full bg-[radial-gradient(circle,rgba(126,116,255,0.24)_0%,rgba(219,225,255,0.34)_38%,rgba(255,255,255,0)_70%)] blur-2xl" />
-            <div className="absolute inset-0 rounded-full border border-white/75" />
-            <div className="absolute inset-14 rounded-full border border-white/80" />
-            <div className="absolute inset-28 hidden rounded-full border border-indigo-100/70 sm:block" />
-            <div className="absolute -right-4 top-14 size-4 rounded-full bg-indigo-200/80 shadow-[0_0_24px_rgba(99,102,241,0.35)]" />
-            <div className="absolute left-20 top-28 size-2 rounded-full bg-violet-300/80" />
-            <div className="absolute bottom-32 right-6 size-3 rounded-full bg-blue-200/80" />
+        <div className="relative z-10 flex justify-center lg:justify-center lg:-ml-8 lg:pr-8">
+          <div className="relative flex size-[220px] items-center justify-center sm:size-[350px] lg:size-[500px]">
+            <div className="absolute inset-[-24%] rounded-full bg-[radial-gradient(circle,rgba(126,116,255,0.26)_0%,rgba(219,225,255,0.36)_38%,rgba(255,255,255,0)_72%)] blur-2xl" />
+            <div className="absolute inset-[-3%] rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.72)_0%,rgba(236,239,255,0.46)_42%,rgba(255,255,255,0)_68%)]" />
+            <div className="absolute inset-0 rounded-full border border-white/65" />
+            <div className="absolute inset-12 rounded-full border border-white/72" />
+            <div className="absolute inset-24 hidden rounded-full border border-indigo-100/55 sm:block" />
+            <div className="absolute -right-3 top-12 size-3.5 rounded-full bg-indigo-200/65 shadow-[0_0_24px_rgba(99,102,241,0.26)]" />
+            <div className="absolute left-16 top-24 size-1.5 rounded-full bg-violet-300/60" />
+            <div className="absolute bottom-28 right-6 size-2.5 rounded-full bg-blue-200/60" />
             <Image
               src="/logo-transparent.png"
               alt="KAIQIANG.AI brand logo"
               fill
-              sizes="(min-width: 1024px) 570px, (min-width: 640px) 380px, 230px"
-              className="relative scale-[1.08] object-contain drop-shadow-[0_30px_58px_rgba(80,76,150,0.24)]"
+              sizes="(min-width: 1024px) 500px, (min-width: 640px) 350px, 220px"
+              className="relative scale-[1.08] object-contain opacity-[0.86] drop-shadow-[0_30px_58px_rgba(80,76,150,0.25)] [filter:invert(1)_drop-shadow(0_10px_20px_rgba(83,78,150,0.22))]"
               priority
             />
           </div>
         </div>
       </section>
 
-      <section id="examples" className="mx-auto max-w-[1384px] px-6 pb-16 sm:px-10 lg:pb-24">
-        <div className="grid gap-5 rounded-3xl border border-slate-200/80 bg-white/58 p-4 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:grid-cols-2 lg:grid-cols-4 lg:gap-0 lg:p-0">
+      <section id="examples" className="mx-auto -mt-4 max-w-[1384px] px-6 pb-14 sm:px-10 lg:-mt-7 lg:pb-20">
+        <div className="grid gap-5 rounded-[28px] border border-slate-200/75 bg-white/62 p-4 shadow-[0_18px_58px_rgba(15,23,42,0.075)] backdrop-blur-xl sm:grid-cols-2 lg:gap-0 lg:p-0 min-[1180px]:grid-cols-4">
           {current.cards.map(([title, desc], index) => {
             const Icon = icons[index];
             return (
-              <article key={title} className="group flex items-center gap-6 rounded-2xl border border-white/70 bg-white/62 p-7 shadow-[0_14px_40px_rgba(15,23,42,0.045)] backdrop-blur-xl transition duration-300 hover:-translate-y-1 hover:bg-white/82 hover:shadow-[0_24px_70px_rgba(79,70,229,0.11)] lg:rounded-none lg:border-0 lg:border-r lg:border-slate-200/80 lg:shadow-none lg:last:border-r-0">
-                <div className="grid size-[86px] shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-50 via-white to-violet-50 text-indigo-600 shadow-inner transition group-hover:scale-105">
-                  <Icon size={30} />
+              <article key={title} className="group flex items-center gap-5 rounded-2xl border border-white/70 bg-white/62 p-6 shadow-[0_14px_40px_rgba(15,23,42,0.04)] backdrop-blur-xl transition duration-300 hover:-translate-y-1 hover:bg-white/82 hover:shadow-[0_24px_70px_rgba(79,70,229,0.1)] min-[1180px]:rounded-none min-[1180px]:border-0 min-[1180px]:border-r min-[1180px]:border-slate-200/80 min-[1180px]:shadow-none min-[1180px]:last:border-r-0">
+                <div className="grid size-20 shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-50 via-white to-violet-50 text-indigo-600 shadow-inner transition group-hover:scale-105">
+                  <Icon size={28} />
                 </div>
                 <div>
-                  <h2 className="text-[22px] font-bold text-slate-950">{title}</h2>
+                  <h2 className="text-xl font-bold text-slate-950">{title}</h2>
                   <p className="mt-2 text-sm leading-6 text-slate-500">{desc}</p>
                   <p className="mt-1 text-sm leading-6 text-slate-500">{current.cards[index][2]}</p>
                 </div>
