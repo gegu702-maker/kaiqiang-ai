@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import HTTPException
 import httpx
+from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.core.config import settings
@@ -37,6 +38,8 @@ PLAN_MONTHLY_QUOTAS = {
 }
 
 VOICE_CLONE_PLANS = {"pro", "business"}
+FREE_PLAN = "free"
+FREE_MONTHLY_QUOTA = 3
 
 
 def current_period_start() -> str:
@@ -44,24 +47,200 @@ def current_period_start() -> str:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 
+def current_reset_month() -> str:
+    return datetime.now(UTC).strftime("%Y-%m")
+
+
+def _is_schema_or_table_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(
+        marker in message
+        for marker in (
+            "schema cache",
+            "pgrst",
+            "does not exist",
+            "could not find",
+            "column",
+            "relation",
+        )
+    )
+
+
+def _free_profile(user_id: str, email: str) -> dict[str, Any]:
+    return {
+        "id": user_id,
+        "email": email,
+        "plan": FREE_PLAN,
+        "monthly_quota": FREE_MONTHLY_QUOTA,
+        "custom_quota": None,
+        "voice_clone_enabled": False,
+        "default_voice_id": None,
+        "status": "active",
+    }
+
+
 def ensure_profile(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
-    result = supabase.table("profiles").select("*").eq("id", user_id).limit(1).execute()
-    if result.data:
-        profile = result.data[0]
-        if profile.get("status") == "banned":
-            raise HTTPException(status_code=403, detail="账户已被禁用，请联系管理员。")
-        return profile
+    fallback = _free_profile(user_id, email)
+    try:
+        result = supabase.table("profiles").select("*").eq("id", user_id).limit(1).execute()
+        if result.data:
+            profile = {**fallback, **result.data[0]}
+            if profile.get("status") == "banned":
+                raise HTTPException(status_code=403, detail="账户已被禁用，请联系管理员。")
+            _normalize_free_profile(supabase, profile)
+            return profile
+    except HTTPException:
+        raise
+    except APIError as error:
+        if not _is_schema_or_table_error(error):
+            raise
+        return fallback
 
     payload = {
         "id": user_id,
         "email": email,
-        "plan": "free",
-        "monthly_quota": PLAN_QUOTAS["free"],
+        "plan": FREE_PLAN,
+        "monthly_quota": FREE_MONTHLY_QUOTA,
         "voice_clone_enabled": False,
         "status": "active",
     }
-    created = supabase.table("profiles").insert(payload).execute()
-    return created.data[0]
+    for candidate in (
+        payload,
+        {"id": user_id, "email": email, "plan": FREE_PLAN, "monthly_quota": FREE_MONTHLY_QUOTA},
+        {"id": user_id, "email": email},
+    ):
+        try:
+            created = supabase.table("profiles").insert(candidate).execute()
+            profile = {**fallback, **(created.data[0] if created.data else candidate)}
+            _ensure_free_subscription(supabase, user_id=user_id)
+            return profile
+        except APIError as error:
+            if "duplicate" in str(error).lower():
+                return ensure_profile(supabase, user_id=user_id, email=email)
+            if not _is_schema_or_table_error(error):
+                raise
+    return fallback
+
+
+def _normalize_free_profile(supabase: Client, profile: dict[str, Any]) -> None:
+    updates: dict[str, Any] = {}
+    if not profile.get("plan"):
+        updates["plan"] = FREE_PLAN
+    if profile.get("monthly_quota") is None and profile.get("plan", FREE_PLAN) == FREE_PLAN:
+        updates["monthly_quota"] = FREE_MONTHLY_QUOTA
+    if not profile.get("status"):
+        updates["status"] = "active"
+    if not updates:
+        _ensure_free_subscription(supabase, user_id=profile["id"])
+        return
+    updates["updated_at"] = datetime.now(UTC).isoformat()
+    try:
+        supabase.table("profiles").update(updates).eq("id", profile["id"]).execute()
+    except APIError:
+        pass
+    _ensure_free_subscription(supabase, user_id=profile["id"])
+
+
+def _ensure_free_subscription(supabase: Client, *, user_id: str) -> None:
+    now = datetime.now(UTC)
+    try:
+        existing = (
+            supabase.table("subscriptions")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("status", "active")
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            return
+        supabase.table("subscriptions").insert(
+            {
+                "user_id": user_id,
+                "plan": FREE_PLAN,
+                "status": "active",
+                "provider": "manual",
+                "current_period_start": now.isoformat(),
+                "current_period_end": (now + timedelta(days=31)).isoformat(),
+            }
+        ).execute()
+    except APIError:
+        pass
+
+
+def _count_generation_usage(supabase: Client, *, user_id: str, period: str) -> int:
+    try:
+        logs = (
+            supabase.table("usage_logs")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .eq("action", "generate_video")
+            .gte("created_at", period)
+            .execute()
+        )
+        return logs.count or 0
+    except APIError:
+        return 0
+
+
+def _sync_user_quota(
+    supabase: Client,
+    *,
+    user_id: str,
+    plan: str,
+    quota: int | None,
+    used: int,
+) -> None:
+    if quota is None:
+        return
+    reset_month = current_reset_month()
+    payload = {
+        "user_id": user_id,
+        "plan": plan,
+        "monthly_limit": quota,
+        "used_count": used,
+        "remaining_count": max(quota - used, 0),
+        "reset_month": reset_month,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    try:
+        existing = (
+            supabase.table("user_quotas")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("reset_month", reset_month)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            supabase.table("user_quotas").update(payload).eq("id", existing.data[0]["id"]).execute()
+        else:
+            supabase.table("user_quotas").insert(payload).execute()
+    except APIError:
+        pass
+
+
+def _quota_for_user(supabase: Client, *, user_id: str) -> tuple[str, int | None]:
+    try:
+        result = (
+            supabase.table("profiles")
+            .select("plan,monthly_quota,custom_quota")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            profile = result.data[0]
+            plan = profile.get("plan") or FREE_PLAN
+            quota = profile.get("custom_quota")
+            if quota is None:
+                quota = profile.get("monthly_quota")
+            if quota is None:
+                quota = PLAN_QUOTAS.get(plan, FREE_MONTHLY_QUOTA)
+            return plan, quota
+    except APIError:
+        pass
+    return FREE_PLAN, FREE_MONTHLY_QUOTA
 
 
 def get_usage_summary(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
@@ -76,16 +255,9 @@ def get_usage_summary(supabase: Client, *, user_id: str, email: str) -> dict[str
         quota = PLAN_QUOTAS[plan]
 
     period = current_period_start()
-    logs = (
-        supabase.table("usage_logs")
-        .select("id", count="exact")
-        .eq("user_id", user_id)
-        .eq("action", "generate_video")
-        .gte("created_at", period)
-        .execute()
-    )
-    used = logs.count or 0
+    used = _count_generation_usage(supabase, user_id=user_id, period=period)
     remaining = None if quota is None else max(int(quota) - used, 0)
+    _sync_user_quota(supabase, user_id=user_id, plan=plan, quota=quota, used=used)
 
     return {
         "plan": plan,
@@ -124,15 +296,22 @@ def assert_generation_quota(supabase: Client, *, user_id: str, email: str) -> di
 
 
 def log_generation_usage(supabase: Client, *, user_id: str, task_id: str) -> None:
-    supabase.table("usage_logs").insert(
-        {
-            "user_id": user_id,
-            "task_id": task_id,
-            "action": "generate_video",
-            "quantity": 1,
-            "period_start": current_period_start(),
-        }
-    ).execute()
+    try:
+        supabase.table("usage_logs").insert(
+            {
+                "user_id": user_id,
+                "task_id": task_id,
+                "action": "generate_video",
+                "quantity": 1,
+                "period_start": current_period_start(),
+            }
+        ).execute()
+    except APIError:
+        return
+    period = current_period_start()
+    used = _count_generation_usage(supabase, user_id=user_id, period=period)
+    plan, quota = _quota_for_user(supabase, user_id=user_id)
+    _sync_user_quota(supabase, user_id=user_id, plan=plan, quota=quota, used=used)
 
 
 def refund_generation_usage(supabase: Client, *, user_id: str, task_id: str) -> None:
@@ -148,31 +327,40 @@ def refund_generation_usage(supabase: Client, *, user_id: str, task_id: str) -> 
         )
         if usage.data:
             supabase.table("usage_logs").delete().eq("id", usage.data[0]["id"]).execute()
+            used = _count_generation_usage(supabase, user_id=user_id, period=current_period_start())
+            plan, quota = _quota_for_user(supabase, user_id=user_id)
+            _sync_user_quota(supabase, user_id=user_id, plan=plan, quota=quota, used=used)
     except Exception:
         pass
 
 
 def list_user_orders(supabase: Client, *, user_id: str) -> list[dict[str, Any]]:
-    result = (
-        supabase.table("orders")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return result.data
+    try:
+        result = (
+            supabase.table("orders")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return result.data
+    except APIError:
+        return []
 
 
 def list_user_usage_logs(supabase: Client, *, user_id: str) -> list[dict[str, Any]]:
-    result = (
-        supabase.table("usage_logs")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(50)
-        .execute()
-    )
-    return result.data
+    try:
+        result = (
+            supabase.table("usage_logs")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        return result.data
+    except APIError:
+        return []
 
 
 def list_admin_users(supabase: Client) -> list[dict[str, Any]]:

@@ -15,11 +15,16 @@ export default async function StudioPage() {
   if (session?.access_token) {
     try {
       const usage = await getUsageSummary(session.access_token);
-      remainingQuota = usage?.remaining ?? null;
+      remainingQuota = usage?.remaining ?? 3;
       voiceCloneEnabled = Boolean(usage?.voice_clone_enabled);
+    } catch (err) {
+      console.error("[StudioPage] usage fallback", err);
+      remainingQuota = 3;
+    }
+    try {
       voiceClones = await getVoiceClones(session.access_token);
-    } catch {
-      remainingQuota = undefined;
+    } catch (err) {
+      console.error("[StudioPage] voice clones failed", err);
     }
   }
 

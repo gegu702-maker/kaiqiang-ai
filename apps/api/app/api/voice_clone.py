@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.core.auth import get_authenticated_user, get_bearer_token
@@ -98,14 +99,17 @@ def list_voice_clones(
     supabase: Client = Depends(get_supabase),
 ) -> list[dict]:
     user = get_authenticated_user(supabase, token)
-    result = (
-        supabase.table("voice_clones")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return result.data
+    try:
+        result = (
+            supabase.table("voice_clones")
+            .select("*")
+            .eq("user_id", user["id"])
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return result.data
+    except APIError:
+        return []
 
 
 @router.delete("/{voice_clone_id}")

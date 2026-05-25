@@ -8,6 +8,16 @@ import { VoiceCloneManager } from "@/components/VoiceCloneManager";
 import { createClient } from "@/lib/supabase/server";
 import type { Order, UsageLog, UsageSummary, VideoTask, VoiceClone } from "@/lib/types";
 
+const FREE_USAGE_FALLBACK: UsageSummary = {
+  plan: "free",
+  monthly_quota: 3,
+  used: 0,
+  remaining: 3,
+  period_start: new Date().toISOString(),
+  voice_clone_enabled: false,
+  default_voice_id: null,
+};
+
 export default async function AccountPage() {
   const supabase = await createClient();
   const {
@@ -18,24 +28,41 @@ export default async function AccountPage() {
     redirect("/login?next=/account");
   }
 
-  let usage: UsageSummary | null = null;
+  let usage: UsageSummary = FREE_USAGE_FALLBACK;
   let orders: Order[] = [];
   let usageLogs: UsageLog[] = [];
   let tasks: VideoTask[] = [];
   let voiceClones: VoiceClone[] = [];
   let error = "";
   try {
-    usage = await getUsageSummary(session.access_token);
+    usage = (await getUsageSummary(session.access_token)) ?? FREE_USAGE_FALLBACK;
+  } catch (err) {
+    console.error("[AccountPage] usage fallback", err);
+    error = "额度初始化中，已按 Free 套餐默认显示。刷新后会自动同步。";
+  }
+  try {
     orders = await getUserOrders(session.access_token);
+  } catch (err) {
+    console.error("[AccountPage] orders failed", err);
+  }
+  try {
     usageLogs = await getUserUsageLogs(session.access_token);
+  } catch (err) {
+    console.error("[AccountPage] usage logs failed", err);
+  }
+  try {
     tasks = await getUserTasks(session.access_token);
+  } catch (err) {
+    console.error("[AccountPage] tasks failed", err);
+  }
+  try {
     voiceClones = await getVoiceClones(session.access_token);
   } catch (err) {
-    error = err instanceof Error ? err.message : "额度信息加载失败";
+    console.error("[AccountPage] voice clones failed", err);
   }
 
-  const plan = usage?.plan ?? "free";
-  const remaining = usage?.remaining === null ? "自定义" : `${usage?.remaining ?? 0} 次`;
+  const plan = usage.plan;
+  const remaining = usage.remaining === null ? "自定义" : `${usage.remaining} 次`;
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
@@ -148,7 +175,7 @@ export default async function AccountPage() {
         <p className="mt-2 text-sm text-slate-400">API Key 数据表和权限已预留，后续开放开放平台时可直接接入。</p>
       </section>
 
-      <VoiceCloneManager enabled={Boolean(usage?.voice_clone_enabled)} clones={voiceClones} />
+      <VoiceCloneManager enabled={Boolean(usage.voice_clone_enabled)} clones={voiceClones} />
     </main>
   );
 }
