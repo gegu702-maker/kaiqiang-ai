@@ -30,6 +30,7 @@ const copy = {
     noDigitalHuman: "否，只生成素材和剪辑清单",
     productImage: "产品图片",
     personalImage: "个人形象素材",
+    optional: "可选",
     chooseFile: "选择文件",
     noFile: "未选择任何文件",
     clonedVoice: "使用我的克隆声音",
@@ -70,6 +71,7 @@ const copy = {
     noDigitalHuman: "No, generate assets and an editing checklist only",
     productImage: "Product Image",
     personalImage: "Personal Avatar Asset",
+    optional: "Optional",
     chooseFile: "Choose File",
     noFile: "No file selected",
     clonedVoice: "Use my cloned voice",
@@ -113,6 +115,7 @@ export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false,
   const [personalImageError, setPersonalImageError] = useState("");
   const [imageName, setImageName] = useState("");
   const [personalImageName, setPersonalImageName] = useState("");
+  const [useDigitalHuman, setUseDigitalHuman] = useState(true);
   const [draftRestored, setDraftRestored] = useState(false);
 
   useEffect(() => {
@@ -129,6 +132,7 @@ export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false,
           if (field instanceof RadioNodeList) {
             const radio = Array.from(field).find((item) => item instanceof HTMLInputElement && item.value === value);
             if (radio instanceof HTMLInputElement) radio.checked = true;
+            if (name === "use_digital_human") setUseDigitalHuman(value !== "false");
             return;
           }
           if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
@@ -261,11 +265,20 @@ export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false,
         <legend className="text-sm text-slate-300">{current.useDigitalHuman}</legend>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex h-11 cursor-pointer items-center gap-3 rounded-md border border-cyan/30 bg-cyan/10 px-3 text-sm text-slate-100">
-            <input type="radio" name="use_digital_human" value="true" defaultChecked />
+            <input type="radio" name="use_digital_human" value="true" checked={useDigitalHuman} onChange={() => setUseDigitalHuman(true)} />
             {current.yesDigitalHuman}
           </label>
           <label className="flex h-11 cursor-pointer items-center gap-3 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-slate-300">
-            <input type="radio" name="use_digital_human" value="false" />
+            <input
+              type="radio"
+              name="use_digital_human"
+              value="false"
+              checked={!useDigitalHuman}
+              onChange={() => {
+                setUseDigitalHuman(false);
+                setPersonalImageError("");
+              }}
+            />
             {current.noDigitalHuman}
           </label>
         </div>
@@ -297,13 +310,13 @@ export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false,
         </label>
       </div>
 
-      <label className="space-y-2">
+      <label className={useDigitalHuman ? "space-y-2" : "space-y-2 opacity-75"}>
         <span className="flex items-center gap-2 text-sm text-slate-300">
-          <ImagePlus size={15} /> {current.personalImage}
+          <ImagePlus size={15} /> {current.personalImage} {!useDigitalHuman ? <span className="text-xs text-slate-500">({current.optional})</span> : null}
         </span>
         <input
           ref={personalImageInputRef}
-          required
+          required={useDigitalHuman}
           type="file"
           name="personal_image"
           accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"

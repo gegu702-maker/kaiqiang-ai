@@ -47,7 +47,7 @@ async def create_video_task(
     use_cloned_voice: bool = Form(default=False),
     voice_clone_id: str | None = Form(default=None),
     image: UploadFile = File(...),
-    personal_image: UploadFile = File(...),
+    personal_image: UploadFile | None = File(default=None),
     voice: UploadFile | None = File(default=None),
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
@@ -83,15 +83,20 @@ async def create_video_task(
         allowed_content_types=IMAGE_TYPES,
         max_bytes=10 * MB,
     )
-    personal_image_url = await upload_public_file(
-        supabase,
-        settings.supabase_image_bucket,
-        personal_image,
-        "personal",
-        allowed_extensions=IMAGE_EXTENSIONS,
-        allowed_content_types=IMAGE_TYPES,
-        max_bytes=10 * MB,
-    )
+    if use_digital_human and (not personal_image or not personal_image.filename):
+        raise HTTPException(status_code=400, detail="personal_image is required when use_digital_human=true")
+
+    personal_image_url = None
+    if personal_image and personal_image.filename:
+        personal_image_url = await upload_public_file(
+            supabase,
+            settings.supabase_image_bucket,
+            personal_image,
+            "personal",
+            allowed_extensions=IMAGE_EXTENSIONS,
+            allowed_content_types=IMAGE_TYPES,
+            max_bytes=10 * MB,
+        )
     voice_url = ""
     selected_clone = None
     if use_cloned_voice:

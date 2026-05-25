@@ -24,7 +24,7 @@ def create_task(
     ai_package: dict[str, Any],
     language: str,
     image_url: str,
-    personal_image_url: str,
+    personal_image_url: str | None,
     avatar_id: str,
     voice_url: str,
     voice_clone_id: str | None,
