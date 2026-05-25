@@ -81,3 +81,15 @@ def debug_supabase() -> dict:
             result["errors"].append(f"video_tasks_write: {error}")
 
     return result
+
+
+@router.get("/debug/config")
+def debug_config() -> dict:
+    return {
+        "supabase_url_configured": bool(settings.supabase_url and settings.supabase_url != "https://example.supabase.co"),
+        "supabase_url_host": settings.supabase_url.replace("https://", "").split("/")[0] if settings.supabase_url else "",
+        "supabase_service_role_key_configured": bool(settings.supabase_service_role_key),
+        "public_site_url": settings.public_site_url,
+        "web_origin": settings.web_origin,
+        "cors_origins": settings.allowed_origins,
+    }
