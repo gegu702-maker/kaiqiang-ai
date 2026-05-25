@@ -5,9 +5,33 @@ import { FileAudio, Trash2, UploadCloud } from "lucide-react";
 import { motion } from "framer-motion";
 
 import { Button } from "@/components/ui/button";
+import { useLanguage } from "@/components/LanguageProvider";
 import { Progress } from "@/components/ui/progress";
 
+const copy = {
+  zh: {
+    title: "参考语音",
+    typeError: "支持 mp3 / wav / m4a 格式",
+    sizeError: "声音文件最大支持 20MB。",
+    preparing: "正在准备上传",
+    ready: "文件已就绪",
+    deleteAudio: "删除声音文件",
+    upload: "上传声音文件",
+  },
+  en: {
+    title: "Reference Audio",
+    typeError: "Supports mp3 / wav / m4a formats",
+    sizeError: "Audio files can be up to 20MB.",
+    preparing: "Preparing upload",
+    ready: "File ready",
+    deleteAudio: "Remove audio file",
+    upload: "Upload audio file",
+  },
+};
+
 export function VoiceUpload() {
+  const { locale } = useLanguage();
+  const current = copy[locale];
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
   const [progress, setProgress] = useState(0);
@@ -41,13 +65,13 @@ export function VoiceUpload() {
       "audio/mp4",
     ].includes(file.type);
     if (!validType && !validExtension) {
-      setError("支持 mp3 / wav / m4a 格式");
+      setError(current.typeError);
       event.target.value = "";
       return;
     }
 
     if (file.size > 20 * 1024 * 1024) {
-      setError("声音文件最大支持 20MB。");
+      setError(current.sizeError);
       event.target.value = "";
       return;
     }
@@ -66,7 +90,7 @@ export function VoiceUpload() {
   return (
     <section className="space-y-2">
       <div>
-        <h3 className="text-sm font-medium text-slate-200">参考语音</h3>
+        <h3 className="text-sm font-medium text-slate-200">{current.title}</h3>
       </div>
 
       <motion.div
@@ -93,10 +117,10 @@ export function VoiceUpload() {
                 </span>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-white">{fileName}</p>
-                  <p className="text-xs text-slate-500">{progress < 100 ? "正在准备上传" : "文件已就绪"}</p>
+                  <p className="text-xs text-slate-500">{progress < 100 ? current.preparing : current.ready}</p>
                 </div>
               </div>
-              <Button type="button" variant="ghost" size="icon" onClick={clearFile} aria-label="删除声音文件">
+              <Button type="button" variant="ghost" size="icon" onClick={clearFile} aria-label={current.deleteAudio}>
                 <Trash2 size={16} />
               </Button>
             </div>
@@ -111,7 +135,7 @@ export function VoiceUpload() {
             <span className="grid size-11 place-items-center rounded-lg bg-cyan/10 text-cyan">
               <UploadCloud size={20} />
             </span>
-            <span className="text-sm font-medium text-white">上传声音文件</span>
+            <span className="text-sm font-medium text-white">{current.upload}</span>
             <span className="text-xs text-slate-500">MP3 / WAV / M4A</span>
           </button>
         )}

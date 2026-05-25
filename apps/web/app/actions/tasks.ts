@@ -11,6 +11,7 @@ export async function submitTaskAction(
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  const locale = formData.get("ui_locale") === "en" ? "en" : "zh";
   const supabase = await createClient();
   const {
     data: { session },
@@ -26,11 +27,14 @@ export async function submitTaskAction(
     await createVideoTask(formData, session.access_token);
     revalidatePath("/tasks");
     revalidatePath("/account");
-    return { ok: true, message: "AI 带货方案已生成，管理员制作后可在任务页下载视频。" };
+    return {
+      ok: true,
+      message: locale === "en" ? "Your AI product video workflow has been generated. Download the final video from Tasks after delivery." : "AI 带货方案已生成，管理员制作后可在任务页下载视频。",
+    };
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "提交失败，请检查后端服务和环境变量。",
+      message: error instanceof Error ? error.message : locale === "en" ? "Submission failed. Please check the backend service and environment variables." : "提交失败，请检查后端服务和环境变量。",
     };
   }
 }
