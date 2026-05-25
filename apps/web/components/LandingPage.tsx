@@ -47,34 +47,34 @@ export function LandingPage({ startHref }: { startHref: string }) {
 
   return (
     <main
-      className="min-h-[calc(100vh-76px)] overflow-hidden text-slate-950"
+      className="min-h-screen overflow-hidden text-slate-950"
       style={{
         background:
-          "radial-gradient(circle at 72% 28%, rgba(99,102,241,0.09), transparent 36%), radial-gradient(circle at 15% 14%, rgba(191,219,254,0.08), transparent 28%), linear-gradient(180deg, #ffffff 0%, #fbfcff 58%, #ffffff 100%)",
+          "radial-gradient(circle at 73% 38%, rgba(99,102,241,0.12), transparent 34%), radial-gradient(circle at 18% 12%, rgba(219,234,254,0.42), transparent 24%), linear-gradient(180deg, #ffffff 0%, #fbfcff 58%, #ffffff 100%)",
       }}
     >
-      <section className="relative mx-auto grid min-h-[620px] max-w-[1440px] items-center gap-10 px-6 pb-8 pt-16 sm:px-10 lg:grid-cols-[0.47fr_0.53fr] lg:px-20 lg:pb-10 lg:pt-20">
-        <div className="pointer-events-none absolute right-[-8%] top-[4%] hidden size-[660px] rounded-full border border-slate-200/40 lg:block" />
-        <div className="pointer-events-none absolute right-[10%] top-[18%] hidden size-[420px] rounded-full border border-indigo-100/40 lg:block" />
-        <div className="pointer-events-none absolute right-[12%] top-[16%] hidden size-2 rounded-full bg-indigo-200/45 lg:block" />
+      <section className="relative mx-auto grid min-h-[680px] max-w-[1440px] items-center gap-10 px-6 pb-10 pt-14 sm:px-10 lg:grid-cols-[0.42fr_0.58fr] lg:px-20 lg:pb-8 lg:pt-16">
+        <div className="pointer-events-none absolute right-[-7%] top-[5%] hidden size-[760px] rounded-full border border-slate-200/35 lg:block" />
+        <div className="pointer-events-none absolute right-[8%] top-[20%] hidden size-[500px] rounded-full border border-indigo-100/35 lg:block" />
+        <div className="pointer-events-none absolute right-[32%] top-[17%] hidden size-1.5 rounded-full bg-indigo-200/60 lg:block" />
 
-        <div className="relative z-10 max-w-[650px] space-y-7 lg:-mt-5 lg:pl-0">
-          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/72 px-4 py-2 text-sm font-medium text-slate-600 shadow-[0_8px_30px_rgba(15,23,42,0.04)] backdrop-blur-xl">
+        <div className="relative z-20 max-w-[540px] space-y-8 lg:-mt-10 lg:min-w-[540px] lg:pl-0">
+          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/72 px-4 py-2 text-sm font-medium text-slate-600 shadow-[0_8px_30px_rgba(15,23,42,0.035)] backdrop-blur-xl">
             <Sparkles size={15} className="text-violet-500" />
             {current.badge}
           </div>
 
           <div className="space-y-6">
-            <h1 className="max-w-[720px] text-5xl font-semibold leading-[1.08] tracking-[-0.045em] text-slate-950 sm:text-6xl lg:text-[72px]">
-              <span className="block">{current.titlePrefix}</span>
-              <span className="block whitespace-normal lg:whitespace-nowrap">
+            <h1 className="max-w-[600px] text-5xl font-semibold leading-[1.12] tracking-[-0.045em] text-slate-900 sm:text-6xl lg:text-[60px]">
+              <span className="block whitespace-nowrap">{current.titlePrefix}</span>
+              <span className="block whitespace-nowrap">
                 <span className="bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-500 bg-clip-text font-semibold text-transparent">
                   {current.titleAccent}
                 </span>{" "}
                 {current.titleSuffix}
               </span>
             </h1>
-            <p className="max-w-[560px] whitespace-pre-line text-lg font-normal leading-8 text-slate-500 sm:text-xl">
+            <p className="max-w-[500px] whitespace-pre-line text-lg font-normal leading-8 text-slate-500">
               {current.subtitle}
             </p>
           </div>
@@ -97,29 +97,31 @@ export function LandingPage({ startHref }: { startHref: string }) {
           </div>
         </div>
 
-        <div className="relative z-10 flex justify-center lg:justify-center lg:-ml-4">
-          <div className="relative flex size-[220px] items-center justify-center sm:size-[360px] lg:size-[500px]">
-            <div className="absolute inset-[-16%] rounded-full bg-[radial-gradient(circle,rgba(99,102,241,0.11)_0%,rgba(219,225,255,0.14)_42%,rgba(255,255,255,0)_70%)] blur-xl" />
-            <div className="absolute inset-8 rounded-full bg-white/28" />
+        <div className="relative z-10 flex min-h-[360px] justify-center lg:min-h-[620px] lg:justify-end lg:overflow-visible">
+          <div className="relative flex size-[260px] items-center justify-center sm:size-[420px] lg:size-[600px]">
+            <div className="absolute inset-[-16%] rounded-full bg-[radial-gradient(circle,rgba(99,102,241,0.16)_0%,rgba(219,225,255,0.18)_36%,rgba(255,255,255,0)_70%)] blur-2xl" />
+            <div className="absolute inset-[8%] rounded-full bg-white/32 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]" />
+            <div className="absolute inset-[3%] rounded-full border border-white/70" />
+            <div className="absolute inset-[18%] rounded-full border border-slate-200/55" />
             <Image
               src="/logo-transparent.png"
               alt="KAIQIANG.AI brand logo"
               fill
-              sizes="(min-width: 1024px) 500px, (min-width: 640px) 350px, 220px"
-              className="relative scale-[1.04] object-contain opacity-[0.94] drop-shadow-[0_24px_42px_rgba(15,23,42,0.16)]"
+              sizes="(min-width: 1024px) 600px, (min-width: 640px) 420px, 260px"
+              className="relative scale-[1.02] object-contain opacity-[0.96] drop-shadow-[0_30px_52px_rgba(15,23,42,0.18)]"
               priority
             />
           </div>
         </div>
       </section>
 
-      <section id="examples" className="mx-auto max-w-[1280px] px-6 pb-16 sm:px-10 lg:-mt-4 lg:pb-24">
+      <section id="examples" className="mx-auto max-w-[1280px] px-6 pb-16 sm:px-10 lg:-mt-8 lg:pb-24">
         <div className="grid gap-4 sm:grid-cols-2 min-[1180px]:grid-cols-4">
           {current.cards.map(([title, desc], index) => {
             const Icon = icons[index];
             return (
-              <article key={title} className="group rounded-3xl border border-slate-200/70 bg-white/72 p-6 shadow-[0_14px_42px_rgba(15,23,42,0.045)] backdrop-blur-xl transition duration-300 hover:-translate-y-1 hover:border-slate-300 hover:bg-white">
-                <div className="grid size-12 place-items-center rounded-2xl bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition group-hover:scale-105">
+              <article key={title} className="group rounded-3xl border border-slate-200/65 bg-white/66 p-6 shadow-[0_12px_36px_rgba(15,23,42,0.04)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white/86">
+                <div className="grid size-12 place-items-center rounded-2xl bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.11)] transition group-hover:scale-[1.03]">
                   <Icon size={22} />
                 </div>
                 <div className="mt-6">
