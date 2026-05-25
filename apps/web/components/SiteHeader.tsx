@@ -28,15 +28,15 @@ export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
 
   return (
     <header className={isLanding ? "border-b border-slate-200 bg-[#f8f9ff]/90 text-slate-950 backdrop-blur" : "border-b border-white/10 bg-ink/80 text-slate-300 backdrop-blur"}>
-      <nav className={isLanding ? "mx-auto grid max-w-[1440px] grid-cols-[1fr_auto] items-center gap-3 px-5 py-5 sm:px-8 lg:grid-cols-[1fr_auto_1fr] lg:px-14" : "mx-auto flex max-w-[1440px] items-center justify-between px-6 py-5 sm:px-10 lg:px-14"}>
+      <nav className={isLanding ? "mx-auto grid h-[104px] max-w-[1536px] grid-cols-[1fr_auto] items-center gap-3 px-6 sm:px-10 lg:grid-cols-[1fr_auto_1fr] lg:px-[60px]" : "mx-auto flex max-w-[1440px] items-center justify-between px-6 py-5 sm:px-10 lg:px-14"}>
         <Link href="/" className="flex min-w-0 items-center gap-3">
-          <span className={isLanding ? "relative size-11 overflow-hidden rounded-full border border-slate-200 bg-white" : "relative size-10 overflow-hidden rounded-full border border-white/15 bg-white"}>
+          <span className={isLanding ? "relative size-[54px] overflow-hidden rounded-full border border-slate-200 bg-white" : "relative size-10 overflow-hidden rounded-full border border-white/15 bg-white"}>
             <Image src="/logo.png" alt="KAIQIANG.AI logo" fill sizes="40px" className="object-cover" priority />
           </span>
-          <span className={isLanding ? "hidden text-base font-bold tracking-[0.28em] text-slate-950 min-[420px]:inline sm:text-xl" : "text-sm font-semibold tracking-[0.22em] text-white sm:text-base"}>KAIQIANG.AI</span>
+          <span className={isLanding ? "hidden text-xl font-bold tracking-[0.28em] text-slate-950 min-[420px]:inline sm:text-2xl" : "text-sm font-semibold tracking-[0.22em] text-white sm:text-base"}>KAIQIANG.AI</span>
         </Link>
 
-        <div className={isLanding ? "hidden items-center justify-center gap-8 text-base font-semibold text-slate-950 lg:flex" : "flex items-center gap-1 text-sm text-slate-300 sm:gap-2"}>
+        <div className={isLanding ? "hidden items-center justify-center gap-[54px] text-xl font-semibold text-slate-950 lg:flex" : "flex items-center gap-1 text-sm text-slate-300 sm:gap-2"}>
           <Link className={isLanding ? "hidden rounded-md px-2 py-2 hover:bg-slate-200/60 sm:inline-flex" : "hidden rounded-md px-3 py-2 hover:bg-white/10 sm:inline-flex"} href="/">
             {copy.home}
           </Link>
@@ -49,7 +49,7 @@ export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
         </div>
 
         <div className={isLanding ? "flex min-w-0 items-center justify-end gap-2 text-sm font-semibold text-slate-950 sm:gap-3" : "flex items-center gap-1 text-sm text-slate-300 sm:gap-2"}>
-          <div className={isLanding ? "flex rounded-2xl border border-slate-200 bg-white p-1 text-base shadow-sm" : "flex rounded-md border border-white/10 bg-white/[0.03] p-1 text-xs"}>
+          <div className={isLanding ? "flex rounded-2xl border border-slate-200 bg-white p-1 text-lg shadow-sm" : "flex rounded-md border border-white/10 bg-white/[0.03] p-1 text-xs"}>
             <button
               type="button"
               onClick={() => setLocale("zh")}
