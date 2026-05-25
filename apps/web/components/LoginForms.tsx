@@ -8,13 +8,14 @@ import { Button } from "@/components/ui/button";
 
 const initialState = { ok: false, message: "" };
 
-export function LoginForms() {
+export function LoginForms({ next }: { next: string }) {
   const [loginState, loginAction] = useActionState(signInAction, initialState);
   const [signupState, signupAction] = useActionState(signUpAction, initialState);
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <form action={loginAction} className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+        <input type="hidden" name="next" value={next} />
         <h2 className="text-xl font-semibold text-white">登录</h2>
         <p className="mt-2 text-sm text-slate-400">登录后创建视频任务、查看历史任务和额度。</p>
         <div className="mt-5 space-y-4">
@@ -29,6 +30,7 @@ export function LoginForms() {
       </form>
 
       <form action={signupAction} className="rounded-lg border border-white/10 bg-panel/80 p-5">
+        <input type="hidden" name="next" value={next} />
         <h2 className="text-xl font-semibold text-white">注册</h2>
         <p className="mt-2 text-sm text-slate-400">Free 套餐每月 3 次生成，适合先跑通带货视频工作流。</p>
         <div className="mt-5 space-y-4">

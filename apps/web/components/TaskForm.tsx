@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { ChangeEvent, useActionState, useState } from "react";
+import { ChangeEvent, useActionState, useEffect, useState } from "react";
 import { ImagePlus, Mail, Package, ScrollText, Target, Video } from "lucide-react";
 
 import { submitTaskAction } from "@/app/actions/tasks";
@@ -25,6 +24,52 @@ export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false,
   const [state, action] = useActionState(submitTaskAction, initialState);
   const [imageError, setImageError] = useState("");
   const [personalImageError, setPersonalImageError] = useState("");
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  useEffect(() => {
+    const form = document.getElementById("task-submit-form") as HTMLFormElement | null;
+    if (!form) return;
+
+    const draft = window.sessionStorage.getItem("kaiqiang-studio-draft");
+    if (draft) {
+      try {
+        const values = JSON.parse(draft) as Record<string, string>;
+        Object.entries(values).forEach(([name, value]) => {
+          const field = form.elements.namedItem(name);
+          if (!field) return;
+          if (field instanceof RadioNodeList) {
+            const radio = Array.from(field).find((item) => item instanceof HTMLInputElement && item.value === value);
+            if (radio instanceof HTMLInputElement) radio.checked = true;
+            return;
+          }
+          if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
+            if (field.type !== "file" && field.name !== "user_email") field.value = value;
+          }
+        });
+        setDraftRestored(true);
+      } catch {
+        window.sessionStorage.removeItem("kaiqiang-studio-draft");
+      }
+    }
+
+    const saveDraft = () => {
+      const data = new FormData(form);
+      const values: Record<string, string> = {};
+      data.forEach((value, key) => {
+        if (typeof value === "string" && key !== "user_email") {
+          values[key] = value;
+        }
+      });
+      window.sessionStorage.setItem("kaiqiang-studio-draft", JSON.stringify(values));
+    };
+
+    form.addEventListener("input", saveDraft);
+    form.addEventListener("change", saveDraft);
+    return () => {
+      form.removeEventListener("input", saveDraft);
+      form.removeEventListener("change", saveDraft);
+    };
+  }, []);
 
   function validateImageFile(event: ChangeEvent<HTMLInputElement>, setError: (message: string) => void) {
     const file = event.target.files?.[0];
@@ -53,12 +98,11 @@ export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false,
             <Mail size={15} /> 邮箱
           </span>
           <input
-            required
             type="email"
             name="user_email"
             value={userEmail ?? ""}
             readOnly
-            placeholder="登录后自动填入"
+            placeholder="提交生成时登录后自动填入"
             className="h-11 w-full rounded-md border border-white/10 bg-white/5 px-3 outline-none ring-cyan/40 placeholder:text-slate-500 focus:ring-2"
           />
         </label>
@@ -192,6 +236,8 @@ export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false,
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
           <p className={state.ok ? "text-sm text-lime" : "text-sm text-rose-200"}>{state.message}</p>
+          {!userEmail ? <p className="text-xs text-cyan">可以先填写和上传素材，点击生成时再登录，登录后回到工作台。</p> : null}
+          {draftRestored ? <p className="text-xs text-lime">已恢复上次填写的工作台草稿。</p> : null}
           <p className="text-xs text-slate-500">
             {userEmail
               ? remainingQuota === null
@@ -200,13 +246,7 @@ export function TaskForm({ userEmail, remainingQuota, voiceCloneEnabled = false,
               : "登录后可生成，每月免费 3 次。"}
           </p>
         </div>
-        {userEmail ? (
-          <SubmitButton label="生成带货视频方案" pendingLabel="正在生成" />
-        ) : (
-          <Link className="rounded-md bg-cyan px-5 py-3 text-sm font-semibold text-ink hover:bg-cyan/90" href="/login?next=/">
-            登录后生成
-          </Link>
-        )}
+        <SubmitButton label={userEmail ? "生成带货视频方案" : "登录并生成"} pendingLabel={userEmail ? "正在生成" : "正在跳转登录"} />
       </div>
       </Card>
     </form>

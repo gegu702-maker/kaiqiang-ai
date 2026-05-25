@@ -12,6 +12,7 @@ export async function signInAction(
 ): Promise<ActionState> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
+  const next = sanitizeNext(String(formData.get("next") ?? ""));
 
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -21,7 +22,7 @@ export async function signInAction(
   }
 
   revalidatePath("/", "layout");
-  redirect("/");
+  redirect(next);
 }
 
 export async function signUpAction(
@@ -30,13 +31,14 @@ export async function signUpAction(
 ): Promise<ActionState> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
+  const next = sanitizeNext(String(formData.get("next") ?? ""));
 
   const supabase = await createClient();
   const { error } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/account`,
+      emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}${next}`,
     },
   });
 
@@ -52,4 +54,11 @@ export async function signOutAction() {
   await supabase.auth.signOut();
   revalidatePath("/", "layout");
   redirect("/");
+}
+
+function sanitizeNext(next: string) {
+  if (!next || !next.startsWith("/") || next.startsWith("//")) {
+    return "/";
+  }
+  return next;
 }

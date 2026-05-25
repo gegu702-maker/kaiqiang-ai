@@ -17,7 +17,7 @@ export async function submitTaskAction(
   } = await supabase.auth.getSession();
 
   if (!session?.user) {
-    redirect("/login?next=/");
+    redirect("/login?next=/studio");
   }
 
   formData.set("user_email", session.user.email ?? "");
