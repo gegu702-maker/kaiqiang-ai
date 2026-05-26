@@ -4,6 +4,7 @@ import { CreditCard, Download, Gauge, KeyRound, ReceiptText, ShieldCheck } from 
 
 import { getUserOrders, getUserTasks, getUserUsageLogs, getUsageSummary } from "@/lib/api";
 import { getVoiceClones } from "@/lib/api";
+import { TrackedDownloadLink } from "@/components/TrackedDownloadLink";
 import { VoiceCloneManager } from "@/components/VoiceCloneManager";
 import { createClient } from "@/lib/supabase/server";
 import type { Order, UsageLog, UsageSummary, VideoTask, VoiceClone } from "@/lib/types";
@@ -151,15 +152,18 @@ export default async function AccountPage() {
             .filter((task) => task.result_video_url)
             .slice(0, 6)
             .map((task) => (
-              <a
+              <TrackedDownloadLink
                 key={task.id}
                 href={task.result_video_url ?? "#"}
                 target="_blank"
                 rel="noreferrer"
+                download
+                taskId={task.id}
+                productName={task.product_name}
                 className="rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm text-slate-300 hover:border-cyan/40 hover:text-cyan"
               >
                 {task.product_name}
-              </a>
+              </TrackedDownloadLink>
             ))}
           {tasks.filter((task) => task.result_video_url).length === 0 ? (
             <p className="text-sm text-slate-500">暂无已完成视频。</p>

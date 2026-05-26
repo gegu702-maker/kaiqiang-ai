@@ -22,7 +22,7 @@ export async function signInAction(
   }
 
   revalidatePath("/", "layout");
-  redirect(next);
+  redirect(withAnalyticsFlag(next, "login_success"));
 }
 
 export async function signUpAction(
@@ -61,4 +61,9 @@ function sanitizeNext(next: string) {
     return "/";
   }
   return next;
+}
+
+function withAnalyticsFlag(path: string, value: string) {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}analytics=${encodeURIComponent(value)}`;
 }

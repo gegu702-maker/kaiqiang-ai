@@ -8,6 +8,7 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { SubmitButton } from "@/components/SubmitButton";
 import { VoiceUpload } from "@/components/VoiceUpload";
 import { Card } from "@/components/ui/card";
+import { trackEvent } from "@/lib/analytics";
 import type { VoiceClone } from "@/lib/types";
 
 const initialState = { ok: false, message: "" };
@@ -115,6 +116,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [state, action] = useActionState(submitTaskAction, initialState);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const personalImageInputRef = useRef<HTMLInputElement>(null);
+  const lastTrackedMessageRef = useRef("");
   const [imageError, setImageError] = useState("");
   const [personalImageError, setPersonalImageError] = useState("");
   const [imageName, setImageName] = useState("");
@@ -168,6 +170,21 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
     };
   }, []);
 
+  useEffect(() => {
+    if (!state.message || state.message === lastTrackedMessageRef.current) return;
+    lastTrackedMessageRef.current = state.message;
+    if (state.ok) {
+      trackEvent("submit_video_task", {
+        use_digital_human: useDigitalHuman,
+        voice_clone_enabled: voiceCloneEnabled,
+      });
+      return;
+    }
+    if (/额度|quota|用完|exhausted|upgrade/i.test(state.message)) {
+      trackEvent("quota_exhausted", { message: state.message });
+    }
+  }, [state.message, state.ok, useDigitalHuman, voiceCloneEnabled]);
+
   function validateImageFile(event: ChangeEvent<HTMLInputElement>, setError: (message: string) => void, setName: (name: string) => void) {
     const file = event.target.files?.[0];
     setError("");
@@ -191,7 +208,18 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   }
 
   return (
-    <form id="task-submit-form" action={action} className="space-y-4">
+    <form
+      id="task-submit-form"
+      action={action}
+      className="space-y-4"
+      onSubmit={() =>
+        trackEvent("click_generate_video", {
+          logged_in: Boolean(userEmail),
+          use_digital_human: useDigitalHuman,
+          voice_clone_enabled: voiceCloneEnabled,
+        })
+      }
+    >
       <input type="hidden" name="ui_locale" value={locale} />
       <Card className="space-y-4 p-4">
       <div className="grid gap-4 sm:grid-cols-2">

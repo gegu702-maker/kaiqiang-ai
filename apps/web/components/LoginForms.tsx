@@ -1,16 +1,23 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import { Chrome, Mail } from "lucide-react";
 
 import { signInAction, signUpAction } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
+import { trackEvent } from "@/lib/analytics";
 
 const initialState = { ok: false, message: "" };
 
 export function LoginForms({ next }: { next: string }) {
   const [loginState, loginAction] = useActionState(signInAction, initialState);
   const [signupState, signupAction] = useActionState(signUpAction, initialState);
+
+  useEffect(() => {
+    if (signupState.ok) {
+      trackEvent("signup_success", { next });
+    }
+  }, [next, signupState.ok]);
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Subtitles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { trackEvent } from "@/lib/analytics";
 
 export function VideoPlayer({
   url,
@@ -47,7 +48,7 @@ export function VideoPlayer({
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Button asChild variant="outline">
-          <a href={url} target="_blank" rel="noreferrer" download>
+          <a href={url} target="_blank" rel="noreferrer" download onClick={() => trackEvent("download_video", { href: url, source: "video_player" })}>
             <Download size={16} />
             下载 MP4
           </a>

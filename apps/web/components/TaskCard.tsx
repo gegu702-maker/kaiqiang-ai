@@ -4,6 +4,7 @@ import { Download, FileAudio2, UserRound } from "lucide-react";
 
 import { StatusBadge } from "@/components/StatusBadge";
 import { TaskActions } from "@/components/TaskActions";
+import { TrackedDownloadLink } from "@/components/TrackedDownloadLink";
 import { getAvatarProfile } from "@/lib/avatars";
 import { getLanguageLabel, getTTSVoiceLabel } from "@/lib/tts";
 import type { VideoTask } from "@/lib/types";
@@ -48,15 +49,18 @@ export function TaskCard({ task }: { task: VideoTask }) {
         <div className="flex flex-wrap items-center justify-end gap-3 text-sm text-slate-400">
           <TaskActions taskId={task.id} />
           {(task.status === "completed" || task.status === "success") && task.result_video_url ? (
-            <a
+            <TrackedDownloadLink
               className="inline-flex items-center gap-2 rounded-md border border-lime/30 px-3 py-2 text-lime hover:bg-lime/10"
               href={task.result_video_url}
               target="_blank"
               rel="noreferrer"
+              download
+              taskId={task.id}
+              productName={task.product_name}
             >
               <Download size={16} />
               下载视频
-            </a>
+            </TrackedDownloadLink>
           ) : null}
         </div>
       </div>

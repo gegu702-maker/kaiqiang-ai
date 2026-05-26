@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowUpRight, Captions, Mic2, PlayCircle, Sparkles, Video, Zap } from "lucide-react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { trackEvent } from "@/lib/analytics";
 
 const copy = {
   zh: {
@@ -82,6 +83,7 @@ export function LandingPage({ startHref }: { startHref: string }) {
           <div className="flex flex-wrap gap-5 pt-1">
             <Link
               href={startHref}
+              onClick={() => trackEvent("click_start_button", { source: "home_hero", href: startHref })}
               className="inline-flex h-13 min-w-[152px] items-center justify-center gap-2 rounded-full bg-slate-950 px-6 text-base font-semibold text-white shadow-[0_16px_38px_rgba(15,23,42,0.13)] transition hover:-translate-y-0.5 hover:bg-slate-800"
             >
               {current.start}
@@ -89,6 +91,7 @@ export function LandingPage({ startHref }: { startHref: string }) {
             </Link>
             <a
               href="#examples"
+              onClick={() => trackEvent("click_view_demo", { source: "home_hero" })}
               className="inline-flex h-13 min-w-[162px] items-center justify-center gap-3 rounded-full border border-slate-200 bg-white/72 px-6 text-base font-semibold text-slate-900 shadow-[0_10px_30px_rgba(15,23,42,0.045)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white"
             >
               <PlayCircle size={21} />
