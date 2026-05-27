@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.supabase import get_supabase
+from app.services.static_avatar_video import render_static_avatar_video
 from app.services.storage import upload_public_bytes
 from app.services.tts import synthesize_speech_to_storage
 
@@ -20,6 +21,10 @@ class TTSTestRequest(BaseModel):
     speed_ratio: float = 1.0
     volume_ratio: float = 1.0
     pitch_ratio: float = 1.0
+
+
+class StaticAvatarVideoTestRequest(TTSTestRequest):
+    pass
 
 
 @router.get("/debug/supabase")
@@ -156,4 +161,31 @@ async def debug_tts_test(payload: TTSTestRequest) -> dict:
         "audio_url": result["audio_url"],
         "provider": result["provider"],
         "voice_type": result.get("voice_type") or payload.voice_type or settings.volcengine_tts_voice_type,
+    }
+
+
+@router.post("/api/debug/avatar-video-test")
+async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict:
+    supabase = get_supabase()
+    tts_result = await synthesize_speech_to_storage(
+        supabase,
+        text=payload.text,
+        folder="debug/avatar-video/tts",
+        voice_type=payload.voice_type,
+        speed_ratio=payload.speed_ratio,
+        volume_ratio=payload.volume_ratio,
+        pitch_ratio=payload.pitch_ratio,
+    )
+    video_url = await render_static_avatar_video(
+        supabase,
+        audio_url=tts_result["audio_url"],
+        subtitle_text=payload.text,
+        duration=tts_result.get("duration"),
+    )
+    return {
+        "success": True,
+        "video_url": video_url,
+        "audio_url": tts_result["audio_url"],
+        "provider": tts_result["provider"],
+        "voice_type": tts_result.get("voice_type") or payload.voice_type or settings.volcengine_tts_voice_type,
     }

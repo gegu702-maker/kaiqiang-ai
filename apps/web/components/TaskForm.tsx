@@ -47,6 +47,14 @@ const copy = {
     ttsNetworkError: "网络错误，请稍后重试。",
     ttsProviderError: "provider 错误，请检查 Volcengine 配置。",
     ttsDownload: "下载 MP3",
+    videoTitle: "静态头像口播视频",
+    videoDescription: "把当前文案合成为 1080x1920 竖屏 MP4。",
+    videoGenerate: "生成视频",
+    videoGenerating: "视频生成中",
+    videoProcessing: "processing",
+    videoSuccess: "视频已生成",
+    videoFailed: "视频生成失败",
+    videoDownload: "下载 MP4",
     voiceTypes: {
       BV001_streaming: "女声（BV001_streaming）",
       BV002_streaming: "男声（BV002_streaming）",
@@ -105,6 +113,14 @@ const copy = {
     ttsNetworkError: "Network error. Please try again.",
     ttsProviderError: "Provider error. Please check Volcengine settings.",
     ttsDownload: "Download MP3",
+    videoTitle: "Static Avatar Video",
+    videoDescription: "Render the current script into a 1080x1920 MP4.",
+    videoGenerate: "Generate Video",
+    videoGenerating: "Generating Video",
+    videoProcessing: "processing",
+    videoSuccess: "Video generated",
+    videoFailed: "Video generation failed",
+    videoDownload: "Download MP4",
     voiceTypes: {
       BV001_streaming: "Female (BV001_streaming)",
       BV002_streaming: "Male (BV002_streaming)",
@@ -143,6 +159,10 @@ type TTSTestResponse = {
   detail?: string;
 };
 
+type AvatarVideoTestResponse = TTSTestResponse & {
+  video_url?: string;
+};
+
 type TaskFormProps = {
   userEmail?: string | null;
   remainingQuota?: number | null;
@@ -171,6 +191,10 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [ttsError, setTtsError] = useState("");
   const [ttsAudioUrl, setTtsAudioUrl] = useState("");
   const [ttsProvider, setTtsProvider] = useState("");
+  const [videoStatus, setVideoStatus] = useState<TTSStatus>("idle");
+  const [videoError, setVideoError] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [videoProgress, setVideoProgress] = useState(0);
 
   useEffect(() => {
     const form = document.getElementById("task-submit-form") as HTMLFormElement | null;
@@ -307,6 +331,64 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
     }
   }
 
+  async function generateAvatarVideo() {
+    const text = ttsText.trim();
+    if (!text || videoStatus === "generating") return;
+
+    setVideoStatus("generating");
+    setVideoError("");
+    setVideoUrl("");
+    setVideoProgress(18);
+
+    let progressTimer: number | undefined;
+    try {
+      progressTimer = window.setInterval(() => {
+        setVideoProgress((currentProgress) => Math.min(currentProgress + 9, 82));
+      }, 2500);
+      const response = await fetch("/api/debug/avatar-video-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, voice_type: ttsVoiceType }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
+      if (!response.ok || !payload.success || !payload.video_url) {
+        throw new Error(payload.detail || current.videoFailed);
+      }
+      setVideoUrl(payload.video_url);
+      if (payload.audio_url) setTtsAudioUrl(payload.audio_url);
+      if (payload.provider) setTtsProvider(payload.provider);
+      setVideoProgress(100);
+      setVideoStatus("success");
+    } catch (error) {
+      setVideoProgress(0);
+      setVideoError(error instanceof Error ? error.message : current.ttsNetworkError);
+      setVideoStatus("failed");
+    } finally {
+      if (progressTimer) window.clearInterval(progressTimer);
+    }
+  }
+
+  async function downloadAvatarVideo() {
+    if (!videoUrl) return;
+
+    try {
+      const response = await fetch(videoUrl);
+      if (!response.ok) throw new Error(current.ttsNetworkError);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `kaiqiang-avatar-video-${ttsVoiceType}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      setVideoStatus("failed");
+      setVideoError(error instanceof Error ? error.message : current.ttsNetworkError);
+    }
+  }
+
   return (
     <form
       id="task-submit-form"
@@ -392,6 +474,55 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
             </div>
           </div>
         ) : null}
+        <div className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Video size={15} /> {current.videoTitle}
+              </h3>
+              <p className="text-xs text-slate-500">{current.videoDescription}</p>
+            </div>
+            {videoStatus === "success" ? <span className="rounded-md border border-lime/30 bg-lime/10 px-2.5 py-1 text-xs text-lime">{current.videoSuccess}</span> : null}
+          </div>
+          {videoStatus === "generating" ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>{current.videoProcessing}</span>
+                <span>{videoProgress}%</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-cyan transition-all" style={{ width: `${videoProgress}%` }} />
+              </div>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={generateAvatarVideo}
+            disabled={videoStatus === "generating" || !ttsText.trim()}
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md border border-cyan/30 bg-cyan/10 px-5 text-sm font-semibold text-cyan transition hover:bg-cyan/15 disabled:pointer-events-none disabled:opacity-60 sm:w-auto"
+          >
+            {videoStatus === "generating" ? <Loader2 className="animate-spin" size={16} /> : <Video size={16} />}
+            {videoStatus === "generating" ? current.videoGenerating : current.videoGenerate}
+          </button>
+          {videoStatus === "failed" ? (
+            <p className="rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
+              {current.videoFailed}：{videoError || current.ttsProviderError}
+            </p>
+          ) : null}
+          {videoUrl ? (
+            <div className="space-y-3">
+              <video className="aspect-[9/16] max-h-[620px] w-full rounded-md border border-white/10 bg-black object-contain sm:w-[320px]" src={videoUrl} controls preload="metadata" />
+              <button
+                type="button"
+                onClick={downloadAvatarVideo}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-sm font-semibold text-slate-100 transition hover:bg-white/10"
+              >
+                <Download size={15} />
+                {current.videoDownload}
+              </button>
+            </div>
+          ) : null}
+        </div>
       </Card>
       <Card className="space-y-4 p-4">
       <div className="grid gap-4 sm:grid-cols-2">
