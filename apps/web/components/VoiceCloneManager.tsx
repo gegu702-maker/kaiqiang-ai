@@ -33,7 +33,7 @@ export function VoiceCloneManager({
       ) : (
         <form action={uploadAction} className="grid gap-3 rounded-md border border-white/10 bg-white/[0.03] p-3 md:grid-cols-[1fr_1.4fr_auto]">
           <input name="name" required placeholder="声音名称，例如：我的带货女声" className="h-10 rounded-md border border-white/10 bg-ink/70 px-3 text-sm" />
-          <input name="sample_audio" required type="file" accept="audio/mp3,audio/wav,audio/m4a,audio/x-m4a,.mp3,.wav,.m4a" className="h-10 rounded-md border border-white/10 bg-ink/70 text-sm file:h-full file:border-0 file:bg-cyan file:px-3 file:text-ink" />
+          <input name="sample_audio" required type="file" accept="audio/mp3,audio/mpeg,audio/x-mpeg,audio/wav,audio/x-wav,audio/m4a,audio/x-m4a,audio/mp4,audio/aac,audio/x-aac,audio/mp4a-latm,video/mp4,.mp3,.wav,.m4a,.mp4,.mpeg" className="h-10 rounded-md border border-white/10 bg-ink/70 text-sm file:h-full file:border-0 file:bg-cyan file:px-3 file:text-ink" />
           <SubmitButton label="创建声音" pendingLabel="创建中" />
           {uploadState.message ? <p className={uploadState.ok ? "text-sm text-lime md:col-span-3" : "text-sm text-rose-200 md:col-span-3"}>{uploadState.message}</p> : null}
         </form>

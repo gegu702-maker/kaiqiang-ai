@@ -26,13 +26,24 @@ async def upload_public_file(
     allowed_extensions: set[str],
     allowed_content_types: set[str],
     max_bytes: int,
+    allowed_format_label: str | None = None,
 ) -> str:
-    extension = Path(upload.filename or "upload").suffix.lower()
+    filename = upload.filename or "upload"
+    content_type = upload.content_type or "application/octet-stream"
+    extension = Path(filename).suffix.lower() or _extension_from_content_type(content_type)
+    allowed_label = allowed_format_label or ", ".join(sorted(item.lstrip(".") for item in allowed_extensions))
+    current_format = extension.lstrip(".") or content_type or "unknown"
     if extension not in allowed_extensions:
-        raise HTTPException(status_code=400, detail=f"Unsupported file format: {extension}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"当前文件格式：{current_format}；支持格式：{allowed_label}",
+        )
 
-    if upload.content_type not in allowed_content_types:
-        raise HTTPException(status_code=400, detail=f"Unsupported content type: {upload.content_type}")
+    if content_type not in allowed_content_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"当前文件类型：{content_type}；支持格式：{allowed_label}",
+        )
 
     object_path = f"{folder}/{uuid4().hex}{extension}"
     content = await upload.read()
@@ -44,7 +55,7 @@ async def upload_public_file(
         lambda: supabase.storage.from_(bucket).upload(
             object_path,
             content,
-            {"content-type": upload.content_type or "application/octet-stream"},
+            {"content-type": _content_type_for_storage(extension, content_type)},
         )
     )
     return supabase.storage.from_(bucket).get_public_url(object_path)
@@ -79,3 +90,36 @@ def _with_retries(operation, attempts: int = 3):
             if index < attempts - 1:
                 sleep(1.5 * (index + 1))
     raise last_error  # type: ignore[misc]
+
+
+def _extension_from_content_type(content_type: str) -> str:
+    return {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/wave": ".wav",
+        "audio/m4a": ".m4a",
+        "audio/x-m4a": ".m4a",
+        "audio/mp4": ".m4a",
+        "video/mp4": ".m4a",
+    }.get(content_type, "")
+
+
+def _content_type_for_storage(extension: str, content_type: str) -> str:
+    if content_type != "application/octet-stream":
+        return content_type
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".mp4": "audio/mp4",
+        ".mpeg": "audio/mpeg",
+    }.get(extension, content_type)

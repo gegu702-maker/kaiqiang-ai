@@ -12,16 +12,22 @@ from app.services.voice_clone_provider import VoiceCloneProvider, assert_user_ca
 
 router = APIRouter(prefix="/voice-clone", tags=["voice-clone"])
 
-VOICE_EXTENSIONS = {".mp3", ".wav", ".m4a"}
+VOICE_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".mpeg"}
 VOICE_TYPES = {
     "audio/mpeg",
     "audio/mp3",
+    "audio/x-mpeg",
     "audio/wav",
     "audio/x-wav",
     "audio/wave",
     "audio/m4a",
     "audio/x-m4a",
     "audio/mp4",
+    "audio/aac",
+    "audio/x-aac",
+    "audio/mp4a-latm",
+    "video/mp4",
+    "application/octet-stream",
 }
 MB = 1024 * 1024
 
@@ -43,6 +49,7 @@ async def upload_voice_sample(
         allowed_extensions=VOICE_EXTENSIONS,
         allowed_content_types=VOICE_TYPES,
         max_bytes=20 * MB,
+        allowed_format_label="mp3, wav, m4a",
     )
     result = supabase.table("voice_clones").insert(
         {

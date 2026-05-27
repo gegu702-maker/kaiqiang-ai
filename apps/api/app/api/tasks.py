@@ -20,16 +20,22 @@ ALLOWED_LANGUAGES = set(MINIMAX_TTS_VOICES.keys())
 ALLOWED_VIDEO_STYLES = {"hard_sell", "emotional_seed", "premium", "factory_boss", "tiktok", "review", "story"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
-VOICE_EXTENSIONS = {".mp3", ".wav", ".m4a"}
+VOICE_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".mpeg"}
 VOICE_TYPES = {
     "audio/mpeg",
     "audio/mp3",
+    "audio/x-mpeg",
     "audio/wav",
     "audio/x-wav",
     "audio/wave",
     "audio/m4a",
     "audio/x-m4a",
     "audio/mp4",
+    "audio/aac",
+    "audio/x-aac",
+    "audio/mp4a-latm",
+    "video/mp4",
+    "application/octet-stream",
 }
 MB = 1024 * 1024
 
@@ -82,6 +88,7 @@ async def create_video_task(
         allowed_extensions=IMAGE_EXTENSIONS,
         allowed_content_types=IMAGE_TYPES,
         max_bytes=10 * MB,
+        allowed_format_label="jpg, jpeg, png, webp",
     )
     if use_digital_human and (not personal_image or not personal_image.filename):
         raise HTTPException(status_code=400, detail="personal_image is required when use_digital_human=true")
@@ -96,6 +103,7 @@ async def create_video_task(
             allowed_extensions=IMAGE_EXTENSIONS,
             allowed_content_types=IMAGE_TYPES,
             max_bytes=10 * MB,
+            allowed_format_label="jpg, jpeg, png, webp",
         )
     voice_url = ""
     selected_clone = None
@@ -114,6 +122,7 @@ async def create_video_task(
             allowed_extensions=VOICE_EXTENSIONS,
             allowed_content_types=VOICE_TYPES,
             max_bytes=20 * MB,
+            allowed_format_label="mp3, wav, m4a",
         )
     task = create_task(
         supabase,

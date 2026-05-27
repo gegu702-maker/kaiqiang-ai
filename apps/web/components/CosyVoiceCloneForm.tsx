@@ -23,12 +23,18 @@ const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set([
   "audio/mpeg",
   "audio/mp3",
+  "audio/x-mpeg",
   "audio/wav",
   "audio/x-wav",
   "audio/wave",
   "audio/m4a",
   "audio/x-m4a",
   "audio/mp4",
+  "audio/aac",
+  "audio/x-aac",
+  "audio/mp4a-latm",
+  "video/mp4",
+  "application/octet-stream",
 ]);
 
 type CloneResponse = {
@@ -92,7 +98,11 @@ export function CosyVoiceCloneForm({ task }: { task: VideoTask }) {
 
     const lowerName = selectedFile.name.toLowerCase();
     const hasSupportedExtension =
-      lowerName.endsWith(".mp3") || lowerName.endsWith(".wav") || lowerName.endsWith(".m4a");
+      lowerName.endsWith(".mp3") ||
+      lowerName.endsWith(".wav") ||
+      lowerName.endsWith(".m4a") ||
+      lowerName.endsWith(".mp4") ||
+      lowerName.endsWith(".mpeg");
     if (!SUPPORTED_TYPES.has(selectedFile.type) && !hasSupportedExtension) {
       setClientError("支持 mp3 / wav / m4a 格式");
       event.target.value = "";
@@ -247,7 +257,7 @@ export function CosyVoiceCloneForm({ task }: { task: VideoTask }) {
                 ref={fileInputRef}
                 name="reference_audio"
                 type="file"
-                accept="audio/mp3,audio/mpeg,audio/wav,audio/x-wav,audio/m4a,audio/x-m4a,audio/mp4,.mp3,.wav,.m4a"
+                accept="audio/mp3,audio/mpeg,audio/x-mpeg,audio/wav,audio/x-wav,audio/m4a,audio/x-m4a,audio/mp4,audio/aac,audio/x-aac,audio/mp4a-latm,video/mp4,.mp3,.wav,.m4a,.mp4,.mpeg"
                 onChange={validateAudio}
                 className="sr-only"
                 required

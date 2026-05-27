@@ -15,16 +15,22 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-VOICE_EXTENSIONS = {".mp3", ".wav", ".m4a"}
+VOICE_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".mpeg"}
 VOICE_TYPES = {
     "audio/mpeg",
     "audio/mp3",
+    "audio/x-mpeg",
     "audio/wav",
     "audio/x-wav",
     "audio/wave",
     "audio/m4a",
     "audio/x-m4a",
     "audio/mp4",
+    "audio/aac",
+    "audio/x-aac",
+    "audio/mp4a-latm",
+    "video/mp4",
+    "application/octet-stream",
 }
 MB = 1024 * 1024
 
@@ -32,9 +38,9 @@ MB = 1024 * 1024
 def validate_reference_audio(upload: UploadFile) -> None:
     extension = Path(upload.filename or "reference.wav").suffix.lower()
     if extension not in VOICE_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="支持 mp3 / wav / m4a 格式")
+        raise HTTPException(status_code=400, detail=f"当前文件格式：{extension.lstrip('.') or 'unknown'}；支持格式：mp3, wav, m4a")
     if upload.content_type not in VOICE_TYPES:
-        raise HTTPException(status_code=400, detail="支持 mp3 / wav / m4a 格式")
+        raise HTTPException(status_code=400, detail=f"当前文件类型：{upload.content_type or 'unknown'}；支持格式：mp3, wav, m4a")
 
 
 async def read_reference_audio(upload: UploadFile) -> bytes:

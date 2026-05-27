@@ -53,16 +53,22 @@ export function VoiceUpload() {
     setError("");
     if (!file) return;
 
-    const validExtension = /\.(mp3|wav|m4a)$/i.test(file.name);
+    const validExtension = /\.(mp3|wav|m4a|mp4|mpeg)$/i.test(file.name);
     const validType = [
       "audio/mpeg",
       "audio/mp3",
+      "audio/x-mpeg",
       "audio/wav",
       "audio/x-wav",
       "audio/wave",
       "audio/m4a",
       "audio/x-m4a",
       "audio/mp4",
+      "audio/aac",
+      "audio/x-aac",
+      "audio/mp4a-latm",
+      "video/mp4",
+      "application/octet-stream",
     ].includes(file.type);
     if (!validType && !validExtension) {
       setError(current.typeError);
@@ -103,7 +109,7 @@ export function VoiceUpload() {
           ref={inputRef}
           type="file"
           name="voice"
-          accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/m4a,audio/x-m4a,audio/mp4,.mp3,.wav,.m4a"
+          accept="audio/mpeg,audio/mp3,audio/x-mpeg,audio/wav,audio/x-wav,audio/m4a,audio/x-m4a,audio/mp4,audio/aac,audio/x-aac,audio/mp4a-latm,video/mp4,.mp3,.wav,.m4a,.mp4,.mpeg"
           onChange={handleChange}
           className="sr-only"
         />
