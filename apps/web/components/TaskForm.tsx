@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useActionState, useEffect, useRef, useState } from "react";
-import { ImagePlus, Mail, Mic2, Package, ScrollText, Target, Video } from "lucide-react";
+import { Download, ImagePlus, Loader2, Mail, Mic2, Package, ScrollText, Target, Video } from "lucide-react";
 
 import { submitTaskAction } from "@/app/actions/tasks";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -36,9 +36,20 @@ const copy = {
     noFile: "未选择任何文件",
     clonedVoice: "使用我的克隆声音",
     voiceType: "火山引擎音色",
+    ttsTitle: "语音试听",
+    ttsDescription: "输入口播文案，先生成一段可播放的 MP3。",
+    ttsText: "口播文案",
+    ttsPlaceholder: "你好，我是凯强 AI 数字人",
+    ttsGenerate: "生成语音",
+    ttsGenerating: "生成中",
+    ttsSuccess: "语音已生成",
+    ttsFailed: "TTS 失败",
+    ttsNetworkError: "网络错误，请稍后重试。",
+    ttsProviderError: "provider 错误，请检查 Volcengine 配置。",
+    ttsDownload: "下载 MP3",
     voiceTypes: {
-      BV001_streaming: "BV001_streaming 女声",
-      BV002_streaming: "BV002_streaming 男声",
+      BV001_streaming: "女声（BV001_streaming）",
+      BV002_streaming: "男声（BV002_streaming）",
     },
     cloneUpsell: "升级到 Pro 解锁声音克隆，后续视频可直接使用你的专属 voice_id。",
     loginHint: "可以先填写和上传素材，点击生成时再登录，登录后回到工作台。",
@@ -83,9 +94,20 @@ const copy = {
     noFile: "No file selected",
     clonedVoice: "Use my cloned voice",
     voiceType: "Volcengine Voice",
+    ttsTitle: "Voice Preview",
+    ttsDescription: "Generate a playable MP3 from your talking script.",
+    ttsText: "Script",
+    ttsPlaceholder: "Hello, I am Kaiqiang AI digital human.",
+    ttsGenerate: "Generate Voice",
+    ttsGenerating: "Generating",
+    ttsSuccess: "Voice generated",
+    ttsFailed: "TTS failed",
+    ttsNetworkError: "Network error. Please try again.",
+    ttsProviderError: "Provider error. Please check Volcengine settings.",
+    ttsDownload: "Download MP3",
     voiceTypes: {
-      BV001_streaming: "BV001_streaming Female",
-      BV002_streaming: "BV002_streaming Male",
+      BV001_streaming: "Female (BV001_streaming)",
+      BV002_streaming: "Male (BV002_streaming)",
     },
     cloneUpsell: "Upgrade to Pro to unlock voice cloning and reuse your dedicated voice_id in future videos.",
     loginHint: "You can fill in details and upload assets first. Sign in when you click generate, then return to the studio.",
@@ -111,6 +133,16 @@ const copy = {
   },
 };
 
+type TTSStatus = "idle" | "generating" | "success" | "failed";
+
+type TTSTestResponse = {
+  success: boolean;
+  audio_url?: string;
+  provider?: string;
+  voice_type?: string;
+  detail?: string;
+};
+
 type TaskFormProps = {
   userEmail?: string | null;
   remainingQuota?: number | null;
@@ -133,6 +165,12 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [personalImageName, setPersonalImageName] = useState("");
   const [useDigitalHuman, setUseDigitalHuman] = useState(true);
   const [draftRestored, setDraftRestored] = useState(false);
+  const [ttsText, setTtsText] = useState(current.ttsPlaceholder);
+  const [ttsVoiceType, setTtsVoiceType] = useState("BV001_streaming");
+  const [ttsStatus, setTtsStatus] = useState<TTSStatus>("idle");
+  const [ttsError, setTtsError] = useState("");
+  const [ttsAudioUrl, setTtsAudioUrl] = useState("");
+  const [ttsProvider, setTtsProvider] = useState("");
 
   useEffect(() => {
     const form = document.getElementById("task-submit-form") as HTMLFormElement | null;
@@ -217,6 +255,58 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
     setName(file.name);
   }
 
+  async function generateTTSPreview() {
+    const text = ttsText.trim();
+    if (!text || ttsStatus === "generating") return;
+
+    setTtsStatus("generating");
+    setTtsError("");
+    setTtsAudioUrl("");
+    setTtsProvider("");
+
+    try {
+      const response = await fetch("/api/debug/tts-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, voice_type: ttsVoiceType }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as TTSTestResponse;
+      if (!response.ok || !payload.success || !payload.audio_url) {
+        const detail = payload.detail || "";
+        const isProviderError = /provider|VOLCENGINE|quota|permission|voice_type|invalid/i.test(detail);
+        throw new Error(detail || (isProviderError ? current.ttsProviderError : current.ttsFailed));
+      }
+      setTtsAudioUrl(payload.audio_url);
+      setTtsProvider(payload.provider || "volcengine");
+      setTtsStatus("success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      setTtsError(message || current.ttsNetworkError);
+      setTtsStatus("failed");
+    }
+  }
+
+  async function downloadTTSAudio() {
+    if (!ttsAudioUrl) return;
+
+    try {
+      const response = await fetch(ttsAudioUrl);
+      if (!response.ok) throw new Error(current.ttsNetworkError);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `kaiqiang-tts-${ttsVoiceType}.mp3`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      setTtsStatus("failed");
+      setTtsError(error instanceof Error ? error.message : current.ttsNetworkError);
+    }
+  }
+
   return (
     <form
       id="task-submit-form"
@@ -231,6 +321,78 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       }
     >
       <input type="hidden" name="ui_locale" value={locale} />
+      <Card className="space-y-4 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <h2 className="text-base font-semibold text-white">{current.ttsTitle}</h2>
+            <p className="text-sm text-slate-400">{current.ttsDescription}</p>
+          </div>
+          {ttsStatus === "success" ? <span className="rounded-md border border-lime/30 bg-lime/10 px-2.5 py-1 text-xs text-lime">{current.ttsSuccess}</span> : null}
+        </div>
+        <label className="space-y-2">
+          <span className="flex items-center gap-2 text-sm text-slate-300">
+            <ScrollText size={15} /> {current.ttsText}
+          </span>
+          <textarea
+            name="tts_preview_text"
+            rows={4}
+            value={ttsText}
+            onChange={(event) => setTtsText(event.target.value)}
+            placeholder={current.ttsPlaceholder}
+            className="w-full resize-none rounded-md border border-white/10 bg-white/5 px-3 py-3 leading-6 outline-none ring-cyan/40 placeholder:text-slate-500 focus:ring-2"
+          />
+        </label>
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+          <label className="space-y-2">
+            <span className="flex items-center gap-2 text-sm text-slate-300">
+              <Mic2 size={15} /> {current.voiceType}
+            </span>
+            <select
+              value={ttsVoiceType}
+              onChange={(event) => setTtsVoiceType(event.target.value)}
+              className="h-11 w-full rounded-md border border-white/10 bg-white/5 px-3 outline-none ring-cyan/40 focus:ring-2"
+            >
+              {Object.entries(current.voiceTypes).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={generateTTSPreview}
+            disabled={ttsStatus === "generating" || !ttsText.trim()}
+            className="mt-auto inline-flex h-11 items-center justify-center gap-2 rounded-md bg-cyan px-5 text-sm font-semibold text-ink transition hover:bg-cyan/90 disabled:pointer-events-none disabled:opacity-60"
+          >
+            {ttsStatus === "generating" ? <Loader2 className="animate-spin" size={16} /> : <Mic2 size={16} />}
+            {ttsStatus === "generating" ? current.ttsGenerating : current.ttsGenerate}
+          </button>
+        </div>
+        {ttsStatus === "failed" ? (
+          <p className="rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
+            {current.ttsFailed}：{ttsError || current.ttsProviderError}
+          </p>
+        ) : null}
+        {ttsAudioUrl ? (
+          <div className="space-y-3 rounded-md border border-white/10 bg-black/20 p-3">
+            <audio className="w-full" src={ttsAudioUrl} controls preload="metadata" />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-slate-500">
+                {ttsProvider || "volcengine"} · {ttsVoiceType}
+              </p>
+              <button
+                type="button"
+                onClick={downloadTTSAudio}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-sm font-semibold text-slate-100 transition hover:bg-white/10"
+              >
+                <Download size={15} />
+                {current.ttsDownload}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Card>
       <Card className="space-y-4 p-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="space-y-2">
@@ -383,7 +545,8 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
         </span>
         <select
           name="voice_type"
-          defaultValue="BV001_streaming"
+          value={ttsVoiceType}
+          onChange={(event) => setTtsVoiceType(event.target.value)}
           className="h-11 w-full rounded-md border border-white/10 bg-white/5 px-3 outline-none ring-cyan/40 focus:ring-2"
         >
           {Object.entries(current.voiceTypes).map(([value, label]) => (
