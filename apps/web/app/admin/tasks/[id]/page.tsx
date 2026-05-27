@@ -107,8 +107,11 @@ export default async function AdminTaskDetailPage({ params }: Props) {
                 <InfoItem icon={<Mail size={16} />} label="用户邮箱" value={task.user_email} />
                 <InfoItem icon={<Languages size={16} />} label="当前语言" value={getLanguageLabel(task.tts_language || task.language)} />
                 <InfoItem icon={<FileAudio2 size={16} />} label="当前 voice" value={getTTSVoiceLabel(task.tts_voice_name)} />
+                <InfoItem icon={<FileAudio2 size={16} />} label="voice_type" value={task.tts_voice_name || "未填写"} />
                 <InfoItem icon={<FileAudio2 size={16} />} label="字幕状态" value={task.subtitle_status} />
                 <InfoItem icon={<UserRound size={16} />} label="形象来源" value={`${avatar.name} · ${avatar.label}`} />
+                <InfoItem icon={<UserRound size={16} />} label="avatar_template_id" value={task.avatar_template_id || task.avatar_id} />
+                <InfoItem icon={<UserRound size={16} />} label="avatar_template_name" value={task.avatar_template_name || avatar.name} />
                 <InfoItem icon={<FileAudio2 size={16} />} label="声音素材" value="mp3 / wav" />
                 <InfoItem icon={<WandSparkles size={16} />} label="HeyGen avatar_id" value={task.heygen_avatar_id || "未填写"} />
                 <InfoItem icon={<WandSparkles size={16} />} label="HeyGen voice_id" value={task.heygen_voice_id || "未填写"} />

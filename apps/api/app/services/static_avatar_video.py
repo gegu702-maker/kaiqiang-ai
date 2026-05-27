@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import HTTPException
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageFilter
 from supabase import Client
 
 from app.core.config import settings
@@ -19,12 +19,18 @@ async def render_static_avatar_video(
     *,
     audio_url: str,
     subtitle_text: str,
+    avatar_image_url: str | None = None,
     duration: float | None = None,
 ) -> str:
     async with httpx.AsyncClient(timeout=60) as client:
         audio_response = await client.get(audio_url)
         audio_response.raise_for_status()
         audio_bytes = audio_response.content
+        avatar_bytes = None
+        if avatar_image_url:
+            avatar_response = await client.get(avatar_image_url)
+            avatar_response.raise_for_status()
+            avatar_bytes = avatar_response.content
 
     duration_seconds = max(1.0, float(duration or 5.0))
 
@@ -34,7 +40,7 @@ async def render_static_avatar_video(
         audio_path = tmp_path / "voice.mp3"
         output_path = tmp_path / "static-avatar.mp4"
 
-        _build_avatar_background(background_path, subtitle_text)
+        _build_avatar_background(background_path, subtitle_text, avatar_bytes)
         audio_path.write_bytes(audio_bytes)
 
         cmd = [
@@ -85,7 +91,7 @@ async def render_static_avatar_video(
     )
 
 
-def _build_avatar_background(output_path: Path, subtitle_text: str) -> None:
+def _build_avatar_background(output_path: Path, subtitle_text: str, avatar_bytes: bytes | None = None) -> None:
     width, height = 1080, 1920
     canvas = Image.new("RGB", (width, height), "#05070d")
     draw = ImageDraw.Draw(canvas)
@@ -104,10 +110,14 @@ def _build_avatar_background(output_path: Path, subtitle_text: str) -> None:
 
     avatar_box = (270, 390, 810, 930)
     draw.ellipse(avatar_box, fill=(14, 20, 35), outline=(70, 90, 120), width=3)
-    draw.ellipse((340, 460, 740, 860), fill=(28, 36, 56), outline=(49, 215, 255), width=4)
-    draw.ellipse((440, 585, 480, 625), fill=(230, 238, 248))
-    draw.ellipse((600, 585, 640, 625), fill=(230, 238, 248))
-    draw.arc((430, 640, 650, 760), 18, 162, fill=(183, 248, 113), width=8)
+    if avatar_bytes:
+        _paste_avatar_image(canvas, avatar_bytes, avatar_box)
+        draw = ImageDraw.Draw(canvas)
+    else:
+        draw.ellipse((340, 460, 740, 860), fill=(28, 36, 56), outline=(49, 215, 255), width=4)
+        draw.ellipse((440, 585, 480, 625), fill=(230, 238, 248))
+        draw.ellipse((600, 585, 640, 625), fill=(230, 238, 248))
+        draw.arc((430, 640, 650, 760), 18, 162, fill=(183, 248, 113), width=8)
     draw.rounded_rectangle((380, 890, 700, 1120), radius=70, fill=(17, 24, 39), outline=(70, 90, 120), width=2)
 
     title_font = _font(54)
@@ -121,6 +131,30 @@ def _build_avatar_background(output_path: Path, subtitle_text: str) -> None:
     _draw_waveform(draw, width, 1400)
     _draw_subtitle(draw, subtitle_text, width, 1550)
     canvas.convert("RGB").save(output_path)
+
+
+def _paste_avatar_image(canvas: Image.Image, avatar_bytes: bytes, avatar_box: tuple[int, int, int, int]) -> None:
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
+        file.write(avatar_bytes)
+        image_path = Path(file.name)
+    try:
+        avatar = Image.open(image_path).convert("RGBA")
+    finally:
+        image_path.unlink(missing_ok=True)
+
+    box_width = avatar_box[2] - avatar_box[0]
+    box_height = avatar_box[3] - avatar_box[1]
+    avatar.thumbnail((box_width, box_height))
+    x = avatar_box[0] + (box_width - avatar.width) // 2
+    y = avatar_box[1] + (box_height - avatar.height) // 2
+    mask = Image.new("L", (box_width, box_height), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.ellipse((0, 0, box_width, box_height), fill=255)
+    layer = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0))
+    layer.paste(avatar, (x - avatar_box[0], y - avatar_box[1]), avatar)
+    alpha = layer.getchannel("A")
+    layer.putalpha(ImageChops.multiply(alpha, mask))
+    canvas.alpha_composite(layer, (avatar_box[0], avatar_box[1]))
 
 
 def _draw_waveform(draw: ImageDraw.ImageDraw, width: int, y: int) -> None:

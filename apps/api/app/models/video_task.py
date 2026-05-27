@@ -49,6 +49,9 @@ class VideoTask(BaseModel):
     use_digital_human: bool = True
     production_mode: str = "semi_auto"
     avatar_id: str
+    avatar_template_id: str = ""
+    avatar_template_name: str = ""
+    avatar_template_image: str = ""
     voice_url: str
     voice_clone_id: Optional[str] = None
     use_cloned_voice: bool = False

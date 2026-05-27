@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.core.tts import MINIMAX_TTS_VOICES, get_tts_voice
 from app.models.video_task import TaskCreateResponse, VideoTask
+from app.services.avatar_templates import get_avatar_template
 from app.services.content_ai import generate_commerce_package
 from app.services.billing import assert_generation_quota, log_generation_usage
 from app.services.storage import upload_public_file
@@ -19,7 +20,7 @@ from app.services.voice_clone_provider import assert_clone_owner, assert_user_ca
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 logger = logging.getLogger(__name__)
 
-ALLOWED_AVATARS = {"emily", "david", "sophia", "alex", "heygen_custom"}
+ALLOWED_AVATARS = {"emily", "david", "sophia", "alex", "heygen_custom", "business_female_01", "business_male_01", "ai_female_01"}
 ALLOWED_LANGUAGES = set(MINIMAX_TTS_VOICES.keys())
 ALLOWED_VIDEO_STYLES = {"hard_sell", "emotional_seed", "premium", "factory_boss", "tiktok", "review", "story"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -55,6 +56,7 @@ async def create_video_task(
     language: str = Form(...),
     voice_type: str | None = Form(default=None),
     avatar_id: str = Form(...),
+    avatar_template_id: str | None = Form(default=None),
     use_cloned_voice: bool = Form(default=False),
     voice_clone_id: str | None = Form(default=None),
     image: UploadFile = File(...),
@@ -69,7 +71,9 @@ async def create_video_task(
             raise HTTPException(status_code=403, detail="只能为当前登录账户创建任务。")
         assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
 
-        if avatar_id not in ALLOWED_AVATARS:
+        template = get_avatar_template(avatar_template_id or avatar_id if avatar_id in {"business_female_01", "business_male_01", "ai_female_01"} else avatar_template_id)
+        selected_avatar_id = template.id
+        if selected_avatar_id not in ALLOWED_AVATARS:
             raise HTTPException(status_code=400, detail="Invalid avatar_id")
 
         if language not in ALLOWED_LANGUAGES:
@@ -78,7 +82,7 @@ async def create_video_task(
             raise HTTPException(status_code=400, detail="Invalid video_style")
 
         tts_voice = get_tts_voice(language)
-        selected_tts_voice_name = (voice_type or "").strip() or tts_voice.voice_name
+        selected_tts_voice_name = (voice_type or "").strip() or template.voice_type or tts_voice.voice_name
         ai_package = generate_commerce_package(
             product_name=product_name,
             product_highlights=product_highlights,
@@ -97,7 +101,7 @@ async def create_video_task(
             max_bytes=10 * MB,
             allowed_format_label="jpg, jpeg, png, webp",
         )
-        if use_digital_human and (not personal_image or not personal_image.filename):
+        if use_digital_human and not template and (not personal_image or not personal_image.filename):
             raise HTTPException(status_code=400, detail="personal_image is required when use_digital_human=true")
 
         personal_image_url = None
@@ -145,7 +149,7 @@ async def create_video_task(
             language=language,
             image_url=image_url,
             personal_image_url=personal_image_url,
-            avatar_id=avatar_id,
+            avatar_id=selected_avatar_id,
             voice_url=voice_url,
             voice_clone_id=voice_clone_id if use_cloned_voice else None,
             use_cloned_voice=use_cloned_voice,

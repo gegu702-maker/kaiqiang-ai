@@ -1,7 +1,8 @@
 "use client";
 
 import { ChangeEvent, useActionState, useEffect, useRef, useState } from "react";
-import { Download, ImagePlus, Loader2, Mail, Mic2, Package, ScrollText, Target, Video } from "lucide-react";
+import Image from "next/image";
+import { Check, Download, ImagePlus, Loader2, Mail, Mic2, Package, ScrollText, Target, Video } from "lucide-react";
 
 import { submitTaskAction } from "@/app/actions/tasks";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -9,6 +10,8 @@ import { SubmitButton } from "@/components/SubmitButton";
 import { VoiceUpload } from "@/components/VoiceUpload";
 import { Card } from "@/components/ui/card";
 import { trackEvent } from "@/lib/analytics";
+import { avatarTemplates } from "@/lib/avatarTemplates";
+import { cn } from "@/lib/utils";
 import type { VoiceClone } from "@/lib/types";
 
 const initialState = { ok: false, message: "" };
@@ -47,6 +50,9 @@ const copy = {
     ttsNetworkError: "网络错误，请稍后重试。",
     ttsProviderError: "provider 错误，请检查 Volcengine 配置。",
     ttsDownload: "下载 MP3",
+    avatarTemplate: "数字人模板",
+    avatarTemplateHint: "普通会员可选择固定模板，Pro 后续开放自定义形象。",
+    recommended: "推荐场景",
     videoTitle: "静态头像口播视频",
     videoDescription: "把当前文案合成为 1080x1920 竖屏 MP4。",
     videoGenerate: "生成视频",
@@ -113,6 +119,9 @@ const copy = {
     ttsNetworkError: "Network error. Please try again.",
     ttsProviderError: "Provider error. Please check Volcengine settings.",
     ttsDownload: "Download MP3",
+    avatarTemplate: "Avatar Template",
+    avatarTemplateHint: "Members can use fixed templates. Custom avatars will come with Pro.",
+    recommended: "Recommended",
     videoTitle: "Static Avatar Video",
     videoDescription: "Render the current script into a 1080x1920 MP4.",
     videoGenerate: "Generate Video",
@@ -161,6 +170,8 @@ type TTSTestResponse = {
 
 type AvatarVideoTestResponse = TTSTestResponse & {
   video_url?: string;
+  avatar_template_id?: string;
+  avatar_template_name?: string;
 };
 
 type TaskFormProps = {
@@ -187,6 +198,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [draftRestored, setDraftRestored] = useState(false);
   const [ttsText, setTtsText] = useState(current.ttsPlaceholder);
   const [ttsVoiceType, setTtsVoiceType] = useState("BV001_streaming");
+  const [avatarTemplateId, setAvatarTemplateId] = useState("business_female_01");
   const [ttsStatus, setTtsStatus] = useState<TTSStatus>("idle");
   const [ttsError, setTtsError] = useState("");
   const [ttsAudioUrl, setTtsAudioUrl] = useState("");
@@ -215,6 +227,13 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
           }
           if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
             if (field.type !== "file" && field.name !== "user_email") field.value = value;
+            if (field.name === "avatar_template_id") {
+              const template = avatarTemplates.find((item) => item.id === value);
+              if (template) {
+                setAvatarTemplateId(template.id);
+                setTtsVoiceType(template.voice_type);
+              }
+            }
           }
         });
         setDraftRestored(true);
@@ -348,7 +367,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       const response = await fetch("/api/debug/avatar-video-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice_type: ttsVoiceType }),
+        body: JSON.stringify({ text, voice_type: ttsVoiceType, avatar_template_id: avatarTemplateId }),
       });
       const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
       if (!response.ok || !payload.success || !payload.video_url) {
@@ -404,6 +423,54 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
     >
       <input type="hidden" name="ui_locale" value={locale} />
       <Card className="space-y-4 p-4">
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-base font-semibold text-white">{current.avatarTemplate}</h2>
+            <p className="mt-1 text-sm text-slate-400">{current.avatarTemplateHint}</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {avatarTemplates.map((template) => {
+              const isSelected = avatarTemplateId === template.id;
+              return (
+                <label key={template.id} className="cursor-pointer">
+                  <input
+                    type="radio"
+                    name="avatar_template_id"
+                    value={template.id}
+                    checked={isSelected}
+                    onChange={() => {
+                      setAvatarTemplateId(template.id);
+                      setTtsVoiceType(template.voice_type);
+                    }}
+                    className="sr-only"
+                  />
+                  <div
+                    className={cn(
+                      "relative h-full overflow-hidden rounded-md border bg-white/[0.03] p-3 transition",
+                      isSelected ? "border-cyan bg-cyan/10" : "border-white/10 hover:border-white/25 hover:bg-white/[0.06]",
+                    )}
+                  >
+                    <div className="relative mb-3 aspect-square overflow-hidden rounded-md border border-white/10 bg-black/20">
+                      <Image src={template.avatar_image} alt={template.name} fill className="object-cover" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-semibold text-white">{template.name}</p>
+                      <p className="text-xs leading-5 text-slate-400">{template.description}</p>
+                      <p className="text-xs text-slate-500">
+                        {current.recommended} · {template.style} · {template.voice_type}
+                      </p>
+                    </div>
+                    {isSelected ? (
+                      <span className="absolute right-3 top-3 grid size-6 place-items-center rounded-full bg-cyan text-ink">
+                        <Check size={14} />
+                      </span>
+                    ) : null}
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </section>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-white">{current.ttsTitle}</h2>
@@ -669,7 +736,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
         {personalImageError ? <span className="block text-xs text-rose-200">{personalImageError}</span> : null}
       </label>
 
-      <input type="hidden" name="avatar_id" value="heygen_custom" />
+      <input type="hidden" name="avatar_id" value={avatarTemplateId} />
       <label className="space-y-2">
         <span className="flex items-center gap-2 text-sm text-slate-300">
           <Mic2 size={15} /> {current.voiceType}

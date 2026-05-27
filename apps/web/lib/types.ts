@@ -53,6 +53,9 @@ export type VideoTask = {
   use_digital_human: boolean;
   production_mode: string;
   avatar_id: string;
+  avatar_template_id: string;
+  avatar_template_name: string;
+  avatar_template_image: string;
   voice_url: string;
   voice_clone_id: string | null;
   use_cloned_voice: boolean;

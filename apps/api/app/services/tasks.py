@@ -5,6 +5,7 @@ from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.models.video_task import TaskStatus
+from app.services.avatar_templates import get_avatar_template
 from app.services.content_ai import generate_commerce_package
 
 
@@ -196,6 +197,15 @@ def _update_video_task(supabase: Client, task_id: str, payload: dict[str, Any]):
 
 def with_commerce_ai_fallback(task: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(task)
+    try:
+        template = get_avatar_template(normalized.get("avatar_id"))
+        normalized["avatar_template_id"] = template.id
+        normalized["avatar_template_name"] = template.name
+        normalized["avatar_template_image"] = template.avatar_image
+    except Exception:
+        normalized["avatar_template_id"] = normalized.get("avatar_id") or ""
+        normalized["avatar_template_name"] = ""
+        normalized["avatar_template_image"] = ""
     has_ai_package = bool(
         normalized.get("selling_points")
         and normalized.get("hook")

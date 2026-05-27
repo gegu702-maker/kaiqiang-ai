@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.supabase import get_supabase
+from app.services.avatar_templates import avatar_template_public_url, get_avatar_template
 from app.services.static_avatar_video import render_static_avatar_video
 from app.services.storage import upload_public_bytes
 from app.services.tts import synthesize_speech_to_storage
@@ -24,7 +25,7 @@ class TTSTestRequest(BaseModel):
 
 
 class StaticAvatarVideoTestRequest(TTSTestRequest):
-    pass
+    avatar_template_id: str | None = None
 
 
 @router.get("/debug/supabase")
@@ -166,12 +167,14 @@ async def debug_tts_test(payload: TTSTestRequest) -> dict:
 
 @router.post("/api/debug/avatar-video-test")
 async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict:
+    template = get_avatar_template(payload.avatar_template_id)
     supabase = get_supabase()
+    selected_voice_type = payload.voice_type or template.voice_type
     tts_result = await synthesize_speech_to_storage(
         supabase,
         text=payload.text,
         folder="debug/avatar-video/tts",
-        voice_type=payload.voice_type,
+        voice_type=selected_voice_type,
         speed_ratio=payload.speed_ratio,
         volume_ratio=payload.volume_ratio,
         pitch_ratio=payload.pitch_ratio,
@@ -180,6 +183,7 @@ async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict
         supabase,
         audio_url=tts_result["audio_url"],
         subtitle_text=payload.text,
+        avatar_image_url=avatar_template_public_url(template),
         duration=tts_result.get("duration"),
     )
     return {
@@ -187,5 +191,7 @@ async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict
         "video_url": video_url,
         "audio_url": tts_result["audio_url"],
         "provider": tts_result["provider"],
-        "voice_type": tts_result.get("voice_type") or payload.voice_type or settings.volcengine_tts_voice_type,
+        "voice_type": tts_result.get("voice_type") or selected_voice_type or settings.volcengine_tts_voice_type,
+        "avatar_template_id": template.id,
+        "avatar_template_name": template.name,
     }

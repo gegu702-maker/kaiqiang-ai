@@ -1,3 +1,5 @@
+import { avatarTemplates } from "@/lib/avatarTemplates";
+
 export type AvatarProfile = {
   id: string;
   name: string;
@@ -7,6 +9,13 @@ export type AvatarProfile = {
 };
 
 export const avatarProfiles: AvatarProfile[] = [
+  ...avatarTemplates.map((template) => ({
+    id: template.id,
+    name: template.name,
+    label: template.description,
+    accent: template.gender === "male" ? "from-blue-300/70 to-lime/70" : template.style === "tech" ? "from-violet-300/70 to-cyan/70" : "from-cyan/70 to-lime/70",
+    initials: template.gender === "male" ? "男" : "女",
+  })),
   {
     id: "emily",
     name: "Emily",
