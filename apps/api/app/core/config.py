@@ -1,3 +1,6 @@
+from typing import Any
+
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +34,8 @@ class Settings(BaseSettings):
     alipay_app_id: str = ""
     alipay_private_key: str = ""
     openai_api_key: str = ""
+    gemini_api_key: str = ""
+    dashscope_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice: str = "alloy"
@@ -50,9 +55,23 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
+    @field_validator("*", mode="before")
+    @classmethod
+    def strip_accidental_env_key_prefix(cls, value: Any, info: ValidationInfo) -> Any:
+        if not isinstance(value, str):
+            return value
+        env_name = info.field_name.upper()
+        prefix = f"{env_name}="
+        if value.startswith(prefix):
+            return value[len(prefix) :].strip()
+        return value
+
     @property
     def allowed_origins(self) -> list[str]:
-        origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        raw_origins = self.cors_origins
+        if raw_origins.startswith("CORS_ORIGINS="):
+            raw_origins = raw_origins.split("=", 1)[1]
+        origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
         if self.web_origin not in origins:
             origins.append(self.web_origin)
         for origin in ["https://kaiqiang.ai", "https://www.kaiqiang.ai", "http://localhost:3000", "http://127.0.0.1:3000"]:

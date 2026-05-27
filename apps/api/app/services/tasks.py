@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from postgrest.exceptions import APIError
@@ -8,6 +9,7 @@ from app.services.content_ai import generate_commerce_package
 
 
 TABLE = "video_tasks"
+logger = logging.getLogger(__name__)
 
 
 def create_task(
@@ -118,10 +120,9 @@ def create_task(
                 "status": "waiting",
             }
         ).execute()
-    except APIError:
-        # Older databases may not have task_queue until the commercial SaaS
-        # migration is applied. The task itself remains valid.
-        pass
+    except APIError as error:
+        logger.exception("task_queue insert failed for task_id=%s", task.get("id"))
+        raise RuntimeError(f"Queue unavailable: task_queue insert failed: {error}") from error
     if used_fallback:
         task.update(
             {
@@ -295,6 +296,7 @@ def requeue_user_task(supabase: Client, task_id: str, user_id: str) -> dict[str,
             supabase.table("task_queue").update({"status": "waiting", "attempts": 0, "error_message": ""}).eq("task_id", task_id).execute()
         else:
             supabase.table("task_queue").insert({"task_id": task_id, "user_id": user_id, "status": "waiting"}).execute()
-    except APIError:
-        pass
+    except APIError as error:
+        logger.exception("task_queue requeue failed for task_id=%s", task_id)
+        raise RuntimeError(f"Queue unavailable: task_queue requeue failed: {error}") from error
     return get_user_task(supabase, task_id, user_id) or task

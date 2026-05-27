@@ -2,17 +2,34 @@ import type { AdminUser, CheckoutResponse, Order, UsageLog, UsageSummary, VideoT
 
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-async function parseResponse<T>(response: Response): Promise<T> {
+function stringifyDetail(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+async function parseResponse<T>(response: Response, context?: { url?: string; method?: string }): Promise<T> {
   if (!response.ok) {
     const body = await response.text();
     let message = "";
     try {
-      const payload = JSON.parse(body) as { detail?: string };
-      message = payload.detail ?? "";
+      const payload = JSON.parse(body) as { detail?: unknown; error?: unknown; message?: unknown };
+      message = stringifyDetail(payload.detail ?? payload.error ?? payload.message);
     } catch {
       // Fall through to the raw response body below.
     }
-    throw new Error(message || body || `Request failed with ${response.status}`);
+    const details = [
+      `API request failed`,
+      context?.method ? `Method: ${context.method}` : "",
+      context?.url ? `URL: ${context.url}` : "",
+      `Status: ${response.status} ${response.statusText}`,
+      `Body: ${message || body || "(empty response body)"}`,
+    ].filter(Boolean);
+    throw new Error(details.join("\n"));
   }
   return response.json() as Promise<T>;
 }
@@ -22,13 +39,26 @@ function authHeaders(accessToken?: string): HeadersInit {
 }
 
 export async function createVideoTask(formData: FormData, accessToken?: string): Promise<VideoTask> {
-  const response = await fetch(`${API_URL}/api/tasks`, {
-    method: "POST",
-    headers: authHeaders(accessToken),
-    body: formData,
-    cache: "no-store",
-  });
-  const payload = await parseResponse<{ task: VideoTask }>(response);
+  const url = `${API_URL}/api/tasks`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: formData,
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw new Error(
+      [
+        "API request failed",
+        "Method: POST",
+        `URL: ${url}`,
+        `Message: ${error instanceof Error ? error.message : stringifyDetail(error)}`,
+      ].join("\n"),
+    );
+  }
+  const payload = await parseResponse<{ task: VideoTask }>(response, { url, method: "POST" });
   return payload.task;
 }
 

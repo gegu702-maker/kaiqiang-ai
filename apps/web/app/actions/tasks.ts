@@ -32,6 +32,10 @@ export async function submitTaskAction(
       message: locale === "en" ? "Your AI product video workflow has been generated. Download the final video from Tasks after delivery." : "AI 带货方案已生成，管理员制作后可在任务页下载视频。",
     };
   } catch (error) {
+    console.error("[submitTaskAction] task submission failed", {
+      message: error instanceof Error ? error.message : String(error),
+      formKeys: Array.from(formData.keys()),
+    });
     return {
       ok: false,
       message: error instanceof Error ? error.message : locale === "en" ? "Submission failed. Please check the backend service and environment variables." : "提交失败，请检查后端服务和环境变量。",

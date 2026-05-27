@@ -1,3 +1,6 @@
+import logging
+import traceback
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import EmailStr
 from supabase import Client
@@ -14,6 +17,7 @@ from app.services.tasks import create_task, delete_user_task, get_user_task, lis
 from app.services.voice_clone_provider import assert_clone_owner, assert_user_can_clone
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+logger = logging.getLogger(__name__)
 
 ALLOWED_AVATARS = {"emily", "david", "sophia", "alex", "heygen_custom"}
 ALLOWED_LANGUAGES = set(MINIMAX_TTS_VOICES.keys())
@@ -58,95 +62,108 @@ async def create_video_task(
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> TaskCreateResponse:
-    user = get_authenticated_user(supabase, token)
-    if str(user_email).lower() != str(user["email"]).lower():
-        raise HTTPException(status_code=403, detail="只能为当前登录账户创建任务。")
-    assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
+    try:
+        user = get_authenticated_user(supabase, token)
+        if str(user_email).lower() != str(user["email"]).lower():
+            raise HTTPException(status_code=403, detail="只能为当前登录账户创建任务。")
+        assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
 
-    if avatar_id not in ALLOWED_AVATARS:
-        raise HTTPException(status_code=400, detail="Invalid avatar_id")
+        if avatar_id not in ALLOWED_AVATARS:
+            raise HTTPException(status_code=400, detail="Invalid avatar_id")
 
-    if language not in ALLOWED_LANGUAGES:
-        raise HTTPException(status_code=400, detail="Language must be zh or en")
-    if video_style not in ALLOWED_VIDEO_STYLES:
-        raise HTTPException(status_code=400, detail="Invalid video_style")
+        if language not in ALLOWED_LANGUAGES:
+            raise HTTPException(status_code=400, detail="Language must be zh or en")
+        if video_style not in ALLOWED_VIDEO_STYLES:
+            raise HTTPException(status_code=400, detail="Invalid video_style")
 
-    tts_voice = get_tts_voice(language)
-    ai_package = generate_commerce_package(
-        product_name=product_name,
-        product_highlights=product_highlights,
-        target_audience=target_audience,
-        video_style=video_style,
-        use_digital_human=use_digital_human,
-    )
+        tts_voice = get_tts_voice(language)
+        ai_package = generate_commerce_package(
+            product_name=product_name,
+            product_highlights=product_highlights,
+            target_audience=target_audience,
+            video_style=video_style,
+            use_digital_human=use_digital_human,
+        )
 
-    image_url = await upload_public_file(
-        supabase,
-        settings.supabase_image_bucket,
-        image,
-        "products",
-        allowed_extensions=IMAGE_EXTENSIONS,
-        allowed_content_types=IMAGE_TYPES,
-        max_bytes=10 * MB,
-        allowed_format_label="jpg, jpeg, png, webp",
-    )
-    if use_digital_human and (not personal_image or not personal_image.filename):
-        raise HTTPException(status_code=400, detail="personal_image is required when use_digital_human=true")
-
-    personal_image_url = None
-    if personal_image and personal_image.filename:
-        personal_image_url = await upload_public_file(
+        image_url = await upload_public_file(
             supabase,
             settings.supabase_image_bucket,
-            personal_image,
-            "personal",
+            image,
+            "products",
             allowed_extensions=IMAGE_EXTENSIONS,
             allowed_content_types=IMAGE_TYPES,
             max_bytes=10 * MB,
             allowed_format_label="jpg, jpeg, png, webp",
         )
-    voice_url = ""
-    selected_clone = None
-    if use_cloned_voice:
-        assert_user_can_clone(supabase, user_id=user["id"], email=user["email"])
-        if not voice_clone_id:
-            raise HTTPException(status_code=400, detail="voice_clone_id is required when use_cloned_voice=true")
-        selected_clone = assert_clone_owner(supabase, user_id=user["id"], voice_clone_id=voice_clone_id)
-        voice_url = selected_clone.get("sample_audio_url") or ""
-    elif voice and voice.filename:
-        voice_url = await upload_public_file(
+        if use_digital_human and (not personal_image or not personal_image.filename):
+            raise HTTPException(status_code=400, detail="personal_image is required when use_digital_human=true")
+
+        personal_image_url = None
+        if personal_image and personal_image.filename:
+            personal_image_url = await upload_public_file(
+                supabase,
+                settings.supabase_image_bucket,
+                personal_image,
+                "personal",
+                allowed_extensions=IMAGE_EXTENSIONS,
+                allowed_content_types=IMAGE_TYPES,
+                max_bytes=10 * MB,
+                allowed_format_label="jpg, jpeg, png, webp",
+            )
+        voice_url = ""
+        selected_clone = None
+        if use_cloned_voice:
+            assert_user_can_clone(supabase, user_id=user["id"], email=user["email"])
+            if not voice_clone_id:
+                raise HTTPException(status_code=400, detail="voice_clone_id is required when use_cloned_voice=true")
+            selected_clone = assert_clone_owner(supabase, user_id=user["id"], voice_clone_id=voice_clone_id)
+            voice_url = selected_clone.get("sample_audio_url") or ""
+        elif voice and voice.filename:
+            voice_url = await upload_public_file(
+                supabase,
+                settings.supabase_voice_bucket,
+                voice,
+                "voices",
+                allowed_extensions=VOICE_EXTENSIONS,
+                allowed_content_types=VOICE_TYPES,
+                max_bytes=20 * MB,
+                allowed_format_label="mp3, wav, m4a",
+            )
+        task = create_task(
             supabase,
-            settings.supabase_voice_bucket,
-            voice,
-            "voices",
-            allowed_extensions=VOICE_EXTENSIONS,
-            allowed_content_types=VOICE_TYPES,
-            max_bytes=20 * MB,
-            allowed_format_label="mp3, wav, m4a",
+            user_id=user["id"],
+            user_email=str(user_email),
+            product_name=product_name,
+            script=ai_package["script"],
+            product_highlights=product_highlights,
+            target_audience=target_audience,
+            video_style=video_style,
+            use_digital_human=use_digital_human,
+            ai_package=ai_package,
+            language=language,
+            image_url=image_url,
+            personal_image_url=personal_image_url,
+            avatar_id=avatar_id,
+            voice_url=voice_url,
+            voice_clone_id=voice_clone_id if use_cloned_voice else None,
+            use_cloned_voice=use_cloned_voice,
+            tts_language=tts_voice.language,
+            tts_voice_name=tts_voice.voice_name,
         )
-    task = create_task(
-        supabase,
-        user_id=user["id"],
-        user_email=str(user_email),
-        product_name=product_name,
-        script=ai_package["script"],
-        product_highlights=product_highlights,
-        target_audience=target_audience,
-        video_style=video_style,
-        use_digital_human=use_digital_human,
-        ai_package=ai_package,
-        language=language,
-        image_url=image_url,
-        personal_image_url=personal_image_url,
-        avatar_id=avatar_id,
-        voice_url=voice_url,
-        voice_clone_id=voice_clone_id if use_cloned_voice else None,
-        use_cloned_voice=use_cloned_voice,
-        tts_language=tts_voice.language,
-        tts_voice_name=tts_voice.voice_name,
-    )
-    log_generation_usage(supabase, user_id=user["id"], task_id=task["id"])
-    return TaskCreateResponse(task=VideoTask(**task))
+        log_generation_usage(supabase, user_id=user["id"], task_id=task["id"])
+        return TaskCreateResponse(task=VideoTask(**task))
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("Failed to create video task")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": str(error),
+                "type": error.__class__.__name__,
+                "traceback": traceback.format_exc()[-6000:],
+            },
+        ) from error
 
 
 @router.get("", response_model=list[VideoTask])

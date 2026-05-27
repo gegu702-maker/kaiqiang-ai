@@ -92,4 +92,11 @@ def debug_config() -> dict:
         "public_site_url": settings.public_site_url,
         "web_origin": settings.web_origin,
         "cors_origins": settings.allowed_origins,
+        "openai_api_key_configured": bool(settings.openai_api_key),
+        "deepseek_api_key_configured": bool(settings.deepseek_api_key),
+        "gemini_api_key_configured": bool(settings.gemini_api_key),
+        "dashscope_api_key_configured": bool(settings.dashscope_api_key),
+        "llm_provider": settings.llm_provider,
+        "enable_task_worker": settings.enable_task_worker,
+        "ffmpeg_path": settings.ffmpeg_path,
     }

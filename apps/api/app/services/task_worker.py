@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from postgrest.exceptions import APIError
 
@@ -10,6 +11,8 @@ from app.services.billing import refund_generation_usage
 from app.services.task_pipeline import log_task, process_video_task, update_task_status
 from app.services.tasks import get_task
 
+logger = logging.getLogger(__name__)
+
 
 async def worker_loop() -> None:
     if not settings.enable_task_worker:
@@ -18,7 +21,7 @@ async def worker_loop() -> None:
         try:
             await process_next_task()
         except Exception:
-            pass
+            logger.exception("Task worker loop failed")
         await asyncio.sleep(settings.task_worker_poll_seconds)
 
 
@@ -47,6 +50,7 @@ async def process_next_task() -> None:
             raise RuntimeError("Task not found")
         await process_video_task(supabase, task)
     except Exception as error:
+        logger.exception("Task processing failed for task_id=%s", task_id)
         message = str(error)
         log_task(
             supabase,
@@ -70,6 +74,6 @@ async def process_next_task() -> None:
                     {"status": "processing", "generation_error": f"第 {next_attempt} 次生成失败，系统将自动重试：{message[:500]}"}
                 ).eq("id", task_id).execute()
             except Exception:
-                pass
+                logger.exception("Failed to update retry generation_error for task_id=%s", task_id)
         if isinstance(error, APIError):
             raise

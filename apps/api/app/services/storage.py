@@ -1,15 +1,19 @@
 from pathlib import Path
 from time import sleep
 from uuid import uuid4
+import logging
 
 from fastapi import HTTPException, UploadFile
 from supabase import Client
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_public_bucket(supabase: Client, bucket: str) -> None:
     try:
         existing = {item.name for item in supabase.storage.list_buckets()}
     except Exception:
+        logger.exception("Supabase bucket check failed for bucket=%s", bucket)
         # Bucket checks are a convenience. If Supabase/proxy flakes here, let
         # the real upload decide rather than failing an already-generated voice.
         return

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from supabase import Client
@@ -10,6 +11,8 @@ from app.services.script_generator import generate_video_script
 from app.services.tts import synthesize_speech_to_storage
 from app.services.voice_clone_provider import assert_clone_owner
 from app.services.video_render import render_product_video
+
+logger = logging.getLogger(__name__)
 
 
 def log_task(supabase: Client, *, task_id: str, level: str, message: str, data: dict[str, Any] | None = None) -> None:
@@ -23,7 +26,7 @@ def log_task(supabase: Client, *, task_id: str, level: str, message: str, data: 
             }
         ).execute()
     except Exception:
-        pass
+        logger.exception("Failed to insert task log for task_id=%s", task_id)
 
 
 def update_task_status(supabase: Client, task_id: str, status: str, error: str = "") -> None:
@@ -38,14 +41,14 @@ def update_task_status(supabase: Client, task_id: str, status: str, error: str =
         try:
             supabase.table("task_queue").update({"status": queue_status, "error_message": error}).eq("task_id", task_id).execute()
         except Exception:
-            pass
+            logger.exception("Failed to update queue status for task_id=%s", task_id)
 
 
 def update_queue_status(supabase: Client, task_id: str, status: str, error: str = "") -> None:
     try:
         supabase.table("task_queue").update({"status": status, "error_message": error}).eq("task_id", task_id).execute()
     except Exception:
-        pass
+        logger.exception("Failed to update queue status for task_id=%s", task_id)
 
 
 async def process_video_task(supabase: Client, task: dict[str, Any]) -> dict[str, Any]:
@@ -143,6 +146,6 @@ async def process_video_task(supabase: Client, task: dict[str, Any]) -> dict[str
     try:
         supabase.table("task_queue").update({"status": "success", "error_message": ""}).eq("task_id", task_id).execute()
     except Exception:
-        pass
+        logger.exception("Failed to mark task_queue success for task_id=%s", task_id)
     log_task(supabase, task_id=task_id, level="info", message="Pipeline success", data={"final_video_url": final_video_url})
     return {"final_video_url": final_video_url}
