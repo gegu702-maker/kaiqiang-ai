@@ -71,7 +71,7 @@ def create_task(
     }
     used_fallback = False
     try:
-        result = supabase.table(TABLE).insert(payload).execute()
+        result = _insert_task_payload(supabase, payload)
     except APIError as error:
         message = str(error)
         if "schema cache" not in message and "PGRST204" not in message:
@@ -109,7 +109,7 @@ def create_task(
                 "use_cloned_voice",
             }
         }
-        result = supabase.table(TABLE).insert(fallback_payload).execute()
+        result = _insert_task_payload(supabase, fallback_payload)
         used_fallback = True
     task = result.data[0]
     try:
@@ -148,6 +148,23 @@ def create_task(
             }
         )
     return with_commerce_ai_fallback(task)
+
+
+def _insert_task_payload(supabase: Client, payload: dict[str, Any]):
+    try:
+        return supabase.table(TABLE).insert(payload).execute()
+    except APIError as error:
+        if _is_legacy_status_constraint_error(error) and payload.get("status") == TaskStatus.waiting.value:
+            logger.warning("video_tasks status constraint does not allow waiting; retrying insert with pending")
+            compatible_payload = dict(payload)
+            compatible_payload["status"] = TaskStatus.pending.value
+            return supabase.table(TABLE).insert(compatible_payload).execute()
+        raise
+
+
+def _is_legacy_status_constraint_error(error: APIError) -> bool:
+    message = str(error)
+    return "video_tasks_status_check" in message or "violates check constraint" in message and "status" in message
 
 
 def with_commerce_ai_fallback(task: dict[str, Any]) -> dict[str, Any]:
