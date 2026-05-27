@@ -26,6 +26,8 @@ async def render_static_avatar_video(
         audio_response.raise_for_status()
         audio_bytes = audio_response.content
 
+    duration_seconds = max(1.0, float(duration or 5.0))
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         background_path = tmp_path / "avatar.png"
@@ -44,10 +46,18 @@ async def render_static_avatar_video(
             str(background_path),
             "-i",
             str(audio_path),
+            "-t",
+            f"{duration_seconds:.3f}",
+            "-r",
+            "25",
             "-c:v",
             "libx264",
+            "-preset",
+            "veryfast",
             "-tune",
             "stillimage",
+            "-threads",
+            "2",
             "-pix_fmt",
             "yuv420p",
             "-c:a",
