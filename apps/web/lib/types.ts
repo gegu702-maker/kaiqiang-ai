@@ -161,7 +161,7 @@ export type CheckoutResponse = {
 export type VoiceClone = {
   id: string;
   user_id: string;
-  provider: "mock" | "elevenlabs" | "minimax" | "fishaudio" | "openvoice";
+  provider: "mock" | "elevenlabs" | "minimax" | "fishaudio" | "openvoice" | "volcengine";
   voice_id: string;
   name: string;
   sample_audio_url: string;

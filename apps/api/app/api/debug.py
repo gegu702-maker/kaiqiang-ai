@@ -2,14 +2,24 @@ from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
 from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.services.storage import upload_public_bytes
+from app.services.tts import synthesize_speech_to_storage
 
 router = APIRouter(tags=["debug"])
 
 REQUIRED_BUCKETS = ["images", "voices", "cloned", "videos", "subtitles"]
+
+
+class TTSTestRequest(BaseModel):
+    text: str = Field(default="你好，我是凯强 AI 数字人", min_length=1)
+    voice_type: str | None = None
+    speed_ratio: float = 1.0
+    volume_ratio: float = 1.0
+    pitch_ratio: float = 1.0
 
 
 @router.get("/debug/supabase")
@@ -126,4 +136,24 @@ def debug_config() -> dict:
         "ffmpeg_path": settings.ffmpeg_path,
         "admin_api_key_configured": bool(admin_key),
         "admin_api_key_fingerprint": hashlib.sha256(admin_key.encode("utf-8")).hexdigest()[:12] if admin_key else "",
+    }
+
+
+@router.post("/api/debug/tts-test")
+async def debug_tts_test(payload: TTSTestRequest) -> dict:
+    supabase = get_supabase()
+    result = await synthesize_speech_to_storage(
+        supabase,
+        text=payload.text,
+        folder="debug/tts-test",
+        voice_type=payload.voice_type,
+        speed_ratio=payload.speed_ratio,
+        volume_ratio=payload.volume_ratio,
+        pitch_ratio=payload.pitch_ratio,
+    )
+    return {
+        "success": True,
+        "audio_url": result["audio_url"],
+        "provider": result["provider"],
+        "voice_type": result.get("voice_type") or payload.voice_type or settings.volcengine_tts_voice_type,
     }

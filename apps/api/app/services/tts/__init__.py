@@ -29,6 +29,7 @@ async def synthesize_speech_to_storage(
     extension = ".mp3"
     content_type = "audio/mpeg"
     provider_name = "unknown"
+    selected_voice_type = voice_type
 
     if provider == "volcengine":
         result = await VolcengineTTSProvider().synthesize(
@@ -42,6 +43,7 @@ async def synthesize_speech_to_storage(
         extension = result["extension"]
         content_type = result["content_type"]
         provider_name = result["provider"]
+        selected_voice_type = result["voice_type"]
     elif voice_clone and voice_clone.get("provider") == "elevenlabs" and voice_clone.get("voice_id"):
         audio = await _elevenlabs_tts(text, voice_id=voice_clone["voice_id"])
         provider_name = "elevenlabs"
@@ -75,6 +77,7 @@ async def synthesize_speech_to_storage(
         "duration": duration,
         "audio_bytes": audio,
         "provider": provider_name,
+        "voice_type": selected_voice_type,
         "content_type": content_type,
     }
 

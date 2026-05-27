@@ -53,6 +53,7 @@ async def create_video_task(
     video_style: str = Form(...),
     use_digital_human: bool = Form(default=True),
     language: str = Form(...),
+    voice_type: str | None = Form(default=None),
     avatar_id: str = Form(...),
     use_cloned_voice: bool = Form(default=False),
     voice_clone_id: str | None = Form(default=None),
@@ -77,6 +78,7 @@ async def create_video_task(
             raise HTTPException(status_code=400, detail="Invalid video_style")
 
         tts_voice = get_tts_voice(language)
+        selected_tts_voice_name = (voice_type or "").strip() or tts_voice.voice_name
         ai_package = generate_commerce_package(
             product_name=product_name,
             product_highlights=product_highlights,
@@ -148,7 +150,7 @@ async def create_video_task(
             voice_clone_id=voice_clone_id if use_cloned_voice else None,
             use_cloned_voice=use_cloned_voice,
             tts_language=tts_voice.language,
-            tts_voice_name=tts_voice.voice_name,
+            tts_voice_name=selected_tts_voice_name,
         )
         log_generation_usage(supabase, user_id=user["id"], task_id=task["id"])
         return TaskCreateResponse(task=VideoTask(**task))

@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useActionState, useEffect, useRef, useState } from "react";
-import { ImagePlus, Mail, Package, ScrollText, Target, Video } from "lucide-react";
+import { ImagePlus, Mail, Mic2, Package, ScrollText, Target, Video } from "lucide-react";
 
 import { submitTaskAction } from "@/app/actions/tasks";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -35,6 +35,11 @@ const copy = {
     chooseFile: "选择文件",
     noFile: "未选择任何文件",
     clonedVoice: "使用我的克隆声音",
+    voiceType: "火山引擎音色",
+    voiceTypes: {
+      BV001_streaming: "BV001_streaming 女声",
+      BV002_streaming: "BV002_streaming 男声",
+    },
     cloneUpsell: "升级到 Pro 解锁声音克隆，后续视频可直接使用你的专属 voice_id。",
     loginHint: "可以先填写和上传素材，点击生成时再登录，登录后回到工作台。",
     draftRestored: "已恢复上次填写的工作台草稿。",
@@ -77,6 +82,11 @@ const copy = {
     chooseFile: "Choose File",
     noFile: "No file selected",
     clonedVoice: "Use my cloned voice",
+    voiceType: "Volcengine Voice",
+    voiceTypes: {
+      BV001_streaming: "BV001_streaming Female",
+      BV002_streaming: "BV002_streaming Male",
+    },
     cloneUpsell: "Upgrade to Pro to unlock voice cloning and reuse your dedicated voice_id in future videos.",
     loginHint: "You can fill in details and upload assets first. Sign in when you click generate, then return to the studio.",
     draftRestored: "Your previous studio draft has been restored.",
@@ -367,6 +377,22 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       </label>
 
       <input type="hidden" name="avatar_id" value="heygen_custom" />
+      <label className="space-y-2">
+        <span className="flex items-center gap-2 text-sm text-slate-300">
+          <Mic2 size={15} /> {current.voiceType}
+        </span>
+        <select
+          name="voice_type"
+          defaultValue="BV001_streaming"
+          className="h-11 w-full rounded-md border border-white/10 bg-white/5 px-3 outline-none ring-cyan/40 focus:ring-2"
+        >
+          {Object.entries(current.voiceTypes).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
       {voiceCloneEnabled && voiceClones.length > 0 ? (
         <div className="rounded-md border border-cyan/20 bg-cyan/[0.06] p-3">
           <label className="flex items-center gap-2 text-sm text-slate-200">
