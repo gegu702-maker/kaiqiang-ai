@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-import shutil
 
 import httpx
 from fastapi import HTTPException
@@ -11,6 +11,7 @@ from supabase import Client
 
 from app.core.config import settings
 from app.services.storage import upload_public_bytes
+from app.services.tts.volcengine_tts import VolcengineTTSProvider
 
 
 async def synthesize_speech_to_storage(
@@ -19,26 +20,63 @@ async def synthesize_speech_to_storage(
     text: str,
     voice_clone: dict | None = None,
     folder: str = "tts",
+    voice_type: str | None = None,
+    speed_ratio: float = 1.0,
+    volume_ratio: float = 1.0,
+    pitch_ratio: float = 1.0,
 ) -> dict:
-    if voice_clone and voice_clone.get("provider") == "elevenlabs" and voice_clone.get("voice_id"):
+    provider = settings.voice_clone_provider.lower()
+    extension = ".mp3"
+    content_type = "audio/mpeg"
+    provider_name = "unknown"
+
+    if provider == "volcengine":
+        result = await VolcengineTTSProvider().synthesize(
+            text=text,
+            voice_type=voice_type,
+            speed_ratio=speed_ratio,
+            volume_ratio=volume_ratio,
+            pitch_ratio=pitch_ratio,
+        )
+        audio = result["audio_bytes"]
+        extension = result["extension"]
+        content_type = result["content_type"]
+        provider_name = result["provider"]
+    elif voice_clone and voice_clone.get("provider") == "elevenlabs" and voice_clone.get("voice_id"):
         audio = await _elevenlabs_tts(text, voice_id=voice_clone["voice_id"])
+        provider_name = "elevenlabs"
     elif settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
         audio = await _elevenlabs_tts(text, voice_id=settings.elevenlabs_voice_id)
+        provider_name = "elevenlabs"
     elif settings.openai_api_key:
         audio = await _openai_tts(text)
+        provider_name = "openai"
     else:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY 或 ELEVENLABS_API_KEY 未配置，无法生成真实 TTS。")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "TTS provider 未配置。若使用火山引擎，请设置 VOICE_CLONE_PROVIDER=volcengine、"
+                "VOLCENGINE_TTS_APP_ID、VOLCENGINE_TTS_ACCESS_TOKEN、VOLCENGINE_TTS_CLUSTER、"
+                "VOLCENGINE_TTS_VOICE_TYPE；或配置 OPENAI_API_KEY / ELEVENLABS_API_KEY。"
+            ),
+        )
 
     audio_url = upload_public_bytes(
         supabase,
         settings.supabase_voice_bucket,
         audio,
         folder,
-        ".mp3",
-        "audio/mpeg",
+        extension,
+        content_type,
     )
     duration = probe_audio_duration(audio)
-    return {"audio_url": audio_url, "duration": duration, "audio_bytes": audio}
+    return {
+        "audio_url": audio_url,
+        "duration": duration,
+        "audio_bytes": audio,
+        "provider": provider_name,
+        "content_type": content_type,
+    }
 
 
 async def _openai_tts(text: str) -> bytes:
@@ -54,7 +92,7 @@ async def _openai_tts(text: str) -> bytes:
             },
         )
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"OpenAI TTS failed: {response.text}")
+        raise HTTPException(status_code=502, detail=_format_tts_error("OpenAI", response.status_code, response.text))
     return response.content
 
 
@@ -70,8 +108,22 @@ async def _elevenlabs_tts(text: str, *, voice_id: str) -> bytes:
             },
         )
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"ElevenLabs TTS failed: {response.text}")
+        raise HTTPException(status_code=502, detail=_format_tts_error("ElevenLabs", response.status_code, response.text))
     return response.content
+
+
+def _format_tts_error(provider: str, status_code: int, body: str) -> str:
+    if status_code in {401, 403}:
+        return (
+            f"{provider} TTS 权限不足或 API Key 无效。请检查账号是否允许 API 调用、所选 voice 是否可用，"
+            f"以及免费试用版是否限制 voice clone / TTS。返回：{body[:500]}"
+        )
+    if status_code in {402, 429}:
+        return (
+            f"{provider} TTS 额度不足、免费试用版限制或请求频率受限。请检查 credits、订阅套餐和并发限制。"
+            f" 返回：{body[:500]}"
+        )
+    return f"{provider} TTS failed ({status_code}): {body[:800]}"
 
 
 def probe_audio_duration(audio: bytes) -> float:

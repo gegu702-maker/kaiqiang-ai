@@ -57,6 +57,7 @@ class VideoTask(BaseModel):
     admin_notes: str = ""
     status: TaskStatus
     result_video_url: Optional[str] = None
+    output_video_url: Optional[str] = None
     subtitle_url: Optional[str] = None
     subtitle_status: SubtitleStatus = SubtitleStatus.pending
     cloned_voice_url: Optional[str] = None
@@ -79,6 +80,11 @@ class VideoTask(BaseModel):
     comment_prompt: str = ""
     closing_cta: str = ""
     admin_workflow: list[dict[str, Any]] = []
+    queue_id: Optional[str] = None
+    queue_status: Optional[str] = None
+    queue_attempts: int = 0
+    queue_error_message: str = ""
+    queue_updated_at: Optional[datetime] = None
     created_at: datetime
 
 

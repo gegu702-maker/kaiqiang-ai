@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const COSYVOICE_PROXY_TIMEOUT_MS = 30 * 60 * 1000;
 
+function adminApiKey(): string {
+  return (process.env.ADMIN_API_KEY ?? "").replace(/^ADMIN_API_KEY=/, "").trim();
+}
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -51,7 +55,7 @@ export async function POST(request: Request) {
     const res = await fetch(endpoint, {
       method: "POST",
       headers: {
-        "x-admin-key": process.env.ADMIN_API_KEY ?? "",
+        "x-admin-key": adminApiKey(),
       },
       body: upstream,
       cache: "no-store",

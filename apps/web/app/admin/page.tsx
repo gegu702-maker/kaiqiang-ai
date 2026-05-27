@@ -40,19 +40,20 @@ export default async function AdminPage() {
       {error ? <p className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-rose-100">{error}</p> : null}
 
       <div className="overflow-hidden rounded-lg border border-white/10 bg-panel/80 shadow-glow">
-        <div className="hidden grid-cols-[92px_1.1fr_0.8fr_110px_1.5fr] gap-4 border-b border-white/10 px-4 py-3 text-xs uppercase tracking-wide text-slate-500 lg:grid">
+        <div className="hidden grid-cols-[92px_1.1fr_0.8fr_150px_1.5fr] gap-4 border-b border-white/10 px-4 py-3 text-xs uppercase tracking-wide text-slate-500 lg:grid">
           <span>图片</span>
           <span>任务</span>
           <span>用户</span>
-          <span>状态</span>
+          <span>状态 / 队列</span>
           <span>操作</span>
         </div>
         <div className="divide-y divide-white/10">
           {tasks.map((task) => {
             const avatar = getAvatarProfile(task.avatar_id);
+            const outputVideoUrl = task.output_video_url || task.result_video_url;
 
             return (
-              <article key={task.id} className="grid gap-4 p-4 lg:grid-cols-[92px_1.1fr_0.8fr_110px_1.5fr]">
+              <article key={task.id} className="grid gap-4 p-4 lg:grid-cols-[92px_1.1fr_0.8fr_150px_1.5fr]">
                 <div className="relative aspect-square w-24 overflow-hidden rounded-md border border-white/10 bg-white/5 lg:w-auto">
                   <Image src={task.image_url} alt={task.product_name} fill className="object-cover" />
                 </div>
@@ -60,8 +61,10 @@ export default async function AdminPage() {
                   <Link href={`/admin/tasks/${task.id}`} className="font-semibold text-white hover:text-cyan">
                     {task.product_name}
                   </Link>
-                  <p className="mt-1 line-clamp-2 text-sm leading-6 text-slate-400">{task.script}</p>
-                  <p className="mt-2 text-xs text-slate-500">{new Date(task.created_at).toLocaleString()}</p>
+                  <p className="mt-1 break-all text-xs text-slate-500">task id: {task.id}</p>
+                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-400">{task.script || task.product_highlights}</p>
+                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">input: {task.product_highlights || task.target_audience || task.script}</p>
+                  <p className="mt-2 text-xs text-slate-500">created_at: {new Date(task.created_at).toLocaleString()}</p>
                 </div>
                 <div className="text-sm text-slate-300">
                   <p>{task.user_email}</p>
@@ -75,6 +78,20 @@ export default async function AdminPage() {
                 <div>
                   <div className="space-y-3">
                     <StatusBadge status={task.status} />
+                    <div className="space-y-1 text-xs text-slate-400">
+                      <p>queue: {task.queue_status || "none"}</p>
+                      <p>attempts: {task.queue_attempts ?? 0}/3</p>
+                    </div>
+                    {outputVideoUrl ? (
+                      <Button asChild variant="outline" size="sm">
+                        <a href={outputVideoUrl} target="_blank" rel="noreferrer">
+                          <ExternalLink size={14} />
+                          视频
+                        </a>
+                      </Button>
+                    ) : (
+                      <p className="text-xs text-slate-500">output video: none</p>
+                    )}
                     <Button asChild variant="outline" size="sm">
                       <Link href={`/admin/tasks/${task.id}`}>
                         <ExternalLink size={14} />

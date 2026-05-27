@@ -26,6 +26,11 @@ class VoiceCloneProvider:
                 "status": "pending",
                 "message": f"{provider} provider interface reserved. Add provider implementation to enable real cloning.",
             }
+        if provider == "volcengine":
+            raise HTTPException(
+                status_code=400,
+                detail="Volcengine 当前仅支持既有音色文本转语音，第一阶段不支持声音复刻训练。",
+            )
         raise HTTPException(status_code=400, detail=f"Unsupported VOICE_CLONE_PROVIDER: {settings.voice_clone_provider}")
 
 
@@ -42,7 +47,13 @@ def assert_clone_owner(supabase: Client, *, user_id: str, voice_clone_id: str) -
         raise HTTPException(status_code=404, detail="Voice clone not found.")
     clone = result.data[0]
     if clone.get("status") not in {"ready", "completed"}:
-        raise HTTPException(status_code=400, detail="Voice clone is not ready.")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Voice clone 尚未就绪，无法用于视频生成。请确认第三方语音克隆账号支持 voice clone/API 调用，"
+                "并且该声音已完成训练；免费试用版常会限制 voice clone 或自定义声音。"
+            ),
+        )
     return clone
 
 

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 from fastapi import APIRouter
 
@@ -85,6 +86,15 @@ def debug_supabase() -> dict:
 
 @router.get("/debug/config")
 def debug_config() -> dict:
+    admin_key = settings.admin_api_key.strip()
+    volcengine_tts_configured = all(
+        [
+            settings.volcengine_tts_app_id.strip(),
+            settings.volcengine_tts_access_token.strip(),
+            settings.volcengine_tts_cluster.strip(),
+            settings.volcengine_tts_voice_type.strip(),
+        ]
+    )
     return {
         "supabase_url_configured": bool(settings.supabase_url and settings.supabase_url != "https://example.supabase.co"),
         "supabase_url_host": settings.supabase_url.replace("https://", "").split("/")[0] if settings.supabase_url else "",
@@ -93,10 +103,27 @@ def debug_config() -> dict:
         "web_origin": settings.web_origin,
         "cors_origins": settings.allowed_origins,
         "openai_api_key_configured": bool(settings.openai_api_key),
+        "openai_tts_model": settings.openai_tts_model,
         "deepseek_api_key_configured": bool(settings.deepseek_api_key),
         "gemini_api_key_configured": bool(settings.gemini_api_key),
         "dashscope_api_key_configured": bool(settings.dashscope_api_key),
         "llm_provider": settings.llm_provider,
+        "elevenlabs_api_key_configured": bool(settings.elevenlabs_api_key),
+        "elevenlabs_voice_id_configured": bool(settings.elevenlabs_voice_id),
+        "volcengine_tts_app_id_configured": bool(settings.volcengine_tts_app_id),
+        "volcengine_tts_access_token_configured": bool(settings.volcengine_tts_access_token),
+        "volcengine_tts_cluster_configured": bool(settings.volcengine_tts_cluster),
+        "volcengine_tts_cluster": settings.volcengine_tts_cluster,
+        "volcengine_tts_voice_type_configured": bool(settings.volcengine_tts_voice_type),
+        "volcengine_tts_voice_type": settings.volcengine_tts_voice_type,
+        "volcengine_tts_configured": volcengine_tts_configured,
+        "volcengine_tts_endpoint": settings.volcengine_tts_endpoint,
+        "heygen_api_key_configured": bool(settings.heygen_api_key),
+        "heygen_avatar_id_configured": bool(settings.heygen_avatar_id),
+        "heygen_voice_id_configured": bool(settings.heygen_voice_id),
+        "voice_clone_provider": settings.voice_clone_provider,
         "enable_task_worker": settings.enable_task_worker,
         "ffmpeg_path": settings.ffmpeg_path,
+        "admin_api_key_configured": bool(admin_key),
+        "admin_api_key_fingerprint": hashlib.sha256(admin_key.encode("utf-8")).hexdigest()[:12] if admin_key else "",
     }

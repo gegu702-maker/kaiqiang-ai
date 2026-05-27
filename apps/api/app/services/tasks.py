@@ -113,7 +113,7 @@ def create_task(
         used_fallback = True
     task = result.data[0]
     try:
-        supabase.table("task_queue").insert(
+        queue_insert = supabase.table("task_queue").insert(
             {
                 "task_id": task["id"],
                 "user_id": user_id,
@@ -123,6 +123,17 @@ def create_task(
     except APIError as error:
         logger.exception("task_queue insert failed for task_id=%s", task.get("id"))
         raise RuntimeError(f"Queue unavailable: task_queue insert failed: {error}") from error
+    if queue_insert.data:
+        queue = queue_insert.data[0]
+        task.update(
+            {
+                "queue_id": queue.get("id"),
+                "queue_status": queue.get("status"),
+                "queue_attempts": queue.get("attempts") or 0,
+                "queue_error_message": queue.get("error_message") or "",
+                "queue_updated_at": queue.get("updated_at"),
+            }
+        )
     if used_fallback:
         task.update(
             {
@@ -167,6 +178,22 @@ def _is_legacy_status_constraint_error(error: APIError) -> bool:
     return "video_tasks_status_check" in message or "violates check constraint" in message and "status" in message
 
 
+def _is_missing_generation_error_column(error: APIError) -> bool:
+    message = str(error)
+    return "generation_error" in message and ("PGRST204" in message or "schema cache" in message)
+
+
+def _update_video_task(supabase: Client, task_id: str, payload: dict[str, Any]):
+    try:
+        return supabase.table(TABLE).update(payload).eq("id", task_id).execute()
+    except APIError as error:
+        if "generation_error" not in payload or not _is_missing_generation_error_column(error):
+            raise
+        compatible_payload = dict(payload)
+        compatible_payload.pop("generation_error", None)
+        return supabase.table(TABLE).update(compatible_payload).eq("id", task_id).execute()
+
+
 def with_commerce_ai_fallback(task: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(task)
     has_ai_package = bool(
@@ -178,8 +205,14 @@ def with_commerce_ai_fallback(task: dict[str, Any]) -> dict[str, Any]:
     )
     if has_ai_package:
         normalized.setdefault("generation_error", "")
+        normalized["output_video_url"] = normalized.get("result_video_url")
         normalized.setdefault("voice_duration", None)
         normalized.setdefault("talking_video_url", None)
+        normalized.setdefault("queue_id", None)
+        normalized.setdefault("queue_status", None)
+        normalized.setdefault("queue_attempts", 0)
+        normalized.setdefault("queue_error_message", "")
+        normalized.setdefault("queue_updated_at", None)
         return normalized
 
     product_highlights = normalized.get("product_highlights") or normalized.get("script") or ""
@@ -213,9 +246,53 @@ def with_commerce_ai_fallback(task: dict[str, Any]) -> dict[str, Any]:
     normalized["closing_cta"] = normalized.get("closing_cta") or package["closing_cta"]
     normalized["admin_workflow"] = normalized.get("admin_workflow") or package["admin_workflow"]
     normalized.setdefault("generation_error", "")
+    normalized["output_video_url"] = normalized.get("result_video_url")
     normalized.setdefault("voice_duration", None)
     normalized.setdefault("talking_video_url", None)
+    normalized.setdefault("queue_id", None)
+    normalized.setdefault("queue_status", None)
+    normalized.setdefault("queue_attempts", 0)
+    normalized.setdefault("queue_error_message", "")
+    normalized.setdefault("queue_updated_at", None)
     return normalized
+
+
+def with_queue_state(supabase: Client, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not tasks:
+        return tasks
+    task_ids = [task["id"] for task in tasks if task.get("id")]
+    try:
+        queue_result = (
+            supabase.table("task_queue")
+            .select("id, task_id, status, attempts, error_message, updated_at")
+            .in_("task_id", task_ids)
+            .order("updated_at", desc=True)
+            .execute()
+        )
+    except Exception:
+        logger.exception("Failed to read task_queue state")
+        return tasks
+
+    queue_by_task_id: dict[str, dict[str, Any]] = {}
+    for item in queue_result.data:
+        queue_by_task_id.setdefault(item["task_id"], item)
+
+    enriched = []
+    for task in tasks:
+        normalized = dict(task)
+        queue = queue_by_task_id.get(task.get("id"))
+        if queue:
+            normalized.update(
+                {
+                    "queue_id": queue.get("id"),
+                    "queue_status": queue.get("status"),
+                    "queue_attempts": queue.get("attempts") or 0,
+                    "queue_error_message": queue.get("error_message") or "",
+                    "queue_updated_at": queue.get("updated_at"),
+                }
+            )
+        enriched.append(normalized)
+    return enriched
 
 
 def list_user_tasks(supabase: Client, user_id: str) -> list[dict[str, Any]]:
@@ -231,7 +308,9 @@ def list_user_tasks(supabase: Client, user_id: str) -> list[dict[str, Any]]:
 
 def get_task(supabase: Client, task_id: str) -> dict[str, Any] | None:
     result = supabase.table(TABLE).select("*").eq("id", task_id).limit(1).execute()
-    return with_commerce_ai_fallback(result.data[0]) if result.data else None
+    if not result.data:
+        return None
+    return with_queue_state(supabase, [with_commerce_ai_fallback(result.data[0])])[0]
 
 
 def get_user_task(supabase: Client, task_id: str, user_id: str) -> dict[str, Any] | None:
@@ -248,7 +327,7 @@ def get_user_task(supabase: Client, task_id: str, user_id: str) -> dict[str, Any
 
 def list_all_tasks(supabase: Client) -> list[dict[str, Any]]:
     result = supabase.table(TABLE).select("*").order("created_at", desc=True).execute()
-    return [with_commerce_ai_fallback(task) for task in result.data]
+    return with_queue_state(supabase, [with_commerce_ai_fallback(task) for task in result.data])
 
 
 def update_task(
@@ -294,8 +373,25 @@ def update_task(
     if generation_error is not None:
         payload["generation_error"] = generation_error
 
-    result = supabase.table(TABLE).update(payload).eq("id", task_id).execute()
-    return with_commerce_ai_fallback(result.data[0])
+    result = _update_video_task(supabase, task_id, payload)
+    if status:
+        queue_status = {
+            TaskStatus.waiting: "waiting",
+            TaskStatus.processing: "processing",
+            TaskStatus.completed: "completed",
+            TaskStatus.failed: "failed",
+        }.get(status)
+        if queue_status:
+            queue_payload: dict[str, Any] = {"status": queue_status}
+            if generation_error is not None:
+                queue_payload["error_message"] = generation_error
+            elif queue_status in {"waiting", "processing", "completed"}:
+                queue_payload["error_message"] = ""
+            try:
+                supabase.table("task_queue").update(queue_payload).eq("task_id", task_id).execute()
+            except Exception:
+                logger.exception("Failed to sync task_queue status for task_id=%s", task_id)
+    return with_queue_state(supabase, [with_commerce_ai_fallback(result.data[0])])[0]
 
 
 def delete_user_task(supabase: Client, task_id: str, user_id: str) -> None:
@@ -306,7 +402,7 @@ def requeue_user_task(supabase: Client, task_id: str, user_id: str) -> dict[str,
     task = get_user_task(supabase, task_id, user_id)
     if not task:
         raise ValueError("Task not found")
-    supabase.table(TABLE).update({"status": "waiting", "generation_error": ""}).eq("id", task_id).execute()
+    _update_video_task(supabase, task_id, {"status": "waiting", "generation_error": ""})
     try:
         existing = supabase.table("task_queue").select("id").eq("task_id", task_id).limit(1).execute()
         if existing.data:

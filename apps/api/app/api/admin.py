@@ -1,4 +1,7 @@
+import secrets
+
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.core.config import settings
@@ -16,8 +19,17 @@ MB = 1024 * 1024
 
 
 def verify_admin(x_admin_key: str = Header(...)) -> None:
-    if x_admin_key != settings.admin_api_key:
+    candidate = x_admin_key.replace("ADMIN_API_KEY=", "", 1).strip()
+    expected = settings.admin_api_key.strip()
+    if not expected:
+        raise HTTPException(status_code=500, detail="ADMIN_API_KEY is not configured on API service")
+    if not secrets.compare_digest(candidate, expected):
         raise HTTPException(status_code=401, detail="Invalid admin key")
+
+
+def _missing_generation_error_column(error: APIError) -> bool:
+    message = str(error)
+    return "generation_error" in message and ("PGRST204" in message or "schema cache" in message)
 
 
 @router.get("/tasks", response_model=list[VideoTask], dependencies=[Depends(verify_admin)])
@@ -158,7 +170,12 @@ def retry_admin_task(task_id: str, supabase: Client = Depends(get_supabase)) -> 
     task = get_task(supabase, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    supabase.table("video_tasks").update({"status": "waiting", "generation_error": ""}).eq("id", task_id).execute()
+    try:
+        supabase.table("video_tasks").update({"status": "waiting", "generation_error": ""}).eq("id", task_id).execute()
+    except APIError as error:
+        if not _missing_generation_error_column(error):
+            raise
+        supabase.table("video_tasks").update({"status": "waiting"}).eq("id", task_id).execute()
     existing = supabase.table("task_queue").select("id").eq("task_id", task_id).limit(1).execute()
     if existing.data:
         supabase.table("task_queue").update({"status": "waiting", "attempts": 0, "error_message": ""}).eq("task_id", task_id).execute()

@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+import secrets
 from supabase import Client
 
 from app.core.config import settings
@@ -15,7 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 def verify_admin(x_admin_key: str = Header(...)) -> None:
-    if x_admin_key != settings.admin_api_key:
+    candidate = x_admin_key.replace("ADMIN_API_KEY=", "", 1).strip()
+    expected = settings.admin_api_key.strip()
+    if not expected:
+        raise HTTPException(status_code=500, detail="ADMIN_API_KEY is not configured on API service")
+    if not secrets.compare_digest(candidate, expected):
         raise HTTPException(status_code=401, detail="Invalid admin key")
 
 

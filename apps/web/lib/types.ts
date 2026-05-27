@@ -61,6 +61,7 @@ export type VideoTask = {
   admin_notes: string;
   status: TaskStatus;
   result_video_url: string | null;
+  output_video_url: string | null;
   subtitle_url: string | null;
   subtitle_status: "pending" | "completed" | "failed";
   cloned_voice_url: string | null;
@@ -83,6 +84,11 @@ export type VideoTask = {
   comment_prompt: string;
   closing_cta: string;
   admin_workflow: WorkflowItem[];
+  queue_id: string | null;
+  queue_status: string | null;
+  queue_attempts: number;
+  queue_error_message: string;
+  queue_updated_at: string | null;
   created_at: string;
 };
 

@@ -134,6 +134,8 @@ export default async function AdminStudioPage({ params }: Props) {
                 <InfoPill icon={<FileAudio2 size={16} />} label="字幕状态" value={task.subtitle_status} />
                 <InfoPill icon={<Sparkles size={16} />} label="生产模式" value="HeyGen 半自动" />
                 <InfoPill icon={<Link2 size={16} />} label="HeyGen video_id" value={task.heygen_video_id || "未填写"} />
+                <InfoPill icon={<Sparkles size={16} />} label="队列状态" value={task.queue_status || "未入队"} />
+                <InfoPill icon={<Sparkles size={16} />} label="队列尝试次数" value={`${task.queue_attempts ?? 0}/3`} />
               </div>
 
               <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">

@@ -3,9 +3,25 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+from fastapi import HTTPException
 from supabase import Client
 
 from app.core.config import settings
+
+
+def _format_heygen_error(status_code: int, body: str) -> str:
+    if status_code in {401, 403}:
+        return (
+            "HeyGen API 权限不足或 API Key 无效。请检查 HEYGEN_API_KEY 是否可用于 API 调用，"
+            "当前套餐是否支持 custom avatar / avatar video generation。"
+            f" HeyGen 返回：{body[:500]}"
+        )
+    if status_code in {402, 429}:
+        return (
+            "HeyGen 额度不足、试用版限制或请求频率受限。请检查账号余额、API credits、视频生成额度和套餐权限。"
+            f" HeyGen 返回：{body[:500]}"
+        )
+    return f"HeyGen video generation failed ({status_code}): {body[:800]}"
 
 
 async def generate_avatar_video(
@@ -61,11 +77,14 @@ async def generate_avatar_video(
             },
         )
     if response.status_code >= 400:
+        message = _format_heygen_error(response.status_code, response.text)
+        if response.status_code in {401, 402, 403, 429}:
+            raise HTTPException(status_code=502, detail=message)
         return {
             "talking_video_url": None,
             "provider": "heygen",
             "status": "failed",
-            "message": response.text,
+            "message": message,
         }
 
     video_id = (response.json().get("data") or {}).get("video_id")
@@ -91,6 +110,8 @@ async def _poll_heygen_video(video_id: str) -> str | None:
                 params={"video_id": video_id},
             )
             if response.status_code >= 400:
+                if response.status_code in {401, 402, 403, 429}:
+                    raise HTTPException(status_code=502, detail=_format_heygen_error(response.status_code, response.text))
                 continue
             data = response.json().get("data") or {}
             if data.get("status") == "completed":

@@ -2,6 +2,19 @@ import type { AdminUser, CheckoutResponse, Order, UsageLog, UsageSummary, VideoT
 
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+function readAdminApiKey(): string {
+  const raw = process.env.ADMIN_API_KEY ?? "";
+  return raw.replace(/^ADMIN_API_KEY=/, "").trim();
+}
+
+function adminHeaders(): HeadersInit {
+  const key = readAdminApiKey();
+  if (!key) {
+    throw new Error("Vercel 缺少 ADMIN_API_KEY，请设置为与 Railway 后端完全相同的值。");
+  }
+  return { "x-admin-key": key };
+}
+
 function stringifyDetail(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === null || value === undefined) return "";
@@ -174,9 +187,7 @@ export async function deleteVoiceClone(voiceCloneId: string, accessToken?: strin
 
 export async function getAdminTasks(): Promise<VideoTask[]> {
   const response = await fetch(`${API_URL}/api/admin/tasks`, {
-    headers: {
-      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
-    },
+    headers: adminHeaders(),
     cache: "no-store",
   });
   return parseResponse<VideoTask[]>(response);
@@ -184,9 +195,7 @@ export async function getAdminTasks(): Promise<VideoTask[]> {
 
 export async function getAdminUsers(): Promise<AdminUser[]> {
   const response = await fetch(`${API_URL}/api/admin/users`, {
-    headers: {
-      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
-    },
+    headers: adminHeaders(),
     cache: "no-store",
   });
   return parseResponse<AdminUser[]>(response);
@@ -194,9 +203,7 @@ export async function getAdminUsers(): Promise<AdminUser[]> {
 
 export async function getAdminOrders(): Promise<Order[]> {
   const response = await fetch(`${API_URL}/api/admin/orders`, {
-    headers: {
-      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
-    },
+    headers: adminHeaders(),
     cache: "no-store",
   });
   return parseResponse<Order[]>(response);
@@ -205,9 +212,7 @@ export async function getAdminOrders(): Promise<Order[]> {
 export async function updateAdminUser(userId: string, formData: FormData): Promise<AdminUser> {
   const response = await fetch(`${API_URL}/api/admin/users/${userId}`, {
     method: "PATCH",
-    headers: {
-      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
-    },
+    headers: adminHeaders(),
     body: formData,
     cache: "no-store",
   });
@@ -217,9 +222,7 @@ export async function updateAdminUser(userId: string, formData: FormData): Promi
 export async function markAdminOrderPaid(orderId: string, formData: FormData): Promise<{ ok: boolean; order: Order }> {
   const response = await fetch(`${API_URL}/api/admin/orders/${orderId}/mark-paid`, {
     method: "POST",
-    headers: {
-      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
-    },
+    headers: adminHeaders(),
     body: formData,
     cache: "no-store",
   });
@@ -229,9 +232,7 @@ export async function markAdminOrderPaid(orderId: string, formData: FormData): P
 export async function retryAdminTask(taskId: string): Promise<VideoTask> {
   const response = await fetch(`${API_URL}/api/admin/tasks/${taskId}/retry`, {
     method: "POST",
-    headers: {
-      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
-    },
+    headers: adminHeaders(),
     cache: "no-store",
   });
   return parseResponse<VideoTask>(response);
@@ -239,9 +240,7 @@ export async function retryAdminTask(taskId: string): Promise<VideoTask> {
 
 export async function getAdminTask(taskId: string): Promise<VideoTask> {
   const response = await fetch(`${API_URL}/api/admin/tasks/${taskId}`, {
-    headers: {
-      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
-    },
+    headers: adminHeaders(),
     cache: "no-store",
   });
   return parseResponse<VideoTask>(response);
@@ -250,9 +249,7 @@ export async function getAdminTask(taskId: string): Promise<VideoTask> {
 export async function updateAdminTask(taskId: string, formData: FormData): Promise<VideoTask> {
   const response = await fetch(`${API_URL}/api/admin/tasks/${taskId}`, {
     method: "PATCH",
-    headers: {
-      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
-    },
+    headers: adminHeaders(),
     body: formData,
     cache: "no-store",
   });
@@ -262,9 +259,7 @@ export async function updateAdminTask(taskId: string, formData: FormData): Promi
 export async function cloneVoice(formData: FormData): Promise<{ audio_url: string; local_path: string; task: VideoTask | null }> {
   const response = await fetch(`${API_URL}/api/cosyvoice/clone`, {
     method: "POST",
-    headers: {
-      "x-admin-key": process.env.ADMIN_API_KEY ?? "",
-    },
+    headers: adminHeaders(),
     body: formData,
     cache: "no-store",
   });

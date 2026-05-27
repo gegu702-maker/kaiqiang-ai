@@ -113,6 +113,8 @@ export default async function AdminTaskDetailPage({ params }: Props) {
                 <InfoItem icon={<WandSparkles size={16} />} label="HeyGen avatar_id" value={task.heygen_avatar_id || "未填写"} />
                 <InfoItem icon={<WandSparkles size={16} />} label="HeyGen voice_id" value={task.heygen_voice_id || "未填写"} />
                 <InfoItem icon={<WandSparkles size={16} />} label="HeyGen video_id" value={task.heygen_video_id || "未填写"} />
+                <InfoItem icon={<WandSparkles size={16} />} label="队列状态" value={task.queue_status || "未入队"} />
+                <InfoItem icon={<WandSparkles size={16} />} label="队列尝试次数" value={`${task.queue_attempts ?? 0}/3`} />
               </div>
               <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
