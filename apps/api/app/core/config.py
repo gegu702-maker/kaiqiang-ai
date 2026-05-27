@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     task_worker_poll_seconds: int = 8
     ffmpeg_path: str = "ffmpeg"
     voice_clone_provider: str = "mock"
+    avatar_motion_provider: str = "static"
+    liveportrait_api_base_url: str = ""
+    liveportrait_api_key: str = ""
+    liveportrait_default_driving_video_url: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

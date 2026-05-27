@@ -16,7 +16,12 @@ class AvatarTemplate:
     voice_type: str
     gender: str
     style: str
+    source_image_url: str | None = None
     vip_only: bool = False
+
+    @property
+    def default_voice_type(self) -> str:
+        return self.voice_type
 
 
 AVATAR_TEMPLATES: tuple[AvatarTemplate, ...] = (
@@ -61,6 +66,8 @@ def get_avatar_template(template_id: str | None) -> AvatarTemplate:
 
 
 def avatar_template_public_url(template: AvatarTemplate) -> str:
+    if template.source_image_url:
+        return template.source_image_url
     origin = settings.public_site_url.rstrip("/") or settings.web_origin.rstrip("/")
     return f"{origin}{template.avatar_image}"
 
@@ -71,7 +78,9 @@ def avatar_template_dict(template: AvatarTemplate) -> dict:
         "name": template.name,
         "description": template.description,
         "avatar_image": template.avatar_image,
+        "source_image_url": avatar_template_public_url(template),
         "voice_type": template.voice_type,
+        "default_voice_type": template.default_voice_type,
         "gender": template.gender,
         "style": template.style,
         "vip_only": template.vip_only,

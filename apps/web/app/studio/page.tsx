@@ -1,5 +1,5 @@
 import { StudioWorkspace } from "@/components/StudioWorkspace";
-import { getUsageSummary, getVoiceClones } from "@/lib/api";
+import { getDebugConfig, getUsageSummary, getVoiceClones } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
 import type { VoiceClone } from "@/lib/types";
 
@@ -12,6 +12,7 @@ export default async function StudioPage() {
   let quotaLoadFailed = false;
   let voiceCloneEnabled = false;
   let voiceClones: VoiceClone[] = [];
+  let livePortraitEnabled = false;
 
   if (session?.access_token) {
     try {
@@ -29,6 +30,12 @@ export default async function StudioPage() {
       console.error("[StudioPage] voice clones failed", err);
     }
   }
+  try {
+    const config = await getDebugConfig();
+    livePortraitEnabled = config.avatar_motion_provider === "liveportrait" && Boolean(config.liveportrait_api_configured);
+  } catch (err) {
+    console.error("[StudioPage] debug config failed", err);
+  }
 
   return (
     <StudioWorkspace
@@ -37,6 +44,7 @@ export default async function StudioPage() {
       quotaLoadFailed={quotaLoadFailed}
       voiceCloneEnabled={voiceCloneEnabled}
       voiceClones={voiceClones}
+      livePortraitEnabled={livePortraitEnabled}
     />
   );
 }

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.supabase import get_supabase
+from app.services.avatar_motion import get_avatar_motion_provider, liveportrait_configured
 from app.services.avatar_templates import avatar_template_public_url, get_avatar_template
 from app.services.static_avatar_video import render_static_avatar_video
 from app.services.storage import upload_public_bytes
@@ -26,6 +27,10 @@ class TTSTestRequest(BaseModel):
 
 class StaticAvatarVideoTestRequest(TTSTestRequest):
     avatar_template_id: str | None = None
+
+
+class LivePortraitTestRequest(StaticAvatarVideoTestRequest):
+    driving_video_url: str | None = None
 
 
 @router.get("/debug/supabase")
@@ -138,6 +143,11 @@ def debug_config() -> dict:
         "heygen_avatar_id_configured": bool(settings.heygen_avatar_id),
         "heygen_voice_id_configured": bool(settings.heygen_voice_id),
         "voice_clone_provider": settings.voice_clone_provider,
+        "avatar_motion_provider": settings.avatar_motion_provider,
+        "liveportrait_api_base_url_configured": bool(settings.liveportrait_api_base_url.strip()),
+        "liveportrait_api_key_configured": bool(settings.liveportrait_api_key.strip()),
+        "liveportrait_default_driving_video_url_configured": bool(settings.liveportrait_default_driving_video_url.strip()),
+        "liveportrait_api_configured": liveportrait_configured(),
         "enable_task_worker": settings.enable_task_worker,
         "ffmpeg_path": settings.ffmpeg_path,
         "admin_api_key_configured": bool(admin_key),
@@ -194,4 +204,51 @@ async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict
         "voice_type": tts_result.get("voice_type") or selected_voice_type or settings.volcengine_tts_voice_type,
         "avatar_template_id": template.id,
         "avatar_template_name": template.name,
+    }
+
+
+@router.post("/api/debug/liveportrait-test")
+async def debug_liveportrait_test(payload: LivePortraitTestRequest) -> dict:
+    template = get_avatar_template(payload.avatar_template_id)
+    supabase = get_supabase()
+    selected_voice_type = payload.voice_type or template.default_voice_type
+    tts_result = await synthesize_speech_to_storage(
+        supabase,
+        text=payload.text,
+        folder="debug/liveportrait/tts",
+        voice_type=selected_voice_type,
+        speed_ratio=payload.speed_ratio,
+        volume_ratio=payload.volume_ratio,
+        pitch_ratio=payload.pitch_ratio,
+    )
+    source_image_url = avatar_template_public_url(template)
+    provider = get_avatar_motion_provider()
+    if provider is None:
+        dynamic_avatar_video_url = await render_static_avatar_video(
+            supabase,
+            audio_url=tts_result["audio_url"],
+            subtitle_text=payload.text,
+            avatar_image_url=source_image_url,
+            duration=tts_result.get("duration"),
+        )
+        motion_provider = "static"
+    else:
+        dynamic_avatar_video_url = await provider.generate_avatar_motion(
+            source_image_url=source_image_url,
+            audio_url=tts_result["audio_url"],
+            driving_video_url=payload.driving_video_url,
+            task_id=f"debug-liveportrait-{template.id}",
+        )
+        motion_provider = settings.avatar_motion_provider
+
+    return {
+        "success": True,
+        "audio_url": tts_result["audio_url"],
+        "dynamic_avatar_video_url": dynamic_avatar_video_url,
+        "final_video_url": dynamic_avatar_video_url,
+        "provider": tts_result["provider"],
+        "voice_type": tts_result.get("voice_type") or selected_voice_type,
+        "avatar_template_id": template.id,
+        "avatar_template_name": template.name,
+        "avatar_motion_provider": motion_provider,
     }

@@ -49,9 +49,10 @@ type StudioWorkspaceProps = {
   quotaLoadFailed?: boolean;
   voiceCloneEnabled?: boolean;
   voiceClones?: VoiceClone[];
+  livePortraitEnabled?: boolean;
 };
 
-export function StudioWorkspace({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [] }: StudioWorkspaceProps) {
+export function StudioWorkspace({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], livePortraitEnabled = false }: StudioWorkspaceProps) {
   const { locale } = useLanguage();
   const current = copy[locale];
 
@@ -126,6 +127,7 @@ export function StudioWorkspace({ userEmail, remainingQuota, quotaLoadFailed = f
             quotaLoadFailed={quotaLoadFailed}
             voiceCloneEnabled={voiceCloneEnabled}
             voiceClones={voiceClones}
+            livePortraitEnabled={livePortraitEnabled}
           />
         </section>
         <section>

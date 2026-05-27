@@ -61,6 +61,10 @@ const copy = {
     videoSuccess: "视频已生成",
     videoFailed: "视频生成失败",
     videoDownload: "下载 MP4",
+    videoMode: "视频模式",
+    staticMode: "静态视频",
+    dynamicMode: "动态数字人",
+    livePortraitUnavailable: "动态数字人暂未开通，请先配置 LivePortrait API。",
     voiceTypes: {
       BV001_streaming: "女声（BV001_streaming）",
       BV002_streaming: "男声（BV002_streaming）",
@@ -130,6 +134,10 @@ const copy = {
     videoSuccess: "Video generated",
     videoFailed: "Video generation failed",
     videoDownload: "Download MP4",
+    videoMode: "Video Mode",
+    staticMode: "Static Video",
+    dynamicMode: "Dynamic Avatar",
+    livePortraitUnavailable: "Dynamic avatar is not enabled. Configure the LivePortrait API first.",
     voiceTypes: {
       BV001_streaming: "Female (BV001_streaming)",
       BV002_streaming: "Male (BV002_streaming)",
@@ -170,6 +178,8 @@ type TTSTestResponse = {
 
 type AvatarVideoTestResponse = TTSTestResponse & {
   video_url?: string;
+  dynamic_avatar_video_url?: string;
+  final_video_url?: string;
   avatar_template_id?: string;
   avatar_template_name?: string;
 };
@@ -180,9 +190,10 @@ type TaskFormProps = {
   quotaLoadFailed?: boolean;
   voiceCloneEnabled?: boolean;
   voiceClones?: VoiceClone[];
+  livePortraitEnabled?: boolean;
 };
 
-export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [] }: TaskFormProps) {
+export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], livePortraitEnabled = false }: TaskFormProps) {
   const { locale } = useLanguage();
   const current = copy[locale];
   const displayedRemainingQuota = userEmail && remainingQuota === undefined ? 3 : remainingQuota;
@@ -207,6 +218,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [videoError, setVideoError] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const [videoProgress, setVideoProgress] = useState(0);
+  const [videoMode, setVideoMode] = useState<"static" | "liveportrait">("static");
 
   useEffect(() => {
     const form = document.getElementById("task-submit-form") as HTMLFormElement | null;
@@ -364,16 +376,17 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       progressTimer = window.setInterval(() => {
         setVideoProgress((currentProgress) => Math.min(currentProgress + 9, 82));
       }, 2500);
-      const response = await fetch("/api/debug/avatar-video-test", {
+      const response = await fetch(videoMode === "liveportrait" ? "/api/debug/liveportrait-test" : "/api/debug/avatar-video-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, voice_type: ttsVoiceType, avatar_template_id: avatarTemplateId }),
       });
       const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
-      if (!response.ok || !payload.success || !payload.video_url) {
+      const resolvedVideoUrl = payload.final_video_url || payload.video_url || payload.dynamic_avatar_video_url;
+      if (!response.ok || !payload.success || !resolvedVideoUrl) {
         throw new Error(payload.detail || current.videoFailed);
       }
-      setVideoUrl(payload.video_url);
+      setVideoUrl(resolvedVideoUrl);
       if (payload.audio_url) setTtsAudioUrl(payload.audio_url);
       if (payload.provider) setTtsProvider(payload.provider);
       setVideoProgress(100);
@@ -551,6 +564,27 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
             </div>
             {videoStatus === "success" ? <span className="rounded-md border border-lime/30 bg-lime/10 px-2.5 py-1 text-xs text-lime">{current.videoSuccess}</span> : null}
           </div>
+          <fieldset className="space-y-2">
+            <legend className="text-sm text-slate-300">{current.videoMode}</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className={cn("flex h-11 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm", videoMode === "static" ? "border-cyan/30 bg-cyan/10 text-slate-100" : "border-white/10 bg-white/5 text-slate-300")}>
+                <input type="radio" name="video_motion_mode" value="static" checked={videoMode === "static"} onChange={() => setVideoMode("static")} />
+                {current.staticMode}
+              </label>
+              <label className={cn("flex h-11 items-center gap-3 rounded-md border px-3 text-sm", livePortraitEnabled ? "cursor-pointer" : "cursor-not-allowed opacity-60", videoMode === "liveportrait" ? "border-cyan/30 bg-cyan/10 text-slate-100" : "border-white/10 bg-white/5 text-slate-300")}>
+                <input
+                  type="radio"
+                  name="video_motion_mode"
+                  value="liveportrait"
+                  checked={videoMode === "liveportrait"}
+                  disabled={!livePortraitEnabled}
+                  onChange={() => setVideoMode("liveportrait")}
+                />
+                {current.dynamicMode}
+              </label>
+            </div>
+            {!livePortraitEnabled ? <p className="text-xs text-slate-500">{current.livePortraitUnavailable}</p> : null}
+          </fieldset>
           {videoStatus === "generating" ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-400">
