@@ -64,7 +64,7 @@ const copy = {
     videoMode: "视频模式",
     staticMode: "静态视频",
     dynamicMode: "动态数字人",
-    livePortraitUnavailable: "动态数字人暂未开通，请先配置 LivePortrait API。",
+    livePortraitUnavailable: "动态数字人暂未开通，请配置 Replicate API。",
     voiceTypes: {
       BV001_streaming: "女声（BV001_streaming）",
       BV002_streaming: "男声（BV002_streaming）",
@@ -137,7 +137,7 @@ const copy = {
     videoMode: "Video Mode",
     staticMode: "Static Video",
     dynamicMode: "Dynamic Avatar",
-    livePortraitUnavailable: "Dynamic avatar is not enabled. Configure the LivePortrait API first.",
+    livePortraitUnavailable: "Dynamic avatar is not enabled. Configure the Replicate API first.",
     voiceTypes: {
       BV001_streaming: "Female (BV001_streaming)",
       BV002_streaming: "Male (BV002_streaming)",

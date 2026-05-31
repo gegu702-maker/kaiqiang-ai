@@ -6,9 +6,9 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.supabase import get_supabase
-from app.services.avatar_motion import get_avatar_motion_provider, liveportrait_configured
+from app.services.avatar_motion import get_avatar_motion_provider, liveportrait_configured, replicate_configured
 from app.services.avatar_templates import avatar_template_public_url, get_avatar_template
-from app.services.static_avatar_video import render_static_avatar_video
+from app.services.static_avatar_video import package_dynamic_avatar_video, render_static_avatar_video
 from app.services.storage import upload_public_bytes
 from app.services.tts import synthesize_speech_to_storage
 
@@ -148,6 +148,10 @@ def debug_config() -> dict:
         "liveportrait_api_key_configured": bool(settings.liveportrait_api_key.strip()),
         "liveportrait_default_driving_video_url_configured": bool(settings.liveportrait_default_driving_video_url.strip()),
         "liveportrait_api_configured": liveportrait_configured(),
+        "replicate_api_configured": replicate_configured(),
+        "replicate_api_token_configured": bool(settings.replicate_api_token.strip()),
+        "replicate_liveportrait_model": settings.replicate_liveportrait_model,
+        "liveportrait_default_driving_video_configured": bool(settings.liveportrait_default_driving_video_url.strip()),
         "enable_task_worker": settings.enable_task_worker,
         "ffmpeg_path": settings.ffmpeg_path,
         "admin_api_key_configured": bool(admin_key),
@@ -239,14 +243,25 @@ async def debug_liveportrait_test(payload: LivePortraitTestRequest) -> dict:
             driving_video_url=payload.driving_video_url,
             task_id=f"debug-liveportrait-{template.id}",
         )
+        final_video_url = await package_dynamic_avatar_video(
+            supabase,
+            dynamic_video_url=dynamic_avatar_video_url,
+            audio_url=tts_result["audio_url"],
+            subtitle_text=payload.text,
+            task_id=template.id,
+            duration=tts_result.get("duration"),
+        )
         motion_provider = settings.avatar_motion_provider
+    if provider is None:
+        final_video_url = dynamic_avatar_video_url
 
     return {
         "success": True,
         "audio_url": tts_result["audio_url"],
         "dynamic_avatar_video_url": dynamic_avatar_video_url,
-        "final_video_url": dynamic_avatar_video_url,
-        "provider": tts_result["provider"],
+        "final_video_url": final_video_url,
+        "provider": motion_provider,
+        "tts_provider": tts_result["provider"],
         "voice_type": tts_result.get("voice_type") or selected_voice_type,
         "avatar_template_id": template.id,
         "avatar_template_name": template.name,

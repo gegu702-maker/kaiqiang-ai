@@ -32,7 +32,9 @@ export default async function StudioPage() {
   }
   try {
     const config = await getDebugConfig();
-    livePortraitEnabled = config.avatar_motion_provider === "liveportrait" && Boolean(config.liveportrait_api_configured);
+    livePortraitEnabled =
+      (config.avatar_motion_provider === "liveportrait" && Boolean(config.liveportrait_api_configured)) ||
+      (config.avatar_motion_provider === "replicate" && Boolean(config.replicate_api_configured));
   } catch (err) {
     console.error("[StudioPage] debug config failed", err);
   }
