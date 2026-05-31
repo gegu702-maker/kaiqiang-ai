@@ -269,6 +269,7 @@ export async function cloneVoice(formData: FormData): Promise<{ audio_url: strin
 export async function getDebugConfig(): Promise<{
   avatar_motion_provider?: string;
   liveportrait_api_configured?: boolean;
+  replicate_api_configured?: boolean;
 }> {
   const response = await fetch(`${API_URL}/debug/config`, {
     cache: "no-store",

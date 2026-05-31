@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     liveportrait_api_base_url: str = ""
     liveportrait_api_key: str = ""
     liveportrait_default_driving_video_url: str = ""
+    replicate_api_token: str = ""
+    replicate_liveportrait_model: str = "fofr/live-portrait"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

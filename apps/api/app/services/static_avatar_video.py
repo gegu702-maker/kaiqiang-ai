@@ -91,6 +91,88 @@ async def render_static_avatar_video(
     )
 
 
+async def package_dynamic_avatar_video(
+    supabase: Client,
+    *,
+    dynamic_video_url: str,
+    audio_url: str,
+    subtitle_text: str,
+    task_id: str,
+    duration: float | None = None,
+) -> str:
+    async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
+        video_response = await client.get(dynamic_video_url)
+        video_response.raise_for_status()
+        audio_response = await client.get(audio_url)
+        audio_response.raise_for_status()
+
+    duration_seconds = max(1.0, float(duration or 5.0))
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dynamic_path = tmp_path / "dynamic.mp4"
+        audio_path = tmp_path / "voice.mp3"
+        overlay_path = tmp_path / "subtitle_overlay.png"
+        output_path = tmp_path / "final.mp4"
+
+        dynamic_path.write_bytes(video_response.content)
+        audio_path.write_bytes(audio_response.content)
+        _build_subtitle_overlay(overlay_path, subtitle_text)
+
+        cmd = [
+            settings.ffmpeg_path,
+            "-y",
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(dynamic_path),
+            "-i",
+            str(audio_path),
+            "-loop",
+            "1",
+            "-i",
+            str(overlay_path),
+            "-t",
+            f"{duration_seconds:.3f}",
+            "-filter_complex",
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1[v0];[v0][2:v]overlay=0:0:format=auto[v]",
+            "-map",
+            "[v]",
+            "-map",
+            "1:a",
+            "-r",
+            "25",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-threads",
+            "2",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"FFmpeg dynamic avatar package failed: {result.stderr[-1200:]}")
+        video_bytes = output_path.read_bytes()
+
+    return upload_public_bytes(
+        supabase,
+        settings.supabase_video_bucket,
+        video_bytes,
+        f"debug/liveportrait-final/{task_id}",
+        ".mp4",
+        "video/mp4",
+    )
+
+
 def _build_avatar_background(output_path: Path, subtitle_text: str, avatar_bytes: bytes | None = None) -> None:
     width, height = 1080, 1920
     canvas = Image.new("RGB", (width, height), "#05070d")
@@ -182,6 +264,13 @@ def _draw_subtitle(draw: ImageDraw.ImageDraw, text: str, width: int, y: int) -> 
     draw.rounded_rectangle(box, radius=28, fill=(0, 0, 0), outline=(49, 215, 255), width=2)
     for index, line in enumerate(lines):
         draw.text((width // 2, y + 24 + index * line_height), line, anchor="mm", fill=(255, 255, 255), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
+
+
+def _build_subtitle_overlay(output_path: Path, text: str) -> None:
+    canvas = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    _draw_subtitle(draw, text, 1080, 1550)
+    canvas.save(output_path)
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
