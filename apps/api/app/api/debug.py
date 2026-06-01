@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -294,7 +295,7 @@ async def _debug_musetalk_with_autodl_sample_audio(supabase, *, task_prefix: str
             if not output_url:
                 raise HTTPException(status_code=502, detail=f"MuseTalk debug fallback missing video_url: {str(data)[:800]}")
 
-            video_response = await client.get(str(output_url))
+            video_response = await client.get(_normalize_musetalk_result_url(str(output_url), base_url))
             if not video_response.is_success:
                 raise HTTPException(status_code=502, detail=f"MuseTalk debug fallback download failed: {video_response.status_code}")
     except HTTPException:
@@ -312,6 +313,14 @@ async def _debug_musetalk_with_autodl_sample_audio(supabase, *, task_prefix: str
         ".mp4",
         "video/mp4",
     )
+
+
+def _normalize_musetalk_result_url(output_url: str, base_url: str) -> str:
+    parsed_output = urlparse(output_url)
+    parsed_base = urlparse(base_url)
+    if parsed_output.path.startswith("/results/") and parsed_output.hostname in {parsed_base.hostname, "127.0.0.1", "localhost"}:
+        return f"{base_url.rstrip('/')}{parsed_output.path}"
+    return output_url
 
 
 @router.post("/api/debug/liveportrait-test")
