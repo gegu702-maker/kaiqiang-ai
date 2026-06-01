@@ -8,6 +8,7 @@ from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 
 from app.api.admin import router as admin_router
+from app.api.avatar import router as avatar_router
 from app.api.billing import quota_router, router as billing_router
 from app.api.cosyvoice import router as cosyvoice_router
 from app.api.debug import router as debug_router
@@ -57,6 +58,7 @@ def root_health() -> dict[str, str]:
 
 app.include_router(health_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
+app.include_router(avatar_router, prefix="/api")
 app.include_router(billing_router, prefix="/api")
 app.include_router(quota_router, prefix="/api")
 app.include_router(voice_clone_router, prefix="/api")

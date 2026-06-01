@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     liveportrait_default_driving_video_url: str = ""
     replicate_api_token: str = ""
     replicate_liveportrait_model: str = "fofr/live-portrait"
+    musetalk_api_base_url: str = ""
+    musetalk_api_key: str = ""
+    musetalk_timeout_seconds: int = 1800
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
