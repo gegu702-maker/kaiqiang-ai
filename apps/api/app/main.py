@@ -8,6 +8,7 @@ from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 
 from app.api.admin import router as admin_router
+from app.api.avatar import router as avatar_router
 from app.api.billing import quota_router, router as billing_router
 from app.api.cosyvoice import router as cosyvoice_router
 from app.api.debug import router as debug_router
@@ -15,6 +16,7 @@ from app.api.health import router as health_router
 from app.api.tasks import router as tasks_router
 from app.api.voice_clone import router as voice_clone_router
 from app.core.config import settings
+from app.services.autodl_client import autodl_idle_shutdown_loop
 from app.services.task_worker import worker_loop
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ app = FastAPI(title="AI Digital Human API", version="0.1.0")
 async def start_worker() -> None:
     if settings.enable_task_worker:
         asyncio.create_task(worker_loop())
+    asyncio.create_task(autodl_idle_shutdown_loop())
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,6 +60,7 @@ def root_health() -> dict[str, str]:
 
 app.include_router(health_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
+app.include_router(avatar_router, prefix="/api")
 app.include_router(billing_router, prefix="/api")
 app.include_router(quota_router, prefix="/api")
 app.include_router(voice_clone_router, prefix="/api")

@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import ValidationInfo, field_validator
+from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,6 +63,24 @@ class Settings(BaseSettings):
     liveportrait_default_driving_video_url: str = ""
     replicate_api_token: str = ""
     replicate_liveportrait_model: str = "fofr/live-portrait"
+    muse_talk_api_base_url: str = Field(
+        "",
+        validation_alias=AliasChoices("MUSE_TALK_API_BASE_URL", "MUSETALK_API_BASE_URL"),
+    )
+    muse_talk_api_key: str = Field(
+        "",
+        validation_alias=AliasChoices("MUSE_TALK_API_KEY", "MUSETALK_API_KEY"),
+    )
+    muse_talk_timeout_seconds: int = Field(
+        1800,
+        validation_alias=AliasChoices("MUSE_TALK_TIMEOUT_SECONDS", "MUSETALK_TIMEOUT_SECONDS"),
+    )
+    autodl_api_token: str = ""
+    autodl_instance_id: str = ""
+    autodl_region: str = ""
+    autodl_api_base_url: str = "https://api.autodl.com"
+    autodl_start_timeout_seconds: int = 900
+    gpu_idle_shutdown_minutes: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -89,6 +107,18 @@ class Settings(BaseSettings):
             if origin not in origins:
                 origins.append(origin)
         return origins
+
+    @property
+    def musetalk_api_base_url(self) -> str:
+        return self.muse_talk_api_base_url
+
+    @property
+    def musetalk_api_key(self) -> str:
+        return self.muse_talk_api_key
+
+    @property
+    def musetalk_timeout_seconds(self) -> int:
+        return self.muse_talk_timeout_seconds
 
 
 settings = Settings()
