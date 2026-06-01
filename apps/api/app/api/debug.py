@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
-from fastapi import APIRouter
+from uuid import uuid4
+
+import httpx
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -194,15 +197,30 @@ async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict
     template = get_avatar_template(payload.avatar_template_id)
     supabase = get_supabase()
     selected_voice_type = payload.voice_type or template.voice_type
-    tts_result = await synthesize_speech_to_storage(
-        supabase,
-        text=payload.text,
-        folder="debug/avatar-video/tts",
-        voice_type=selected_voice_type,
-        speed_ratio=payload.speed_ratio,
-        volume_ratio=payload.volume_ratio,
-        pitch_ratio=payload.pitch_ratio,
-    )
+    try:
+        tts_result = await synthesize_speech_to_storage(
+            supabase,
+            text=payload.text,
+            folder="debug/avatar-video/tts",
+            voice_type=selected_voice_type,
+            speed_ratio=payload.speed_ratio,
+            volume_ratio=payload.volume_ratio,
+            pitch_ratio=payload.pitch_ratio,
+        )
+    except HTTPException as error:
+        if _is_volcengine_permission_error(error.detail):
+            video_url = await _debug_musetalk_with_autodl_sample_audio(supabase)
+            return {
+                "success": True,
+                "video_url": video_url,
+                "audio_url": "autodl:/root/MuseTalk/data/audio/kaiqiang.wav",
+                "provider": "musetalk-autodl-debug-fallback",
+                "voice_type": "autodl-sample-kaiqiang.wav",
+                "avatar_template_id": template.id,
+                "avatar_template_name": template.name,
+                "fallback_reason": str(error.detail)[:1000],
+            }
+        raise
     video_url = await render_static_avatar_video(
         supabase,
         audio_url=tts_result["audio_url"],
@@ -219,6 +237,66 @@ async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict
         "avatar_template_id": template.id,
         "avatar_template_name": template.name,
     }
+
+
+def _is_volcengine_permission_error(detail: object) -> bool:
+    text = str(detail).lower()
+    return "volcengine" in text and any(
+        token in text
+        for token in [
+            "permission",
+            "quota",
+            "resource not granted",
+            "requested resource not granted",
+            "unauthorized",
+            "forbidden",
+        ]
+    )
+
+
+async def _debug_musetalk_with_autodl_sample_audio(supabase) -> str:
+    base_url = settings.musetalk_api_base_url.strip().rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=503, detail="MUSE_TALK_API_BASE_URL missing")
+
+    payload = {
+        "video_path": "/root/MuseTalk/data/video/kaiqiang.mp4",
+        "audio_path": "/root/MuseTalk/data/audio/kaiqiang.wav",
+        "task_id": f"debug-avatar-video-{uuid4().hex}",
+    }
+    headers = {"Content-Type": "application/json"}
+    if settings.musetalk_api_key.strip():
+        headers["Authorization"] = f"Bearer {settings.musetalk_api_key.strip()}"
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.musetalk_timeout_seconds, follow_redirects=True) as client:
+            response = await client.post(f"{base_url}/generate", json=payload, headers=headers)
+            data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+            if not response.is_success:
+                raise HTTPException(status_code=502, detail=data or response.text[:1000])
+
+            output_url = data.get("video_url") or data.get("result_url")
+            if not output_url:
+                raise HTTPException(status_code=502, detail=f"MuseTalk debug fallback missing video_url: {str(data)[:800]}")
+
+            video_response = await client.get(str(output_url))
+            if not video_response.is_success:
+                raise HTTPException(status_code=502, detail=f"MuseTalk debug fallback download failed: {video_response.status_code}")
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as error:
+        raise HTTPException(status_code=504, detail="MuseTalk debug fallback timeout") from error
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"MuseTalk debug fallback request failed: {error}") from error
+
+    return upload_public_bytes(
+        supabase,
+        settings.supabase_video_bucket,
+        video_response.content,
+        "debug/avatar-video/musetalk-fallback",
+        ".mp4",
+        "video/mp4",
+    )
 
 
 @router.post("/api/debug/liveportrait-test")

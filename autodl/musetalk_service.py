@@ -27,8 +27,10 @@ gpu_lock = asyncio.Lock()
 
 
 class GenerateRequest(BaseModel):
-    video_url: str
-    audio_url: str
+    video_url: str | None = None
+    audio_url: str | None = None
+    video_path: str | None = None
+    audio_path: str | None = None
     task_id: str | None = None
 
 
@@ -56,8 +58,8 @@ async def generate(payload: GenerateRequest, request: Request, authorization: st
     config_path = ROOT / "configs" / "inference" / "generated" / f"{task_id}.yaml"
     result_dir = ROOT / "results" / "api" / task_id
 
-    await _download(payload.video_url, video_path)
-    await _download(payload.audio_url, audio_path)
+    await _prepare_input(payload.video_url, payload.video_path, video_path, "video")
+    await _prepare_input(payload.audio_url, payload.audio_path, audio_path, "audio")
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -84,6 +86,26 @@ async def _download(url: str, path: Path) -> None:
     if not response.is_success:
         raise HTTPException(status_code=400, detail=f"Input download failed: {response.status_code}")
     path.write_bytes(response.content)
+
+
+async def _prepare_input(url: str | None, local_path: str | None, destination: Path, label: str) -> None:
+    if local_path:
+        _copy_local_data_file(local_path, destination, label)
+        return
+    if url:
+        await _download(url, destination)
+        return
+    raise HTTPException(status_code=400, detail=f"{label}_url or {label}_path is required")
+
+
+def _copy_local_data_file(raw_path: str, destination: Path, label: str) -> None:
+    source = Path(raw_path).expanduser().resolve()
+    allowed_root = (ROOT / "data").resolve()
+    if allowed_root not in source.parents:
+        raise HTTPException(status_code=400, detail=f"{label}_path must be under {allowed_root}")
+    if not source.is_file():
+        raise HTTPException(status_code=400, detail=f"{label}_path missing: {source}")
+    shutil.copy2(source, destination)
 
 
 def _run_inference(config_path: Path, result_dir: Path) -> Path:
