@@ -18,6 +18,8 @@ from app.services.tts import synthesize_speech_to_storage
 router = APIRouter(tags=["debug"])
 
 REQUIRED_BUCKETS = ["images", "voices", "cloned", "videos", "subtitles"]
+MUSETALK_DEBUG_SOURCE_VIDEO = "/root/MuseTalk/data/video/kaiqiang.mp4"
+MUSETALK_DEBUG_SOURCE_AUDIO = "/root/MuseTalk/data/audio/kaiqiang.wav"
 
 
 class TTSTestRequest(BaseModel):
@@ -239,6 +241,19 @@ async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict
     }
 
 
+@router.post("/api/debug/musetalk-test")
+async def debug_musetalk_test() -> dict:
+    supabase = get_supabase()
+    video_url = await _debug_musetalk_with_autodl_sample_audio(supabase, task_prefix="debug-musetalk-test")
+    return {
+        "success": True,
+        "provider": "musetalk",
+        "video_url": video_url,
+        "source_video": MUSETALK_DEBUG_SOURCE_VIDEO,
+        "source_audio": MUSETALK_DEBUG_SOURCE_AUDIO,
+    }
+
+
 def _is_volcengine_permission_error(detail: object) -> bool:
     text = str(detail).lower()
     return "volcengine" in text and any(
@@ -254,15 +269,15 @@ def _is_volcengine_permission_error(detail: object) -> bool:
     )
 
 
-async def _debug_musetalk_with_autodl_sample_audio(supabase) -> str:
+async def _debug_musetalk_with_autodl_sample_audio(supabase, *, task_prefix: str = "debug-avatar-video") -> str:
     base_url = settings.musetalk_api_base_url.strip().rstrip("/")
     if not base_url:
         raise HTTPException(status_code=503, detail="MUSE_TALK_API_BASE_URL missing")
 
     payload = {
-        "video_path": "/root/MuseTalk/data/video/kaiqiang.mp4",
-        "audio_path": "/root/MuseTalk/data/audio/kaiqiang.wav",
-        "task_id": f"debug-avatar-video-{uuid4().hex}",
+        "video_path": MUSETALK_DEBUG_SOURCE_VIDEO,
+        "audio_path": MUSETALK_DEBUG_SOURCE_AUDIO,
+        "task_id": f"{task_prefix}-{uuid4().hex}",
     }
     headers = {"Content-Type": "application/json"}
     if settings.musetalk_api_key.strip():
@@ -293,7 +308,7 @@ async def _debug_musetalk_with_autodl_sample_audio(supabase) -> str:
         supabase,
         settings.supabase_video_bucket,
         video_response.content,
-        "debug/avatar-video/musetalk-fallback",
+        f"debug/{task_prefix}",
         ".mp4",
         "video/mp4",
     )
