@@ -19,7 +19,7 @@ async def generate_avatar_video_with_musetalk(
 ) -> str:
     base_url = settings.musetalk_api_base_url.strip().rstrip("/")
     if not base_url:
-        raise HTTPException(status_code=503, detail="MUSEtalk API is not configured. Set MUSETALK_API_BASE_URL.")
+        raise HTTPException(status_code=503, detail="MUSE_TALK_API_BASE_URL missing")
 
     payload = {"video_url": video_url, "audio_url": audio_url, "task_id": task_id}
     headers = {"Content-Type": "application/json"}

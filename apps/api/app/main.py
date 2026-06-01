@@ -16,6 +16,7 @@ from app.api.health import router as health_router
 from app.api.tasks import router as tasks_router
 from app.api.voice_clone import router as voice_clone_router
 from app.core.config import settings
+from app.services.autodl_client import autodl_idle_shutdown_loop
 from app.services.task_worker import worker_loop
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ app = FastAPI(title="AI Digital Human API", version="0.1.0")
 async def start_worker() -> None:
     if settings.enable_task_worker:
         asyncio.create_task(worker_loop())
+    asyncio.create_task(autodl_idle_shutdown_loop())
 
 app.add_middleware(
     CORSMiddleware,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import traceback
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from supabase import Client
@@ -9,6 +10,7 @@ from supabase import Client
 from app.core.auth import get_authenticated_user, get_bearer_token
 from app.core.config import settings
 from app.core.supabase import get_supabase
+from app.services.autodl_client import ensure_gpu_ready
 from app.services.musetalk_client import check_musetalk_health, generate_avatar_video_with_musetalk
 from app.services.storage import upload_public_file
 
@@ -71,7 +73,12 @@ async def generate_avatar_video(
             allowed_format_label="wav, mp3, m4a, aac",
         )
         task = _create_avatar_task(supabase, user["id"], video_url, audio_url)
-        _update_avatar_task(supabase, task["id"], {"status": "running"})
+
+        def update_stage(stage: str) -> None:
+            _update_avatar_task(supabase, task["id"], {"progress_stage": stage})
+
+        await ensure_gpu_ready(update_stage)
+        _update_avatar_task(supabase, task["id"], {"status": "running", "progress_stage": "video_generating"})
         result_url = await generate_avatar_video_with_musetalk(
             supabase,
             video_url=video_url,
@@ -83,7 +90,9 @@ async def generate_avatar_video(
             task["id"],
             {
                 "status": "completed",
+                "progress_stage": "completed",
                 "result_url": result_url,
+                "last_gpu_used_at": datetime.now(timezone.utc).isoformat(),
             },
         )
         return {
@@ -132,6 +141,7 @@ def _create_avatar_task(supabase: Client, user_id: str, video_url: str, audio_ur
                 "video_url": video_url,
                 "audio_url": audio_url,
                 "status": "queued",
+                "progress_stage": "queued",
             }
         )
         .execute()
@@ -150,6 +160,6 @@ def _update_avatar_task(supabase: Client, task_id: str, values: dict) -> dict:
 
 def _safe_fail_task(supabase: Client, task_id: str, message: str) -> None:
     try:
-        supabase.table("avatar_tasks").update({"status": "failed", "error_message": message[:2000]}).eq("id", task_id).execute()
+        supabase.table("avatar_tasks").update({"status": "failed", "progress_stage": "failed", "error_message": message[:2000]}).eq("id", task_id).execute()
     except Exception:
         logger.exception("Failed to mark avatar task failed")
