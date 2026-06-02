@@ -119,6 +119,23 @@ async def generate_avatar_video(
         ) from error
 
 
+@router.get("/tasks")
+def list_avatar_tasks(
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> list[dict]:
+    user = get_authenticated_user(supabase, token)
+    response = (
+        supabase.table("avatar_tasks")
+        .select("*")
+        .eq("user_id", user["id"])
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+    return response.data or []
+
+
 @router.get("/tasks/{task_id}")
 def get_avatar_task(
     task_id: str,
