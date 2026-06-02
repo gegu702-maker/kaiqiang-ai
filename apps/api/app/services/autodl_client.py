@@ -19,7 +19,10 @@ StageCallback = Callable[[str], None]
 
 async def start_instance() -> dict[str, Any]:
     _require_autodl_config()
-    return await _autodl_request("POST", "/api/v1/dev/instance/pro/power_on", json=_instance_payload())
+    payload = _instance_payload()
+    payload["payload"] = "gpu"
+    payload["start_command"] = "bash /root/autodl-tmp/start_musetalk.sh"
+    return await _autodl_request("POST", "/api/v1/dev/instance/pro/power_on", json=payload)
 
 
 async def stop_instance() -> dict[str, Any]:
@@ -29,7 +32,7 @@ async def stop_instance() -> dict[str, Any]:
 
 async def get_instance_status() -> dict[str, Any]:
     _require_autodl_config()
-    return await _autodl_request("GET", "/api/v1/dev/instance/pro/status", params=_instance_payload())
+    return await _autodl_request("GET", "/api/v1/dev/instance/pro/status", json=_instance_payload())
 
 
 async def ensure_gpu_ready(stage_callback: StageCallback | None = None) -> dict[str, Any]:
@@ -189,10 +192,7 @@ async def _musetalk_health_ok() -> bool:
 
 
 def _instance_payload() -> dict[str, Any]:
-    payload = {"instance_uuid": settings.autodl_instance_id.strip()}
-    if settings.autodl_region.strip():
-        payload["region"] = settings.autodl_region.strip()
-    return payload
+    return {"instance_uuid": settings.autodl_instance_id.strip()}
 
 
 def _require_autodl_config() -> None:
