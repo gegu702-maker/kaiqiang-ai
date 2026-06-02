@@ -6,7 +6,10 @@ Run this on the AutoDL MuseTalk machine:
 cd /root/MuseTalk
 /root/miniconda3/envs/musetalk/bin/pip install fastapi "uvicorn[standard]" httpx pyyaml python-multipart
 cp /root/autodl-tmp/kaiqiang-service/musetalk_service.py /root/MuseTalk/kaiqiang_musetalk_service.py
-MUSETALK_API_KEY="change-me" nohup /root/miniconda3/envs/musetalk/bin/uvicorn kaiqiang_musetalk_service:app --host 0.0.0.0 --port 6006 > /root/MuseTalk/kaiqiang_musetalk_service.log 2>&1 &
+cp /root/autodl-tmp/kaiqiang-service/start_musetalk.sh /root/autodl-tmp/start_musetalk.sh
+cp /root/autodl-tmp/kaiqiang-service/idle_shutdown.sh /root/autodl-tmp/idle_shutdown.sh
+chmod +x /root/autodl-tmp/start_musetalk.sh /root/autodl-tmp/idle_shutdown.sh
+/root/autodl-tmp/start_musetalk.sh
 curl http://127.0.0.1:6006/health
 ```
 
