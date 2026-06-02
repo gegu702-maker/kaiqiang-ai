@@ -8,7 +8,8 @@ import { createClient } from "@/lib/supabase/client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-type GenerateState = "idle" | "gpu_starting" | "model_loading" | "video_generating" | "completed" | "failed";
+type GenerateState = "idle" | "queued" | "running" | "completed" | "failed";
+type ProgressStage = "queued" | "gpu_starting" | "model_loading" | "video_generating" | "completed" | "failed";
 
 const copy = {
   zh: {
@@ -24,6 +25,8 @@ const copy = {
     gpuStarting: "GPU 启动中",
     modelLoading: "模型加载中",
     videoGenerating: "视频生成中",
+    queued: "queued",
+    running: "running",
     completed: "生成完成",
     failed: "生成失败",
     download: "下载 MP4",
@@ -43,6 +46,8 @@ const copy = {
     gpuStarting: "Starting GPU",
     modelLoading: "Loading model",
     videoGenerating: "Generating video",
+    queued: "queued",
+    running: "running",
     completed: "Completed",
     failed: "Failed",
     download: "Download MP4",
@@ -58,6 +63,7 @@ export function AvatarVideoGenerator() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [state, setState] = useState<GenerateState>("idle");
+  const [progressStage, setProgressStage] = useState<ProgressStage>("queued");
   const [progress, setProgress] = useState(0);
   const [resultUrl, setResultUrl] = useState("");
   const [error, setError] = useState("");
@@ -89,8 +95,8 @@ export function AvatarVideoGenerator() {
   function scheduleStageUpdates() {
     stageTimers.current.forEach((timer) => window.clearTimeout(timer));
     stageTimers.current = [
-      window.setTimeout(() => setState("model_loading"), 12000),
-      window.setTimeout(() => setState("video_generating"), 36000),
+      window.setTimeout(() => setProgressStage("model_loading"), 12000),
+      window.setTimeout(() => setProgressStage("video_generating"), 36000),
     ];
   }
 
@@ -104,6 +110,7 @@ export function AvatarVideoGenerator() {
     setResultUrl("");
     if (!videoFile || !audioFile) {
       setState("failed");
+      setProgressStage("failed");
       setError(current.empty);
       return;
     }
@@ -113,6 +120,7 @@ export function AvatarVideoGenerator() {
     } = await supabase.auth.getSession();
     if (!session?.access_token) {
       setState("failed");
+      setProgressStage("failed");
       setError(current.login);
       return;
     }
@@ -122,9 +130,15 @@ export function AvatarVideoGenerator() {
     formData.set("audio_file", audioFile);
 
     try {
-      setState("gpu_starting");
+      setState("queued");
+      setProgressStage("queued");
       startProgress();
       scheduleStageUpdates();
+      const runningTimer = window.setTimeout(() => {
+        setState((value) => (value === "queued" ? "running" : value));
+        setProgressStage((value) => (value === "queued" ? "gpu_starting" : value));
+      }, 400);
+      stageTimers.current.push(runningTimer);
       const response = await fetch(`${API_URL}/api/avatar/generate`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
@@ -138,28 +152,40 @@ export function AvatarVideoGenerator() {
       setResultUrl(payload.video_url || payload.task?.result_url || "");
       clearStageUpdates();
       setState("completed");
+      setProgressStage("completed");
       stopProgress(100);
     } catch (err) {
       clearStageUpdates();
       setState("failed");
+      setProgressStage("failed");
       stopProgress(0);
       setError(err instanceof Error ? err.message : current.failed);
     }
   }
 
-  const isGenerating = state === "gpu_starting" || state === "model_loading" || state === "video_generating";
-  const statusText =
-    state === "gpu_starting"
+  const isGenerating = state === "queued" || state === "running";
+  const stageText =
+    progressStage === "gpu_starting"
       ? current.gpuStarting
-      : state === "model_loading"
+      : progressStage === "model_loading"
         ? current.modelLoading
-        : state === "video_generating"
+        : progressStage === "video_generating"
           ? current.videoGenerating
-          : state === "completed"
+          : progressStage === "completed"
             ? current.completed
-            : state === "failed"
+            : progressStage === "failed"
               ? current.failed
               : "";
+  const statusText =
+    state === "queued"
+      ? current.queued
+      : state === "running"
+        ? current.running
+        : state === "completed"
+          ? "completed"
+          : state === "failed"
+            ? "failed"
+            : "";
 
   return (
     <div className="mx-auto grid w-full max-w-6xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[0.92fr_1.08fr]">
@@ -203,6 +229,7 @@ export function AvatarVideoGenerator() {
               <span className="font-medium text-slate-800">{statusText}</span>
               <span className="text-slate-500">{progress}%</span>
             </div>
+            {stageText ? <p className="mt-2 text-xs text-slate-500">{stageText}</p> : null}
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
               <div className="h-full rounded-full bg-blue-600 transition-all duration-500" style={{ width: `${progress}%` }} />
             </div>
