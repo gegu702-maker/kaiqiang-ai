@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import HTTPException
@@ -33,7 +34,7 @@ async def generate_avatar_video_with_musetalk(
             if not response.is_success:
                 raise HTTPException(status_code=502, detail=_musetalk_error(data, response.text))
 
-            output_url = _extract_video_url(data)
+            output_url = _normalize_musetalk_result_url(_extract_video_url(data), base_url)
             video_response = await client.get(output_url)
             if not video_response.is_success:
                 raise HTTPException(status_code=502, detail=f"MuseTalk output download failed: {video_response.status_code}")
@@ -96,3 +97,11 @@ def _musetalk_error(data: dict[str, Any], raw: str) -> dict[str, Any] | str:
             "error": data.get("error"),
         }
     return raw[:1000] or "MuseTalk generation failed"
+
+
+def _normalize_musetalk_result_url(output_url: str, base_url: str) -> str:
+    parsed_output = urlparse(output_url)
+    parsed_base = urlparse(base_url)
+    if parsed_output.path.startswith("/results/") and parsed_output.hostname in {parsed_base.hostname, "127.0.0.1", "localhost"}:
+        return f"{base_url.rstrip('/')}{parsed_output.path}"
+    return output_url

@@ -99,6 +99,7 @@ async def generate_avatar_video(
             "success": True,
             "task": task,
             "video_url": result_url,
+            "result_video_url": result_url,
         }
     except HTTPException as error:
         if task:
