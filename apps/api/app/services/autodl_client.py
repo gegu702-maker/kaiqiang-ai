@@ -22,7 +22,7 @@ async def start_instance() -> dict[str, Any]:
     if _using_legacy_instance_api():
         return await _legacy_instance_request(
             "POST",
-            "/api/v1/instance/power_on",
+            "/api/v1/dev/instance/power_on",
             json={
                 "instance_uuid": settings.autodl_instance_id.strip(),
                 "payload": "gpu",
@@ -38,14 +38,14 @@ async def start_instance() -> dict[str, Any]:
 async def stop_instance() -> dict[str, Any]:
     _require_autodl_config()
     if _using_legacy_instance_api():
-        return await _legacy_instance_request("POST", "/api/v1/instance/power_off", json=_instance_payload())
+        return await _legacy_instance_request("POST", "/api/v1/dev/instance/power_off", json=_instance_payload())
     return await _autodl_request("POST", "/api/v1/dev/instance/pro/power_off", json=_instance_payload())
 
 
 async def get_instance_status() -> dict[str, Any]:
     _require_autodl_config()
     if _using_legacy_instance_api():
-        return await _legacy_instance_request("POST", "/api/v1/instance/status", json=_instance_payload())
+        return await _legacy_instance_request("GET", "/api/v1/dev/instance/status", json=_instance_payload())
     return await _autodl_request("GET", "/api/v1/dev/instance/pro/status", json=_instance_payload())
 
 
