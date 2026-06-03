@@ -188,13 +188,14 @@ async def _autodl_request(
 
 
 async def _legacy_instance_request(method: str, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
+    base_url = settings.autodl_api_base_url.strip().rstrip("/") or "https://api.autodl.com"
     headers = {
         "Authorization": settings.autodl_api_token.strip(),
         "Content-Type": "application/json",
     }
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            response = await client.request(method, f"https://www.autodl.com{path}", headers=headers, json=json)
+            response = await client.request(method, f"{base_url}{path}", headers=headers, json=json)
             data = _parse_json(response)
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail=f"AutoDL legacy API request failed: {error}") from error
