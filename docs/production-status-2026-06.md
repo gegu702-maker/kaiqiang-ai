@@ -60,6 +60,7 @@ User
 ### AutoDL
 
 - `/root/autodl-tmp/start_musetalk.sh` - persistent MuseTalk startup script.
+- `/root/autodl-tmp/idle_shutdown.sh` - AutoDL-side idle watchdog; powers off after the configured idle window.
 - `/etc/autodl-init` - AutoDL init hook that invokes the startup script.
 - `/root/autodl-tmp/musetalk_service.log` - MuseTalk FastAPI log.
 
@@ -78,13 +79,19 @@ User
 - `POST /api/debug/musetalk-test` generates a real MuseTalk video and uploads MP4 to Supabase Storage.
 - Supabase Storage buckets are available for images, voices, videos, cloned audio, and subtitles.
 - `avatar_tasks` table exists with task status, progress stage, result URL, and GPU usage timestamp fields.
-- AutoDL start command runs `/root/autodl-tmp/start_musetalk.sh` after API power-on.
+- AutoDL manual startup runs `/etc/autodl-init`, which invokes `/root/autodl-tmp/start_musetalk.sh`.
+- `/root/autodl-tmp/idle_shutdown.sh` has been verified to stop the AutoDL container after 10 minutes of inactivity.
 
 ## Known Issues
 
 - `/api/avatar/generate` is currently synchronous and waits for MuseTalk generation to finish before returning.
 - A long-running browser request may appear idle while the backend is generating video.
 - AutoDL custom service URLs can return an AutoDL HTML 404 if the 6006 service is not running.
+- MuseTalk is currently deployed on a normal AutoDL container instance: `3ec3448547-93ee30c2`.
+- Normal AutoDL container instances are not supported by the current developer token for automatic `power_on`.
+- AutoDL Pro API was tested with `pro/list`; it returned success with `result_total=0` and `list=[]`, so the account currently has no Pro instance.
+- Current production validation strategy: keep idle shutdown enabled, and have an administrator manually start the AutoDL container before user testing.
+- Future migration path: move MuseTalk to AutoDL Pro only after paid users appear and automated GPU wake-up becomes business-critical.
 - Volcengine TTS permissions depend on the AppID/Cluster/VoiceType combination granted in the Volcengine console.
 - Local repository history has used deployment worktrees to reconcile remote master updates; always fetch latest master before pushing.
 
@@ -94,7 +101,9 @@ User
 - Confirm Vercel production build output includes `/studio/avatar`.
 - Deploy API from `apps/api` on Railway.
 - Keep `MUSE_TALK_API_BASE_URL` pointed at the AutoDL custom service for port `6006`.
-- After AutoDL image reset or instance replacement, recreate `/root/autodl-tmp/start_musetalk.sh` and `/etc/autodl-init`.
+- After AutoDL image reset or instance replacement, recreate `/root/autodl-tmp/start_musetalk.sh`, `/root/autodl-tmp/idle_shutdown.sh`, and `/etc/autodl-init`.
+- During current user validation, manually start the AutoDL container before testing MuseTalk generation.
+- Do not rely on Railway automatic AutoDL `power_on` until a Pro instance with a `pro-...` UUID is available.
 - Never expose `SUPABASE_SERVICE_ROLE_KEY`, `AUTODL_API_TOKEN`, or Volcengine tokens in docs, logs, or client code.
 - Before testing formal generation, check:
   - `https://api.kaiqiang.ai/health`

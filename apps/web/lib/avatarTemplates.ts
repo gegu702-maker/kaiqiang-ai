@@ -45,3 +45,69 @@ export const avatarTemplates: AvatarTemplate[] = [
 export function getAvatarTemplate(id: string | null | undefined) {
   return avatarTemplates.find((template) => template.id === id) ?? avatarTemplates[0];
 }
+
+export type AvatarStudioTemplate = {
+  id: string;
+  name: {
+    zh: string;
+    en: string;
+  };
+  thumbnailUrl: string;
+  language: "zh" | "en" | "multi";
+  scene: "product" | "talking" | "sales" | "tutorial";
+  isFree: boolean;
+  videoUrl: string | null;
+};
+
+export const avatarStudioTemplates: AvatarStudioTemplate[] = [
+  {
+    id: "product-host-zh",
+    name: { zh: "产品介绍主持人", en: "Product Host" },
+    thumbnailUrl: "https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=900&q=80",
+    language: "zh",
+    scene: "product",
+    isFree: true,
+    videoUrl: null,
+  },
+  {
+    id: "sales-presenter",
+    name: { zh: "销售转化口播", en: "Sales Presenter" },
+    thumbnailUrl: "https://images.unsplash.com/photo-1556761175-b413da4baf72?auto=format&fit=crop&w=900&q=80",
+    language: "multi",
+    scene: "sales",
+    isFree: true,
+    videoUrl: null,
+  },
+  {
+    id: "tutorial-coach",
+    name: { zh: "教程讲解模板", en: "Tutorial Coach" },
+    thumbnailUrl: "https://images.unsplash.com/photo-1543269865-cbf427effbad?auto=format&fit=crop&w=900&q=80",
+    language: "multi",
+    scene: "tutorial",
+    isFree: false,
+    videoUrl: null,
+  },
+];
+
+export function findAvatarStudioTemplate(id?: string | null) {
+  if (!id) return null;
+  return avatarStudioTemplates.find((template) => template.id === id) ?? null;
+}
+
+export function sceneLabel(scene: AvatarStudioTemplate["scene"], locale: "zh" | "en") {
+  const labels = {
+    zh: {
+      product: "产品介绍",
+      talking: "口播",
+      sales: "销售",
+      tutorial: "教程",
+    },
+    en: {
+      product: "Product",
+      talking: "Talking",
+      sales: "Sales",
+      tutorial: "Tutorial",
+    },
+  };
+  return labels[locale][scene];
+}

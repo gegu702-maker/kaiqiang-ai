@@ -1,10 +1,13 @@
 "use client";
 
 import { Check, Copy, Download, Film, Loader2, UploadCloud, Video } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { findAvatarStudioTemplate, sceneLabel } from "@/lib/avatarTemplates";
 import { createClient } from "@/lib/supabase/client";
+import type { UsageSummary } from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -46,6 +49,15 @@ const copy = {
     copied: "已复制",
     result: "生成结果",
     empty: "请选择人物视频和音频。",
+    quotaTitle: "生成额度",
+    quotaLoading: "正在读取额度",
+    quotaUnlimited: "当前套餐不限额度",
+    quotaSummary: (remaining: number, used: number, total: number) => `剩余 ${remaining} 次，本月已用 ${used}/${total} 次`,
+    cost: "本次生成预计消耗 1 次额度",
+    quotaEmpty: "免费额度已用完，请升级套餐。",
+    upgrade: "升级套餐",
+    selectedTemplate: "已选择模板",
+    templateComingSoon: "该模板视频即将上线，请先手动上传人物视频。",
     history: "最近任务",
     noHistory: "暂无历史任务。",
     uploadFailedVideo: "视频上传失败",
@@ -79,6 +91,15 @@ const copy = {
     copied: "Copied",
     result: "Result",
     empty: "Choose a person video and an audio file.",
+    quotaTitle: "Generation credits",
+    quotaLoading: "Loading credits",
+    quotaUnlimited: "Current plan has custom credits",
+    quotaSummary: (remaining: number, used: number, total: number) => `${remaining} left, ${used}/${total} used this month`,
+    cost: "This generation costs 1 credit",
+    quotaEmpty: "Free credits are used up. Please upgrade your plan.",
+    upgrade: "Upgrade",
+    selectedTemplate: "Selected template",
+    templateComingSoon: "This template video is coming soon. Upload a person video for now.",
     history: "Recent tasks",
     noHistory: "No recent tasks.",
     uploadFailedVideo: "Video upload failed",
@@ -90,10 +111,11 @@ const copy = {
   },
 };
 
-export function AvatarVideoGenerator() {
+export function AvatarVideoGenerator({ initialTemplateId }: { initialTemplateId?: string }) {
   const { locale } = useLanguage();
   const current = copy[locale];
   const supabase = useMemo(() => createClient(), []);
+  const selectedTemplate = useMemo(() => findAvatarStudioTemplate(initialTemplateId), [initialTemplateId]);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [state, setState] = useState<GenerateState>("idle");
@@ -101,6 +123,7 @@ export function AvatarVideoGenerator() {
   const [progress, setProgress] = useState(0);
   const [resultUrl, setResultUrl] = useState("");
   const [error, setError] = useState("");
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [tasks, setTasks] = useState<AvatarTask[]>([]);
   const [copied, setCopied] = useState(false);
   const progressTimer = useRef<number | null>(null);
@@ -120,13 +143,28 @@ export function AvatarVideoGenerator() {
     setTasks(Array.isArray(payload) ? payload : []);
   }, [supabase]);
 
+  const refreshUsage = useCallback(async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
+    const response = await fetch(`${API_URL}/api/billing/usage`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      cache: "no-store",
+    });
+    if (!response.ok) return;
+    const payload = (await response.json().catch(() => null)) as UsageSummary | null;
+    setUsage(payload);
+  }, [supabase]);
+
   useEffect(() => {
     void refreshTasks();
+    void refreshUsage();
     return () => {
       if (progressTimer.current) window.clearInterval(progressTimer.current);
       stageTimers.current.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [refreshTasks]);
+  }, [refreshTasks, refreshUsage]);
 
   function startProgress() {
     setProgress(8);
@@ -166,6 +204,12 @@ export function AvatarVideoGenerator() {
       setState("failed");
       setProgressStage("failed");
       setError(current.empty);
+      return;
+    }
+    if (usage?.remaining !== null && usage?.remaining !== undefined && usage.remaining <= 0) {
+      setState("failed");
+      setProgressStage("failed");
+      setError(current.quotaEmpty);
       return;
     }
 
@@ -209,6 +253,7 @@ export function AvatarVideoGenerator() {
       setProgressStage("completed");
       stopProgress(100);
       await refreshTasks();
+      await refreshUsage();
     } catch (err) {
       clearStageUpdates();
       setState("failed");
@@ -216,6 +261,7 @@ export function AvatarVideoGenerator() {
       stopProgress(0);
       setError(classifyError(err instanceof Error ? err.message : String(err)));
       await refreshTasks();
+      await refreshUsage();
     }
   }
 
@@ -233,6 +279,7 @@ export function AvatarVideoGenerator() {
     if (lower.includes("timeout") || lower.includes("timed out")) return current.musetalkTimeout;
     if (lower.includes("autodl") || lower.includes("connection") || lower.includes("connect")) return current.autodlUnreachable;
     if (lower.includes("supabase") || lower.includes("storage") || lower.includes("bucket")) return current.supabaseFailed;
+    if (lower.includes("insufficient_credits") || lower.includes("额度已用完")) return current.quotaEmpty;
     return message || current.failed;
   }
 
@@ -275,6 +322,35 @@ export function AvatarVideoGenerator() {
           <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.title}</h1>
           <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">{current.subtitle}</p>
         </div>
+        <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">{current.quotaTitle}</p>
+              <p className="mt-1 text-sm text-slate-500">
+                {!usage
+                  ? current.quotaLoading
+                  : usage.remaining === null
+                    ? current.quotaUnlimited
+                    : current.quotaSummary(usage.remaining, usage.used, usage.monthly_quota ?? 0)}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">{current.cost}</p>
+            </div>
+            {usage?.remaining !== null && usage?.remaining !== undefined && usage.remaining <= 0 ? (
+              <Link className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500" href="/pricing">
+                {current.upgrade}
+              </Link>
+            ) : null}
+          </div>
+        </div>
+        {selectedTemplate ? (
+          <div className="rounded-md border border-blue-200 bg-blue-50 p-4">
+            <p className="text-sm font-semibold text-blue-950">{current.selectedTemplate}</p>
+            <p className="mt-1 text-sm text-blue-800">
+              {selectedTemplate.name[locale]} · {sceneLabel(selectedTemplate.scene, locale)} · {selectedTemplate.language.toUpperCase()}
+            </p>
+            {!selectedTemplate.videoUrl ? <p className="mt-2 text-sm text-amber-700">{current.templateComingSoon}</p> : null}
+          </div>
+        ) : null}
         <div className="grid gap-4">
           <FilePicker
             title={current.video}

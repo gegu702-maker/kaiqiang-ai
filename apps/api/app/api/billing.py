@@ -62,7 +62,7 @@ async def create_checkout_order(
     user = get_authenticated_user(supabase, token)
     if plan not in {"plus", "pro", "business"}:
         raise HTTPException(status_code=400, detail="Only paid plans can create checkout orders.")
-    if provider not in {"wechat", "alipay", "pingpp", "stripe", "paypal", "manual"}:
+    if provider not in {"wechat", "alipay", "pingpp", "stripe", "paypal", "lemon_squeezy", "creem", "manual"}:
         raise HTTPException(status_code=400, detail="Unsupported payment provider.")
     if currency not in {"CNY", "USD"}:
         raise HTTPException(status_code=400, detail="Unsupported currency.")
@@ -127,7 +127,7 @@ async def payment_webhook(
         if units:
             order_id = units[0].get("reference_id")
         provider_payment_id = resource.get("id", "")
-    elif provider in {"pingpp", "wechat", "alipay"}:
+    elif provider in {"pingpp", "wechat", "alipay", "lemon_squeezy", "creem"}:
         order_id = payload.get("order_no") or payload.get("data", {}).get("object", {}).get("order_no")
         provider_payment_id = payload.get("id") or payload.get("data", {}).get("object", {}).get("id", "")
 

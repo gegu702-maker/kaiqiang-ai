@@ -22,12 +22,11 @@ export function PlanCheckoutButton({ plan }: { plan: "plus" | "pro" | "business"
           <option value="CNY">人民币</option>
           <option value="USD">USD</option>
         </select>
-        <select name="provider" defaultValue="pingpp" className="h-10 rounded-md border border-white/10 bg-ink/70 px-2 text-xs text-slate-200">
-          <option value="pingpp">Ping++</option>
-          <option value="wechat">微信支付</option>
-          <option value="alipay">支付宝</option>
+        <select name="provider" defaultValue="stripe" className="h-10 rounded-md border border-white/10 bg-ink/70 px-2 text-xs text-slate-200">
           <option value="stripe">Stripe</option>
-          <option value="paypal">PayPal</option>
+          <option value="lemon_squeezy">Lemon Squeezy</option>
+          <option value="creem">Creem</option>
+          <option value="pingpp">Ping++</option>
           <option value="manual">人工开通</option>
         </select>
       </div>
