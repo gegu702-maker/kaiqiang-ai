@@ -20,10 +20,9 @@ StageCallback = Callable[[str], None]
 async def start_instance() -> dict[str, Any]:
     _require_autodl_config()
     if _using_legacy_instance_api():
-        return await _legacy_instance_request(
-            "POST",
-            "/api/v1/dev/instance/power_on",
-            json={
+        return await _normal_instance_request(
+            "power_on",
+            {
                 "instance_uuid": settings.autodl_instance_id.strip(),
                 "payload": "gpu",
             },
@@ -38,14 +37,14 @@ async def start_instance() -> dict[str, Any]:
 async def stop_instance() -> dict[str, Any]:
     _require_autodl_config()
     if _using_legacy_instance_api():
-        return await _legacy_instance_request("POST", "/api/v1/dev/instance/power_off", json=_instance_payload())
+        return await _normal_instance_request("power_off", _instance_payload())
     return await _autodl_request("POST", "/api/v1/dev/instance/pro/power_off", json=_instance_payload())
 
 
 async def get_instance_status() -> dict[str, Any]:
     _require_autodl_config()
     if _using_legacy_instance_api():
-        return await _legacy_instance_request("GET", "/api/v1/dev/instance/status", json=_instance_payload())
+        return await _normal_instance_request("status", _instance_payload())
     return await _autodl_request("GET", "/api/v1/dev/instance/pro/status", json=_instance_payload())
 
 
@@ -187,7 +186,26 @@ async def _autodl_request(
     return data
 
 
-async def _legacy_instance_request(method: str, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
+async def _normal_instance_request(action: str, payload: dict[str, Any]) -> dict[str, Any]:
+    candidates = _normal_instance_candidates(action)
+    errors: list[dict[str, Any]] = []
+    for method, path in candidates:
+        try:
+            return await _instance_request(method, path, json=payload)
+        except HTTPException as error:
+            errors.append(_summarize_autodl_error(path, error.detail))
+    raise HTTPException(
+        status_code=502,
+        detail={
+            "message": "AutoDL normal instance API returned errors for all known endpoint candidates",
+            "action": action,
+            "attempts": errors,
+            "todo": "If all candidates fail, set AUTODL_INSTANCE_ID to the pro-... UUID or update the endpoint mapping from AutoDL OpenAPI docs.",
+        },
+    )
+
+
+async def _instance_request(method: str, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
     base_url = settings.autodl_api_base_url.strip().rstrip("/") or "https://api.autodl.com"
     headers = {
         "Authorization": settings.autodl_api_token.strip(),
@@ -198,16 +216,15 @@ async def _legacy_instance_request(method: str, path: str, *, json: dict[str, An
             response = await client.request(method, f"{base_url}{path}", headers=headers, json=json)
             data = _parse_json(response)
     except httpx.HTTPError as error:
-        raise HTTPException(status_code=502, detail=f"AutoDL legacy API request failed: {error}") from error
+        raise HTTPException(status_code=502, detail=f"AutoDL API request failed: {error}") from error
 
     if not response.is_success or not _autodl_success(data):
         raise HTTPException(
             status_code=502,
             detail={
-                "message": "AutoDL legacy API returned an error",
+                "message": "AutoDL API returned an error",
                 "status_code": response.status_code,
                 "response": data or response.text[:1000],
-                "todo": "For pro instances use AUTODL_INSTANCE_ID=pro-..., otherwise keep the normal AutoDL container id.",
             },
         )
     return data
@@ -237,6 +254,38 @@ def _instance_payload() -> dict[str, Any]:
 
 def _using_legacy_instance_api() -> bool:
     return not settings.autodl_instance_id.strip().startswith("pro-")
+
+
+def _normal_instance_candidates(action: str) -> list[tuple[str, str]]:
+    paths = [
+        f"/api/v1/dev/instance/{action}",
+        f"/api/v1/instance/{action}",
+        f"/api/v1/dev/instances/{action}",
+        f"/api/v1/dev/container/{action}",
+        f"/api/v1/dev/containers/{action}",
+    ]
+    if action == "status":
+        return [("GET", path) for path in paths] + [("POST", path) for path in paths]
+    return [("POST", path) for path in paths]
+
+
+def _summarize_autodl_error(path: str, detail: object) -> dict[str, Any]:
+    if not isinstance(detail, dict):
+        return {"path": path, "detail": str(detail)[:300]}
+    response = detail.get("response")
+    if isinstance(response, dict):
+        return {
+            "path": path,
+            "status_code": detail.get("status_code"),
+            "code": response.get("code"),
+            "status": response.get("status"),
+            "msg": response.get("msg") or response.get("message"),
+        }
+    return {
+        "path": path,
+        "status_code": detail.get("status_code"),
+        "response": str(response or "")[:160],
+    }
 
 
 def _require_autodl_config() -> None:
