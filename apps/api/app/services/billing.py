@@ -313,11 +313,21 @@ def assert_voice_clone_allowed(supabase: Client, *, user_id: str, email: str) ->
 def assert_generation_quota(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
     usage = get_usage_summary(supabase, user_id=user_id, email=email)
     if usage["remaining"] is not None and usage["remaining"] <= 0:
-        raise HTTPException(status_code=402, detail="本月生成额度已用完，请升级套餐。")
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": "insufficient_credits",
+                "message": "免费额度已用完，请升级套餐。",
+                "plan": usage["plan"],
+                "remaining": usage["remaining"],
+                "monthly_quota": usage["monthly_quota"],
+            },
+        )
     return usage
 
 
 def log_generation_usage(supabase: Client, *, user_id: str, task_id: str) -> None:
+    inserted = False
     try:
         supabase.table("usage_logs").insert(
             {
@@ -329,11 +339,33 @@ def log_generation_usage(supabase: Client, *, user_id: str, task_id: str) -> Non
             }
         ).execute()
     except APIError:
+        try:
+            supabase.table("usage_logs").insert(
+                {
+                    "user_id": user_id,
+                    "action": "generate_video",
+                    "quantity": 1,
+                    "period_start": current_period_start(),
+                }
+            ).execute()
+        except APIError:
+            return
+        inserted = True
+    else:
+        inserted = True
+    if not inserted:
         return
     period = current_period_start()
     used = _count_generation_usage(supabase, user_id=user_id, period=period)
     plan, quota = _quota_for_user(supabase, user_id=user_id)
     _sync_user_quota(supabase, user_id=user_id, plan=plan, quota=quota, used=used)
+    if quota is not None:
+        try:
+            supabase.table("profiles").update(
+                {"credits": max(int(quota) - used, 0), "updated_at": datetime.now(UTC).isoformat()}
+            ).eq("id", user_id).execute()
+        except APIError:
+            pass
 
 
 def refund_generation_usage(supabase: Client, *, user_id: str, task_id: str) -> None:
@@ -515,6 +547,10 @@ async def create_checkout_session(order: dict[str, Any]) -> dict[str, Any]:
         return await _create_stripe_checkout(order)
     if provider == "paypal":
         return await _create_paypal_order(order)
+    if provider == "lemon_squeezy":
+        return _missing_provider_config("lemon_squeezy", order)
+    if provider == "creem":
+        return _missing_provider_config("creem", order)
     if provider in {"wechat", "alipay", "pingpp"}:
         return await _create_pingpp_charge(order)
     if provider == "manual":
@@ -623,6 +659,6 @@ def _missing_provider_config(provider: str, order: dict[str, Any]) -> dict[str, 
     return {
         "checkout_url": None,
         "provider_status": "not_configured",
-        "message": f"{provider} 环境变量未配置，订单已保留为 pending。",
+        "message": "支付系统即将开放，订单已保留为 pending。",
         "provider_payload": {"order_id": order["id"]},
     }

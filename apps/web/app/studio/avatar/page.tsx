@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { AvatarVideoGenerator } from "@/components/AvatarVideoGenerator";
 import { createClient } from "@/lib/supabase/server";
 
-export default async function AvatarStudioPage() {
+export default async function AvatarStudioPage({ searchParams }: { searchParams?: Promise<{ template?: string }> }) {
   const supabase = await createClient();
   const {
     data: { session },
@@ -13,9 +13,11 @@ export default async function AvatarStudioPage() {
     redirect("/login?next=/studio/avatar");
   }
 
+  const params = await searchParams;
+
   return (
     <main className="min-h-[calc(100vh-86px)] bg-slate-50 text-slate-950">
-      <AvatarVideoGenerator />
+      <AvatarVideoGenerator initialTemplateId={params?.template} />
     </main>
   );
 }

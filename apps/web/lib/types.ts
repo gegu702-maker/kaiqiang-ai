@@ -115,7 +115,7 @@ export type UsageSummary = {
 };
 
 export type OrderStatus = "pending" | "paid" | "failed" | "refunded";
-export type PaymentProvider = "wechat" | "alipay" | "pingpp" | "stripe" | "paypal" | "manual";
+export type PaymentProvider = "wechat" | "alipay" | "pingpp" | "stripe" | "paypal" | "lemon_squeezy" | "creem" | "manual";
 
 export type Order = {
   id: string;

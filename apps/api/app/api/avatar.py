@@ -10,6 +10,7 @@ from supabase import Client
 from app.core.auth import get_authenticated_user, get_bearer_token
 from app.core.config import settings
 from app.core.supabase import get_supabase
+from app.services.billing import assert_generation_quota, log_generation_usage
 from app.services.autodl_client import ensure_gpu_ready
 from app.services.musetalk_client import check_musetalk_health, generate_avatar_video_with_musetalk
 from app.services.storage import upload_public_file
@@ -52,6 +53,7 @@ async def generate_avatar_video(
     user = get_authenticated_user(supabase, token)
     task = None
     try:
+        assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
         video_url = await upload_public_file(
             supabase,
             settings.supabase_video_bucket,
@@ -95,6 +97,7 @@ async def generate_avatar_video(
                 "last_gpu_used_at": datetime.now(timezone.utc).isoformat(),
             },
         )
+        log_generation_usage(supabase, user_id=user["id"], task_id=task["id"])
         return {
             "success": True,
             "task": task,
