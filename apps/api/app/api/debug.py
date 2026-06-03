@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -175,6 +175,53 @@ def debug_config() -> dict:
     }
 
 
+@router.get("/debug/autodl-probe")
+async def debug_autodl_probe(x_admin_key: str = Header(...)) -> dict:
+    candidate = x_admin_key.replace("ADMIN_API_KEY=", "", 1).strip()
+    expected = settings.admin_api_key.strip()
+    if not expected or candidate != expected:
+        raise HTTPException(status_code=401, detail="Invalid admin key")
+    if not settings.autodl_api_token.strip():
+        raise HTTPException(status_code=503, detail="AUTODL_API_TOKEN missing")
+
+    base_url = settings.autodl_api_base_url.strip().rstrip("/") or "https://api.autodl.com"
+    payload = {"instance_uuid": settings.autodl_instance_id.strip()}
+    endpoints = [
+        ("pro_status", "GET", f"{base_url}/api/v1/dev/instance/pro/status", payload),
+        ("pro_power_on", "POST", f"{base_url}/api/v1/dev/instance/pro/power_on", {**payload, "payload": "gpu", "start_command": "bash /root/autodl-tmp/start_musetalk.sh"}),
+        ("dev_status", "GET", f"{base_url}/api/v1/dev/instance/status", payload),
+        ("dev_power_on", "POST", f"{base_url}/api/v1/dev/instance/power_on", {**payload, "payload": "gpu"}),
+        ("legacy_status", "POST", f"{base_url}/api/v1/instance/status", payload),
+        ("legacy_power_on", "POST", f"{base_url}/api/v1/instance/power_on", {**payload, "payload": "gpu"}),
+    ]
+    results = []
+    headers = {"Authorization": settings.autodl_api_token.strip(), "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        for name, method, url, body in endpoints:
+            try:
+                response = await client.request(method, url, headers=headers, json=body)
+                parsed = _safe_probe_json(response)
+                results.append(
+                    {
+                        "name": name,
+                        "method": method,
+                        "path": url.replace(base_url, ""),
+                        "status_code": response.status_code,
+                        "code": parsed.get("code"),
+                        "status": parsed.get("status"),
+                        "msg": parsed.get("msg") or parsed.get("message"),
+                        "data_type": type(parsed.get("data")).__name__ if "data" in parsed else None,
+                    }
+                )
+            except httpx.HTTPError as error:
+                results.append({"name": name, "method": method, "path": url.replace(base_url, ""), "error": error.__class__.__name__})
+    return {
+        "autodl_instance_id_shape": _autodl_instance_shape(settings.autodl_instance_id),
+        "base_url": base_url,
+        "results": results,
+    }
+
+
 @router.post("/api/debug/tts-test")
 async def debug_tts_test(payload: TTSTestRequest) -> dict:
     supabase = get_supabase()
@@ -268,6 +315,22 @@ def _is_volcengine_permission_error(detail: object) -> bool:
             "forbidden",
         ]
     )
+
+
+def _safe_probe_json(response: httpx.Response) -> dict:
+    try:
+        data = response.json()
+        return data if isinstance(data, dict) else {"data": data}
+    except ValueError:
+        return {"message": response.text[:120]}
+
+
+def _autodl_instance_shape(value: str) -> str:
+    if value.startswith("pro-"):
+        return "pro"
+    if value:
+        return "normal_or_container"
+    return "missing"
 
 
 async def _debug_musetalk_with_autodl_sample_audio(supabase, *, task_prefix: str = "debug-avatar-video") -> str:
