@@ -49,11 +49,42 @@ create table if not exists public.user_quotas (
 );
 
 alter table public.orders
+add column if not exists billing_cycle text not null default 'monthly';
+
+alter table public.orders
+drop constraint if exists orders_plan_check;
+
+alter table public.orders
+add constraint orders_plan_check
+check (plan in ('free', 'plus', 'pro', 'business'));
+
+alter table public.orders
+drop constraint if exists orders_billing_cycle_check;
+
+alter table public.orders
+add constraint orders_billing_cycle_check
+check (billing_cycle in ('monthly', 'yearly'));
+
+alter table public.orders
 drop constraint if exists orders_provider_check;
 
 alter table public.orders
 add constraint orders_provider_check
 check (provider in ('wechat', 'alipay', 'pingpp', 'stripe', 'paypal', 'lemon_squeezy', 'creem', 'manual'));
+
+alter table public.payments
+drop constraint if exists payments_provider_check;
+
+alter table public.payments
+add constraint payments_provider_check
+check (provider in ('wechat', 'alipay', 'pingpp', 'stripe', 'paypal', 'lemon_squeezy', 'creem', 'manual'));
+
+alter table public.subscriptions
+drop constraint if exists subscriptions_plan_check;
+
+alter table public.subscriptions
+add constraint subscriptions_plan_check
+check (plan in ('free', 'plus', 'pro', 'business'));
 
 alter table public.subscriptions
 drop constraint if exists subscriptions_provider_check;
