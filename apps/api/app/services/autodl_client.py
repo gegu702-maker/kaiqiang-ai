@@ -19,6 +19,16 @@ StageCallback = Callable[[str], None]
 
 async def start_instance() -> dict[str, Any]:
     _require_autodl_config()
+    if _using_legacy_instance_api():
+        return await _legacy_instance_request(
+            "POST",
+            "/api/v1/instance/power_on",
+            json={
+                "instance_uuid": settings.autodl_instance_id.strip(),
+                "payload": "gpu",
+            },
+        )
+
     payload = _instance_payload()
     payload["payload"] = "gpu"
     payload["start_command"] = "bash /root/autodl-tmp/start_musetalk.sh"
@@ -27,11 +37,15 @@ async def start_instance() -> dict[str, Any]:
 
 async def stop_instance() -> dict[str, Any]:
     _require_autodl_config()
+    if _using_legacy_instance_api():
+        return await _legacy_instance_request("POST", "/api/v1/instance/power_off", json=_instance_payload())
     return await _autodl_request("POST", "/api/v1/dev/instance/pro/power_off", json=_instance_payload())
 
 
 async def get_instance_status() -> dict[str, Any]:
     _require_autodl_config()
+    if _using_legacy_instance_api():
+        return await _legacy_instance_request("POST", "/api/v1/instance/status", json=_instance_payload())
     return await _autodl_request("GET", "/api/v1/dev/instance/pro/status", json=_instance_payload())
 
 
@@ -173,6 +187,31 @@ async def _autodl_request(
     return data
 
 
+async def _legacy_instance_request(method: str, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
+    headers = {
+        "Authorization": settings.autodl_api_token.strip(),
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.request(method, f"https://www.autodl.com{path}", headers=headers, json=json)
+            data = _parse_json(response)
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"AutoDL legacy API request failed: {error}") from error
+
+    if not response.is_success or not _autodl_success(data):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "AutoDL legacy API returned an error",
+                "status_code": response.status_code,
+                "response": data or response.text[:1000],
+                "todo": "For pro instances use AUTODL_INSTANCE_ID=pro-..., otherwise keep the normal AutoDL container id.",
+            },
+        )
+    return data
+
+
 async def _musetalk_health_ok() -> bool:
     base_url = settings.musetalk_api_base_url.strip().rstrip("/")
     if not base_url:
@@ -193,6 +232,10 @@ async def _musetalk_health_ok() -> bool:
 
 def _instance_payload() -> dict[str, Any]:
     return {"instance_uuid": settings.autodl_instance_id.strip()}
+
+
+def _using_legacy_instance_api() -> bool:
+    return not settings.autodl_instance_id.strip().startswith("pro-")
 
 
 def _require_autodl_config() -> None:
