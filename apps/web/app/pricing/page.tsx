@@ -20,6 +20,7 @@ const plans = [
     quota: "更多生成额度",
     desc: "适合开始稳定测试账号内容和转化素材。",
     features: ["更多月度生成额度", "优先排队预留", "公开视频下载链接"],
+    badge: "推荐",
   },
   {
     name: "Pro",
@@ -44,7 +45,8 @@ export default function PricingPage() {
 
       <div className="grid gap-5 lg:grid-cols-3">
         {plans.map((plan) => (
-          <section key={plan.code} className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+          <section key={plan.code} className={plan.code === "plus" ? "relative rounded-lg border border-cyan/45 bg-panel/90 p-5 shadow-glow" : "rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow"}>
+            {"badge" in plan ? <span className="absolute right-4 top-4 rounded-full bg-cyan px-3 py-1 text-xs font-semibold text-ink">{plan.badge}</span> : null}
             <h2 className="text-2xl font-semibold text-white">{plan.name}</h2>
             <div className="mt-4 flex items-end gap-3">
               <span className="text-4xl font-semibold text-cyan">{plan.price}</span>

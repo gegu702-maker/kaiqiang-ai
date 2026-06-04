@@ -17,6 +17,7 @@ const copy = {
     start: "立即开始",
     examples: "查看示例",
     badge: "AI 数字人口播视频创作平台",
+    flow: ["上传视频", "上传音频", "自动生成数字人口播"],
     whyTitle: "为什么选择 Kaiqiang AI",
     whySubtitle: "围绕真实数字人口播生成流程打造，减少学习成本，让创作者更快得到可用成片。",
     cards: [
@@ -40,6 +41,7 @@ const copy = {
     start: "Get Started",
     examples: "View Examples",
     badge: "AI Digital Human Video Creation Platform",
+    flow: ["Upload video", "Upload audio", "Generate talking avatar"],
     whyTitle: "Why Kaiqiang AI",
     whySubtitle: "Built around a real avatar generation workflow so creators can move from upload to usable video with less friction.",
     cards: [
@@ -84,9 +86,9 @@ export function LandingPage({ startHref }: { startHref: string }) {
           </div>
 
           <div className="space-y-6">
-            <h1 className="max-w-[600px] text-5xl font-semibold leading-[1.12] tracking-[-0.045em] text-slate-900 sm:text-6xl lg:text-[60px]">
-              <span className="block whitespace-nowrap">{current.titlePrefix}</span>
-              <span className="block whitespace-nowrap">
+            <h1 className="max-w-[600px] text-4xl font-semibold leading-[1.12] text-slate-900 sm:text-6xl lg:text-[60px]">
+              <span className="block">{current.titlePrefix}</span>
+              <span className="block">
                 <span className="bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-500 bg-clip-text font-semibold text-transparent">
                   {current.titleAccent}
                 </span>{" "}
@@ -96,6 +98,14 @@ export function LandingPage({ startHref }: { startHref: string }) {
             <p className="max-w-[500px] whitespace-pre-line text-lg font-normal leading-8 text-slate-500">
               {current.subtitle}
             </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-700">
+              {current.flow.map((item, index) => (
+                <div key={item} className="flex items-center gap-2">
+                  <span className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 shadow-sm">{item}</span>
+                  {index < current.flow.length - 1 ? <span className="text-slate-300">→</span> : null}
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-5 pt-1">

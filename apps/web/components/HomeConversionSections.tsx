@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useActionState } from "react";
-import { BriefcaseBusiness, CheckCircle2, ChevronDown, Clapperboard, Mail, Megaphone, ShoppingBag, Sparkles, UsersRound } from "lucide-react";
+import { BriefcaseBusiness, CheckCircle2, ChevronDown, Clapperboard, Mail, Megaphone, PlayCircle, ShoppingBag, Sparkles, UsersRound } from "lucide-react";
 
 import { joinWaitlistAction } from "@/app/actions/waitlist";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -22,27 +22,28 @@ const demoVideos = {
 
 const copy = {
   zh: {
-    demoEyebrow: "Hero Demo",
+    demoEyebrow: "演示案例",
     demoTitle: "上传视频和音频，\n几分钟内生成真实数字人口播视频。",
     before: "原始视频",
     after: "生成结果",
     placeholder: "Demo 视频占位，待替换为真实生成案例。",
-    examplesEyebrow: "Examples",
+    previewSoon: "预览视频即将上线",
+    examplesEyebrow: "案例展示",
     examplesTitle: "适合多种内容场景",
     examples: [
-      ["Product Marketing", "新品介绍和产品亮点讲解，快速生成营销短视频。", "/avatars/business_female_01.png"],
-      ["AI Talking Avatar", "把真人素材转换为自然口型同步的 AI talking avatar。", "/avatars/ai_female_01.png"],
-      ["E-commerce", "为商品详情、直播预热视频和带货素材生成数字人口播。", "/avatars/business_male_01.png"],
-      ["Business Presentation", "将业务汇报、课程介绍和企业培训内容视频化。", "/logo-transparent.png"],
+      ["产品营销", "新品介绍和产品亮点讲解，快速生成营销短视频。", "/avatars/business_female_01.png"],
+      ["AI 数字人口播", "把真人素材转换为自然口型同步的 AI talking avatar。", "/avatars/ai_female_01.png"],
+      ["电商带货", "为商品详情、直播预热视频和带货素材生成数字人口播。", "/avatars/business_male_01.png"],
+      ["商务演示", "将业务汇报、课程介绍和企业培训内容视频化。", "/logo-transparent.png"],
     ],
-    trustedTitle: "Trusted By Future Creators",
+    trustedTitle: "面向未来创作者",
     trustedBody: "为创作者、营销团队和企业提供真实数字人口播能力。",
-    waitlistEyebrow: "Get Early Access",
+    waitlistEyebrow: "抢先体验",
     waitlistTitle: "加入等待名单",
     waitlistBody: "告诉我们你的使用场景，优先获取新模板、案例和商业化功能。",
-    email: "Email",
-    industry: "Industry",
-    useCase: "Use Case",
+    email: "邮箱",
+    industry: "行业",
+    useCase: "使用场景",
     industryPlaceholder: "行业，例如电商 / 教育 / SaaS",
     useCasePlaceholder: "使用场景，例如产品介绍、课程视频、企业培训",
     submit: "加入等待名单",
@@ -62,6 +63,7 @@ const copy = {
     before: "Before",
     after: "After",
     placeholder: "Demo video placeholder, ready to replace with a real generated case.",
+    previewSoon: "Preview video coming soon",
     examplesEyebrow: "Examples",
     examplesTitle: "Built for multiple content workflows",
     examples: [
@@ -165,7 +167,15 @@ function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
                   <h3 className="text-base font-semibold text-slate-950">{title}</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-500">{desc}</p>
                   <div className="mt-4 overflow-hidden rounded-md border border-slate-200 bg-slate-950">
-                    <video className="aspect-video w-full object-cover" poster={image} controls muted autoPlay loop playsInline />
+                    <div className="relative aspect-video">
+                      <Image src={image} alt={`${title} preview`} fill sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw" className="object-cover opacity-70" />
+                      <div className="absolute inset-0 grid place-items-center bg-slate-950/30 text-white">
+                        <div className="flex items-center gap-2 rounded-full bg-slate-950/70 px-3 py-2 text-xs font-semibold backdrop-blur">
+                          <PlayCircle size={15} />
+                          {current.previewSoon}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </article>
