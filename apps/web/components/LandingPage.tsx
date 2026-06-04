@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowUpRight, Captions, Database, Gauge, Mic2, MousePointerClick, PlayCircle, ShieldCheck, Sparkles, UserRoundCheck, Video, Zap } from "lucide-react";
 
+import { HomeConversionSections } from "@/components/HomeConversionSections";
 import { useLanguage } from "@/components/LanguageProvider";
 import { trackEvent } from "@/lib/analytics";
 
@@ -135,7 +136,9 @@ export function LandingPage({ startHref }: { startHref: string }) {
         </div>
       </section>
 
-      <section id="examples" className="mx-auto max-w-[1280px] px-6 pb-16 sm:px-10 lg:-mt-8 lg:pb-24">
+      <HomeConversionSections />
+
+      <section className="mx-auto max-w-[1280px] px-6 py-16 sm:px-10 lg:py-24">
         <div className="grid gap-4 sm:grid-cols-2 min-[1180px]:grid-cols-4">
           {current.cards.map(([title, desc], index) => {
             const Icon = icons[index];

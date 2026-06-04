@@ -12,6 +12,23 @@ import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
 
+const softwareApplicationJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Kaiqiang AI",
+  applicationCategory: "MultimediaApplication",
+  operatingSystem: "Web",
+  url: "https://kaiqiang.ai",
+  description:
+    "Kaiqiang AI is an AI Avatar Generator for AI Talking Avatar videos, Digital Human content, and AI Video Generator workflows.",
+  keywords: "AI Avatar Generator, AI Talking Avatar, Digital Human, AI Video Generator, Kaiqiang AI",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "CNY",
+  },
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL("https://kaiqiang.ai"),
   title: {
@@ -57,6 +74,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="zh-CN">
       <body className={`${inter.className} antialiased`}>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareApplicationJsonLd) }}
+        />
         <PostHogClientProvider>
           <LanguageProvider>
             <Suspense fallback={null}>
