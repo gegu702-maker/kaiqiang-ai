@@ -2,8 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowUpRight, Captions, Mic2, PlayCircle, Sparkles, Video, Zap } from "lucide-react";
+import { ArrowUpRight, Captions, Database, Gauge, Mic2, MousePointerClick, PlayCircle, ShieldCheck, Sparkles, UserRoundCheck, Video, Zap } from "lucide-react";
 
+import { ContactActions } from "@/components/ContactActions";
 import { useLanguage } from "@/components/LanguageProvider";
 import { trackEvent } from "@/lib/analytics";
 
@@ -16,11 +17,21 @@ const copy = {
     start: "立即开始",
     examples: "查看示例",
     badge: "AI 数字人口播视频创作平台",
+    whyTitle: "Why Kaiqiang AI",
+    whySubtitle: "围绕真实数字人口播生成流程打造，减少学习成本，让创作者更快得到可用成片。",
+    contactTitle: "Contact",
+    contactSubtitle: "需要商务咨询、定制模板或生成支持，可以直接联系。",
     cards: [
       ["AI 数字人口播", "真实数字人口播视频", "一键生成"],
       ["AI 配音", "多种语音风格", "自然流畅"],
       ["自动字幕", "智能识别生成字幕", "支持多语言"],
       ["高效创作", "简单高效的创作流程", "节省时间成本"],
+    ],
+    trust: [
+      ["Fast Generation", "异步生成任务，清晰展示排队、生成和上传进度。"],
+      ["Real AI Avatar", "基于真实人物视频生成自然口型同步的 AI talking avatar。"],
+      ["Secure Storage", "生成素材和结果文件通过云端存储管理，访问更稳定。"],
+      ["Easy to Use", "上传视频和音频即可开始，适合快速验证内容创意。"],
     ],
   },
   en: {
@@ -31,16 +42,27 @@ const copy = {
     start: "Get Started",
     examples: "View Examples",
     badge: "AI Digital Human Video Creation Platform",
+    whyTitle: "Why Kaiqiang AI",
+    whySubtitle: "Built around a real avatar generation workflow so creators can move from upload to usable video with less friction.",
+    contactTitle: "Contact",
+    contactSubtitle: "For business questions, custom templates, or generation support, reach out directly.",
     cards: [
       ["Digital Human Videos", "Real digital human talking videos", "One-click generation"],
       ["AI Voiceover", "Multiple voice styles", "Natural and fluent"],
       ["Auto Captions", "Smart subtitle generation", "Multilingual support"],
       ["Efficient Creation", "A simpler creative workflow", "Save time and cost"],
     ],
+    trust: [
+      ["Fast Generation", "Async generation tasks with clear queue, render, and upload progress."],
+      ["Real AI Avatar", "Create natural AI talking avatar videos from real person footage."],
+      ["Secure Storage", "Uploaded assets and generated videos are managed with cloud storage."],
+      ["Easy to Use", "Upload a video and audio file to quickly validate creative ideas."],
+    ],
   },
 };
 
 const icons = [Video, Mic2, Captions, Zap];
+const trustIcons = [Gauge, UserRoundCheck, ShieldCheck, MousePointerClick];
 
 export function LandingPage({ startHref }: { startHref: string }) {
   const { locale } = useLanguage();
@@ -123,8 +145,8 @@ export function LandingPage({ startHref }: { startHref: string }) {
           {current.cards.map(([title, desc], index) => {
             const Icon = icons[index];
             return (
-              <article key={title} className="group rounded-3xl border border-slate-200/65 bg-white/66 p-6 shadow-[0_12px_36px_rgba(15,23,42,0.04)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white/86">
-                <div className="grid size-12 place-items-center rounded-2xl bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.11)] transition group-hover:scale-[1.03]">
+              <article key={title} className="group rounded-lg border border-slate-200/65 bg-white/66 p-6 shadow-[0_12px_36px_rgba(15,23,42,0.04)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white/86">
+                <div className="grid size-12 place-items-center rounded-lg bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.11)] transition group-hover:scale-[1.03]">
                   <Icon size={22} />
                 </div>
                 <div className="mt-6">
@@ -135,6 +157,44 @@ export function LandingPage({ startHref }: { startHref: string }) {
               </article>
             );
           })}
+        </div>
+      </section>
+
+      <section className="border-y border-slate-200/70 bg-white/62 px-6 py-16 sm:px-10 lg:py-20">
+        <div className="mx-auto max-w-[1280px]">
+          <div className="max-w-2xl">
+            <p className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+              <Database size={16} className="text-indigo-500" />
+              {current.whyTitle}
+            </p>
+            <p className="mt-4 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.whyTitle}</p>
+            <p className="mt-4 text-base leading-7 text-slate-500">{current.whySubtitle}</p>
+          </div>
+          <div className="mt-9 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {current.trust.map(([title, desc], index) => {
+              const Icon = trustIcons[index];
+              return (
+                <article key={title} className="rounded-lg border border-slate-200 bg-white p-5 shadow-[0_14px_36px_rgba(15,23,42,0.045)]">
+                  <div className="grid size-11 place-items-center rounded-lg bg-slate-100 text-slate-900">
+                    <Icon size={21} />
+                  </div>
+                  <h2 className="mt-5 text-lg font-semibold text-slate-950">{title}</h2>
+                  <p className="mt-3 text-sm leading-6 text-slate-500">{desc}</p>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section id="contact" className="mx-auto max-w-[1280px] px-6 py-16 sm:px-10 lg:py-20">
+        <div className="grid gap-8 lg:grid-cols-[0.86fr_1.14fr] lg:items-start">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">{current.contactTitle}</p>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.contactTitle}</h2>
+            <p className="mt-4 max-w-xl text-base leading-7 text-slate-500">{current.contactSubtitle}</p>
+          </div>
+          <ContactActions />
         </div>
       </section>
     </main>

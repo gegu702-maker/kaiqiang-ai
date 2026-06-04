@@ -4,6 +4,7 @@ import { Check, Copy, Download, Film, Loader2, UploadCloud, Video } from "lucide
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ContactActions } from "@/components/ContactActions";
 import { useLanguage } from "@/components/LanguageProvider";
 import { findAvatarStudioTemplate, sceneLabel } from "@/lib/avatarTemplates";
 import { createClient } from "@/lib/supabase/client";
@@ -56,6 +57,8 @@ const copy = {
     cost: "本次生成预计消耗 1 次额度",
     quotaEmpty: "免费额度已用完，请升级套餐。",
     upgrade: "升级套餐",
+    supportTitle: "联系支持",
+    supportText: "生成遇到问题、需要模板或商务支持，可以直接联系。",
     selectedTemplate: "已选择模板",
     templateComingSoon: "该模板视频即将上线，请先手动上传人物视频。",
     history: "最近任务",
@@ -98,6 +101,8 @@ const copy = {
     cost: "This generation costs 1 credit",
     quotaEmpty: "Free credits are used up. Please upgrade your plan.",
     upgrade: "Upgrade",
+    supportTitle: "Contact support",
+    supportText: "Reach out for generation issues, templates, or business support.",
     selectedTemplate: "Selected template",
     templateComingSoon: "This template video is coming soon. Upload a person video for now.",
     history: "Recent tasks",
@@ -371,6 +376,13 @@ export function AvatarVideoGenerator({ initialTemplateId }: { initialTemplateId?
               </Link>
             ) : null}
           </div>
+        </div>
+        <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3">
+            <p className="text-sm font-semibold text-slate-900">{current.supportTitle}</p>
+            <p className="mt-1 text-sm leading-6 text-slate-500">{current.supportText}</p>
+          </div>
+          <ContactActions compact embedded />
         </div>
         {selectedTemplate ? (
           <div className="rounded-md border border-blue-200 bg-blue-50 p-4">
