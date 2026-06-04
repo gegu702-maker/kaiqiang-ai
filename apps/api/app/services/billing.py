@@ -326,28 +326,30 @@ def assert_generation_quota(supabase: Client, *, user_id: str, email: str) -> di
     return usage
 
 
-def log_generation_usage(supabase: Client, *, user_id: str, task_id: str) -> None:
+def log_generation_usage(
+    supabase: Client,
+    *,
+    user_id: str,
+    task_id: str | None = None,
+    avatar_task_id: str | None = None,
+) -> None:
     inserted = False
+    payload = {
+        "user_id": user_id,
+        "action": "generate_video",
+        "quantity": 1,
+        "period_start": current_period_start(),
+    }
+    if task_id:
+        payload["task_id"] = task_id
+    if avatar_task_id:
+        payload["avatar_task_id"] = avatar_task_id
     try:
-        supabase.table("usage_logs").insert(
-            {
-                "user_id": user_id,
-                "task_id": task_id,
-                "action": "generate_video",
-                "quantity": 1,
-                "period_start": current_period_start(),
-            }
-        ).execute()
+        supabase.table("usage_logs").insert(payload).execute()
     except APIError:
         try:
-            supabase.table("usage_logs").insert(
-                {
-                    "user_id": user_id,
-                    "action": "generate_video",
-                    "quantity": 1,
-                    "period_start": current_period_start(),
-                }
-            ).execute()
+            fallback_payload = {key: value for key, value in payload.items() if key not in {"task_id", "avatar_task_id"}}
+            supabase.table("usage_logs").insert(fallback_payload).execute()
         except APIError:
             return
         inserted = True
