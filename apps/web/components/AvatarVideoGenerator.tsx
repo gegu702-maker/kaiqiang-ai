@@ -157,6 +157,33 @@ export function AvatarVideoGenerator({ initialTemplateId }: { initialTemplateId?
     setUsage(payload);
   }, [supabase]);
 
+  const pollTaskUntilDone = useCallback(
+    async (taskId: string, token: string) => {
+      const deadline = Date.now() + 25 * 60 * 1000;
+      while (Date.now() < deadline) {
+        const response = await fetch(`${API_URL}/api/avatar/tasks/${taskId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(current.failed);
+        }
+        const task = (await response.json()) as AvatarTask;
+        setState(task.status === "queued" ? "queued" : task.status === "running" ? "running" : task.status);
+        if (task.progress_stage) setProgressStage(task.progress_stage as ProgressStage);
+        if (task.status === "completed" && task.result_url) {
+          return task.result_url;
+        }
+        if (task.status === "failed") {
+          throw new Error(task.error_message || current.failed);
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+      }
+      throw new Error(current.musetalkTimeout);
+    },
+    [current.failed, current.musetalkTimeout],
+  );
+
   useEffect(() => {
     void refreshTasks();
     void refreshUsage();
@@ -247,7 +274,10 @@ export function AvatarVideoGenerator({ initialTemplateId }: { initialTemplateId?
         const detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail ?? payload);
         throw new Error(detail || current.failed);
       }
-      setResultUrl(payload.result_video_url || payload.video_url || payload.task?.result_url || "");
+      const immediateResult = payload.result_video_url || payload.video_url || payload.task?.result_url || "";
+      const taskId = payload.task_id || payload.task?.id;
+      const finalUrl = immediateResult || (taskId ? await pollTaskUntilDone(taskId, session.access_token) : "");
+      setResultUrl(finalUrl);
       clearStageUpdates();
       setState("completed");
       setProgressStage("completed");
