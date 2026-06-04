@@ -73,6 +73,10 @@ User
 
 - Vercel frontend serves `https://kaiqiang.ai/studio/avatar`.
 - Login protection redirects anonymous users to `/login?next=/studio/avatar`.
+- Supabase Google OAuth is enabled for production login.
+- Google login has been verified with `gegu702@gmail.com`.
+- `gegu702@gmail.com` is an administrator account and is expected to show `plan=BUSINESS` with `remaining=999999`.
+- Ordinary new users should still initialize as `free` plan with `3` monthly generation credits.
 - Railway API health returns `{"status":"ok"}`.
 - Railway `/api/avatar/health` reaches AutoDL MuseTalk `/health`.
 - AutoDL 6006 service returns `{"status":"ok","engine":"musetalk","root":"/root/MuseTalk"}`.
