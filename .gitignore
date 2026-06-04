@@ -30,6 +30,7 @@ __pycache__/
 *.out.log
 *.err.log
 tmp_test/
+apps/web/artifacts/
 apps/api/tmp/
 video-materials-night/
 wsl-status.txt

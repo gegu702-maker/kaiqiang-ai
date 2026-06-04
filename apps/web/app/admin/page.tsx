@@ -1,33 +1,66 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ExternalLink, WandSparkles } from "lucide-react";
+import { redirect } from "next/navigation";
+import { CalendarClock, ExternalLink, ListChecks, Sparkles, UserCheck, UsersRound, WandSparkles } from "lucide-react";
 
 import { AdminUpdateForm } from "@/components/AdminUpdateForm";
 import { RefreshOnInterval } from "@/components/RefreshOnInterval";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { getAdminTasks } from "@/lib/api";
+import { getAdminTasks, getAdminUsers } from "@/lib/api";
+import { getAdminStats, isAdminEmail } from "@/lib/admin";
 import { getAvatarProfile } from "@/lib/avatars";
+import { createClient } from "@/lib/supabase/server";
 import { getLanguageLabel, getTTSVoiceLabel } from "@/lib/tts";
+import type { AdminStats } from "@/lib/admin";
+import type { AdminUser } from "@/lib/types";
 import type { VideoTask } from "@/lib/types";
 
 export default async function AdminPage() {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.user) {
+    redirect("/login?next=/admin");
+  }
+  if (!isAdminEmail(session.user.email)) {
+    redirect("/account");
+  }
+
   let tasks: VideoTask[] = [];
+  let users: AdminUser[] = [];
+  let stats: AdminStats | null = null;
   let error = "";
 
   try {
-    tasks = await getAdminTasks();
+    [tasks, users] = await Promise.all([getAdminTasks(), getAdminUsers()]);
+    stats = await getAdminStats(users, tasks);
   } catch (err) {
-    error = err instanceof Error ? err.message : "管理员任务加载失败";
+    error = err instanceof Error ? err.message : "管理员数据加载失败";
   }
+
+  const statCards = stats
+    ? [
+        ["总用户数", stats.totalUsers, UsersRound],
+        ["Free 用户数", stats.freeUsers, UserCheck],
+        ["Business 用户数", stats.businessUsers, UserCheck],
+        ["Waitlist 数量", stats.waitlistCount ?? "需服务密钥", ListChecks],
+        ["Avatar 总生成数", stats.avatarGenerations ?? "需服务密钥", Sparkles],
+        ["今日生成数", stats.todayGenerations ?? "需服务密钥", CalendarClock],
+        ["今日注册数", stats.todayRegistrations, UsersRound],
+      ] as const
+    : [];
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
       <RefreshOnInterval seconds={10} />
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold text-white">管理后台</h1>
-          <p className="mt-2 text-slate-400">查看任务、调整状态、上传最终 MP4 视频。</p>
+          <p className="text-sm font-medium text-cyan">Admin Dashboard</p>
+          <h1 className="mt-2 text-3xl font-semibold text-white">只读运营概览</h1>
+          <p className="mt-2 text-slate-400">展示用户、等待名单和 Avatar 生成统计，不修改业务逻辑。</p>
         </div>
         <div className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-300">
           共 {tasks.length} 个任务
@@ -39,7 +72,27 @@ export default async function AdminPage() {
 
       {error ? <p className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-rose-100">{error}</p> : null}
 
+      {statCards.length > 0 ? (
+        <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {statCards.map(([label, value, Icon]) => (
+            <article key={label} className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-slate-400">{label}</p>
+                <Icon className="text-cyan" size={20} />
+              </div>
+              <p className="mt-4 break-words text-3xl font-semibold text-white">{value}</p>
+            </article>
+          ))}
+        </section>
+      ) : null}
+
       <div className="overflow-hidden rounded-lg border border-white/10 bg-panel/80 shadow-glow">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white">任务只读快照</h2>
+            <p className="mt-1 text-sm text-slate-500">保留现有任务入口，便于运营排查和跳转详情。</p>
+          </div>
+        </div>
         <div className="hidden grid-cols-[92px_1.1fr_0.8fr_150px_1.5fr] gap-4 border-b border-white/10 px-4 py-3 text-xs uppercase tracking-wide text-slate-500 lg:grid">
           <span>图片</span>
           <span>任务</span>

@@ -6,19 +6,9 @@ import { BriefcaseBusiness, CheckCircle2, ChevronDown, Clapperboard, Mail, Megap
 
 import { joinWaitlistAction } from "@/app/actions/waitlist";
 import { useLanguage } from "@/components/LanguageProvider";
+import { customerCases, getFeaturedCases, type CaseLocale, type CustomerCase } from "@/lib/cases";
 
 const initialWaitlistState = { ok: false, message: "" };
-
-const demoVideos = {
-  before: {
-    poster: "/avatars/business_male_01.png",
-    src: "",
-  },
-  after: {
-    poster: "/avatars/ai_female_01.png",
-    src: "",
-  },
-};
 
 const copy = {
   zh: {
@@ -26,16 +16,10 @@ const copy = {
     demoTitle: "上传视频和音频，\n几分钟内生成真实数字人口播视频。",
     before: "原始视频",
     after: "生成结果",
-    placeholder: "Demo 视频占位，待替换为真实生成案例。",
+    placeholder: "案例结构已就绪，待替换真实生成视频。",
     previewSoon: "预览视频即将上线",
     examplesEyebrow: "案例展示",
-    examplesTitle: "适合多种内容场景",
-    examples: [
-      ["产品营销", "新品介绍和产品亮点讲解，快速生成营销短视频。", "/avatars/business_female_01.png"],
-      ["AI 数字人口播", "把真人素材转换为自然口型同步的 AI talking avatar。", "/avatars/ai_female_01.png"],
-      ["电商带货", "为商品详情、直播预热视频和带货素材生成数字人口播。", "/avatars/business_male_01.png"],
-      ["商务演示", "将业务汇报、课程介绍和企业培训内容视频化。", "/logo-transparent.png"],
-    ],
+    examplesTitle: "正式案例系统，后续可直接替换真实素材",
     trustedTitle: "面向未来创作者",
     trustedBody: "为创作者、营销团队和企业提供真实数字人口播能力。",
     waitlistEyebrow: "抢先体验",
@@ -62,16 +46,10 @@ const copy = {
     demoTitle: "Upload a video and audio,\ngenerate a realistic AI talking avatar in minutes.",
     before: "Before",
     after: "After",
-    placeholder: "Demo video placeholder, ready to replace with a real generated case.",
+    placeholder: "Case structure is ready. Replace this with a real generated video.",
     previewSoon: "Preview video coming soon",
     examplesEyebrow: "Examples",
-    examplesTitle: "Built for multiple content workflows",
-    examples: [
-      ["Product Marketing", "Explain product features and launch stories with short marketing videos.", "/avatars/business_female_01.png"],
-      ["AI Talking Avatar", "Turn real footage into a natural lip-synced AI talking avatar.", "/avatars/ai_female_01.png"],
-      ["E-commerce", "Create digital human videos for product pages, livestream previews, and ads.", "/avatars/business_male_01.png"],
-      ["Business Presentation", "Transform reports, course intros, and training content into video.", "/logo-transparent.png"],
-    ],
+    examplesTitle: "A formal case system ready for real assets",
     trustedTitle: "Trusted By Future Creators",
     trustedBody: "Built for creators, marketers, and businesses.",
     waitlistEyebrow: "Get Early Access",
@@ -113,6 +91,11 @@ export function HomeConversionSections() {
 }
 
 function HeroDemoShowcase({ current }: { current: (typeof copy)["zh"] }) {
+  const { locale } = useLanguage();
+  const featuredCases = getFeaturedCases();
+  const beforeCase = featuredCases[0] ?? customerCases[0];
+  const afterCase = featuredCases[1] ?? customerCases[1] ?? beforeCase;
+
   return (
     <section className="mx-auto max-w-[1280px] px-6 py-16 sm:px-10 lg:py-20">
       <div className="grid gap-9 lg:grid-cols-[0.38fr_0.62fr] lg:items-center">
@@ -121,30 +104,35 @@ function HeroDemoShowcase({ current }: { current: (typeof copy)["zh"] }) {
           <h2 className="mt-4 whitespace-pre-line text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.demoTitle}</h2>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
-          <DemoVideo label={current.before} src={demoVideos.before.src} poster={demoVideos.before.poster} placeholder={current.placeholder} />
-          <DemoVideo label={current.after} src={demoVideos.after.src} poster={demoVideos.after.poster} placeholder={current.placeholder} />
+          <DemoVideo label={current.before} item={beforeCase} locale={locale} placeholder={current.placeholder} />
+          <DemoVideo label={current.after} item={afterCase} locale={locale} placeholder={current.placeholder} />
         </div>
       </div>
     </section>
   );
 }
 
-function DemoVideo({ label, src, poster, placeholder }: { label: string; src: string; poster: string; placeholder: string }) {
+function DemoVideo({ label, item, locale, placeholder }: { label: string; item: CustomerCase; locale: CaseLocale; placeholder: string }) {
   return (
     <article className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_14px_38px_rgba(15,23,42,0.06)]">
       <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-        <p className="text-sm font-semibold text-slate-950">{label}</p>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-950">{label}</p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">{item.title[locale]}</p>
+        </div>
         <Sparkles size={16} className="text-indigo-500" />
       </div>
       <div className="relative aspect-video overflow-hidden bg-slate-950">
-        <video className="h-full w-full object-cover" src={src || undefined} poster={poster} controls muted autoPlay loop playsInline />
-        {!src ? <p className="absolute bottom-3 left-3 right-3 rounded-md bg-slate-950/72 px-3 py-2 text-xs leading-5 text-white backdrop-blur">{placeholder}</p> : null}
+        <video className="h-full w-full object-cover" src={item.videoUrl || undefined} poster={item.thumbnailUrl} controls muted autoPlay loop playsInline />
+        {!item.videoUrl ? <p className="absolute bottom-3 left-3 right-3 rounded-md bg-slate-950/72 px-3 py-2 text-xs leading-5 text-white backdrop-blur">{placeholder}</p> : null}
       </div>
     </article>
   );
 }
 
 function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
+  const { locale } = useLanguage();
+
   return (
     <section id="examples" className="border-y border-slate-200/70 bg-white/68 px-6 py-16 sm:px-10 lg:py-20">
       <div className="mx-auto max-w-[1280px]">
@@ -153,14 +141,16 @@ function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
           <h2 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.examplesTitle}</h2>
         </div>
         <div className="mt-9 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {current.examples.map(([title, desc, image], index) => {
+          {customerCases.map((item, index) => {
             const Icon = exampleIcons[index];
+            const title = item.title[locale];
+            const desc = item.description[locale];
             return (
               <article key={title} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_14px_38px_rgba(15,23,42,0.05)]">
                 <div className="relative aspect-video bg-slate-100">
-                  <Image src={image} alt={title} fill sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw" className="object-cover" />
+                  <Image src={item.thumbnailUrl} alt={title} fill sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw" className="object-cover" />
                   <div className="absolute left-3 top-3 grid size-9 place-items-center rounded-lg bg-white/90 text-slate-950 shadow-sm backdrop-blur">
-                    <Icon size={18} />
+                    {Icon ? <Icon size={18} /> : <PlayCircle size={18} />}
                   </div>
                 </div>
                 <div className="p-5">
@@ -168,11 +158,15 @@ function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
                   <p className="mt-2 text-sm leading-6 text-slate-500">{desc}</p>
                   <div className="mt-4 overflow-hidden rounded-md border border-slate-200 bg-slate-950">
                     <div className="relative aspect-video">
-                      <Image src={image} alt={`${title} preview`} fill sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw" className="object-cover opacity-70" />
+                      {item.videoUrl ? (
+                        <video className="h-full w-full object-cover" src={item.videoUrl} poster={item.thumbnailUrl} controls muted playsInline />
+                      ) : (
+                        <Image src={item.thumbnailUrl} alt={`${title} preview`} fill sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw" className="object-cover opacity-70" />
+                      )}
                       <div className="absolute inset-0 grid place-items-center bg-slate-950/30 text-white">
                         <div className="flex items-center gap-2 rounded-full bg-slate-950/70 px-3 py-2 text-xs font-semibold backdrop-blur">
                           <PlayCircle size={15} />
-                          {current.previewSoon}
+                          {item.videoUrl ? item.category : current.previewSoon}
                         </div>
                       </div>
                     </div>
@@ -207,7 +201,7 @@ function WaitlistForm({ current, locale }: { current: (typeof copy)["zh"]; local
   const [state, action] = useActionState(joinWaitlistAction, initialWaitlistState);
 
   return (
-    <section className="mx-auto max-w-[1280px] px-6 py-16 sm:px-10 lg:py-20">
+    <section id="contact" className="mx-auto max-w-[1280px] px-6 py-16 sm:px-10 lg:py-20">
       <div className="grid gap-8 rounded-lg border border-slate-200 bg-white p-6 shadow-[0_14px_38px_rgba(15,23,42,0.05)] sm:p-8 lg:grid-cols-[0.82fr_1.18fr] lg:items-start">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">{current.waitlistEyebrow}</p>

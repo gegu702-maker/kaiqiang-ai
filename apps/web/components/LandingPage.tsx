@@ -10,10 +10,10 @@ import { trackEvent } from "@/lib/analytics";
 
 const copy = {
   zh: {
-    titlePrefix: "正在构建",
-    titleAccent: "AI",
-    titleSuffix: "内容创作的未来",
-    subtitle: "Kaiqiang.ai 专注于数字人、AI 视频生成与创作者工具，让 AI 内容创作更简单、更高效。",
+    titlePrefix: "上传视频和音频",
+    titleAccent: "自动生成",
+    titleSuffix: "数字人口播",
+    subtitle: "Kaiqiang.ai 将真人视频与口播音频合成为自然口型同步的 AI 数字人视频，适合产品介绍、课程讲解和电商内容。",
     start: "立即开始",
     examples: "查看示例",
     badge: "AI 数字人口播视频创作平台",
@@ -34,10 +34,10 @@ const copy = {
     ],
   },
   en: {
-    titlePrefix: "Building the Future of",
-    titleAccent: "AI",
-    titleSuffix: "Content Creation",
-    subtitle: "Kaiqiang.ai is an independent AI project focused on digital humans, AI video generation, and creator tools.",
+    titlePrefix: "Upload video and audio",
+    titleAccent: "Generate",
+    titleSuffix: "AI talking avatars",
+    subtitle: "Kaiqiang.ai turns person footage and voice audio into natural lip-synced digital human videos for product demos, courses, and commerce.",
     start: "Get Started",
     examples: "View Examples",
     badge: "AI Digital Human Video Creation Platform",
@@ -86,7 +86,7 @@ export function LandingPage({ startHref }: { startHref: string }) {
           </div>
 
           <div className="space-y-6">
-            <h1 className="max-w-[600px] text-4xl font-semibold leading-[1.12] text-slate-900 sm:text-6xl lg:text-[60px]">
+            <h1 className="max-w-[640px] text-4xl font-semibold leading-[1.12] text-slate-900 sm:text-6xl lg:text-[54px]">
               <span className="block">{current.titlePrefix}</span>
               <span className="block">
                 <span className="bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-500 bg-clip-text font-semibold text-transparent">
