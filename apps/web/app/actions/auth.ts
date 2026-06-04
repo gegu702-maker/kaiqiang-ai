@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
@@ -51,7 +52,7 @@ export async function signUpAction(
 
 export async function signInWithGoogleAction(formData: FormData) {
   const next = sanitizeNext(String(formData.get("next") ?? ""));
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const siteUrl = await getSiteUrl();
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
@@ -84,4 +85,20 @@ function sanitizeNext(next: string) {
 function withAnalyticsFlag(path: string, value: string) {
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}analytics=${encodeURIComponent(value)}`;
+}
+
+async function getSiteUrl() {
+  const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/$/, "");
+  }
+
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  const protocol = requestHeaders.get("x-forwarded-proto") ?? "https";
+  if (host) {
+    return `${protocol}://${host}`;
+  }
+
+  return "http://localhost:3000";
 }
