@@ -4,7 +4,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowUpRight, Captions, Database, Gauge, Mic2, MousePointerClick, PlayCircle, ShieldCheck, Sparkles, UserRoundCheck, Video, Zap } from "lucide-react";
 
-import { ContactActions } from "@/components/ContactActions";
 import { useLanguage } from "@/components/LanguageProvider";
 import { trackEvent } from "@/lib/analytics";
 
@@ -19,8 +18,6 @@ const copy = {
     badge: "AI 数字人口播视频创作平台",
     whyTitle: "为什么选择 Kaiqiang AI",
     whySubtitle: "围绕真实数字人口播生成流程打造，减少学习成本，让创作者更快得到可用成片。",
-    contactTitle: "联系我们",
-    contactSubtitle: "需要商务咨询、定制模板或生成支持，可以直接联系。",
     cards: [
       ["AI 数字人口播", "真实数字人口播视频", "一键生成"],
       ["AI 配音", "多种语音风格", "自然流畅"],
@@ -44,8 +41,6 @@ const copy = {
     badge: "AI Digital Human Video Creation Platform",
     whyTitle: "Why Kaiqiang AI",
     whySubtitle: "Built around a real avatar generation workflow so creators can move from upload to usable video with less friction.",
-    contactTitle: "Contact",
-    contactSubtitle: "For business questions, custom templates, or generation support, reach out directly.",
     cards: [
       ["Digital Human Videos", "Real digital human talking videos", "One-click generation"],
       ["AI Voiceover", "Multiple voice styles", "Natural and fluent"],
@@ -184,17 +179,6 @@ export function LandingPage({ startHref }: { startHref: string }) {
               );
             })}
           </div>
-        </div>
-      </section>
-
-      <section id="contact" className="mx-auto max-w-[1280px] px-6 py-16 sm:px-10 lg:py-20">
-        <div className="grid gap-8 lg:grid-cols-[0.86fr_1.14fr] lg:items-start">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">{current.contactTitle}</p>
-            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.contactTitle}</h2>
-            <p className="mt-4 max-w-xl text-base leading-7 text-slate-500">{current.contactSubtitle}</p>
-          </div>
-          <ContactActions />
         </div>
       </section>
     </main>
