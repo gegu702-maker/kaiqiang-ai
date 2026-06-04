@@ -127,7 +127,7 @@ async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio
                 "last_gpu_used_at": datetime.now(timezone.utc).isoformat(),
             },
         )
-        log_generation_usage(supabase, user_id=user_id, task_id=task_id)
+        log_generation_usage(supabase, user_id=user_id, avatar_task_id=task_id)
         logger.info("Avatar MuseTalk task completed task_id=%s result_url=%s", task_id, result_url)
     except HTTPException as error:
         logger.exception("Avatar MuseTalk task failed task_id=%s detail=%s", task_id, error.detail)
