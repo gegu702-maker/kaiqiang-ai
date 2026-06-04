@@ -4,12 +4,31 @@ import { Check, Copy, Mail, Phone } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
+import { useLanguage } from "@/components/LanguageProvider";
+
 const phone = "+86 17798561222";
 const email = "17798561222@163.com";
 
 type Tone = "light" | "dark";
 
+const copy = {
+  zh: {
+    phone: "电话",
+    email: "邮箱",
+    copyPhone: "复制电话",
+    copyEmail: "复制邮箱",
+  },
+  en: {
+    phone: "Phone",
+    email: "Email",
+    copyPhone: "Copy Phone",
+    copyEmail: "Copy Email",
+  },
+};
+
 export function ContactActions({ tone = "light", compact = false, embedded = false }: { tone?: Tone; compact?: boolean; embedded?: boolean }) {
+  const { locale } = useLanguage();
+  const current = copy[locale];
   const [copied, setCopied] = useState<"phone" | "email" | null>(null);
   const isDark = tone === "dark";
 
@@ -38,7 +57,7 @@ export function ContactActions({ tone = "light", compact = false, embedded = fal
     <div className={wrapperClass}>
       <ContactItem
         icon={<Phone size={17} />}
-        label="Phone"
+        label={current.phone}
         value={phone}
         href={`tel:${phone.replace(/\s/g, "")}`}
         copied={copied === "phone"}
@@ -49,10 +68,11 @@ export function ContactActions({ tone = "light", compact = false, embedded = fal
         buttonClass={buttonClass}
         compact={compact}
         embedded={embedded}
+        copyLabel={current.copyPhone}
       />
       <ContactItem
         icon={<Mail size={17} />}
-        label="Email"
+        label={current.email}
         value={email}
         href={`mailto:${email}`}
         copied={copied === "email"}
@@ -63,6 +83,7 @@ export function ContactActions({ tone = "light", compact = false, embedded = fal
         buttonClass={buttonClass}
         compact={compact}
         embedded={embedded}
+        copyLabel={current.copyEmail}
       />
     </div>
   );
@@ -81,6 +102,7 @@ function ContactItem({
   buttonClass,
   compact,
   embedded,
+  copyLabel,
 }: {
   icon: ReactNode;
   label: string;
@@ -94,6 +116,7 @@ function ContactItem({
   buttonClass: string;
   compact: boolean;
   embedded: boolean;
+  copyLabel: string;
 }) {
   return (
     <div className={embedded ? `${compact ? "py-3 sm:px-4 sm:first:pl-0 sm:last:pr-0" : "py-4 sm:px-5 sm:first:pl-0 sm:last:pr-0"}` : `rounded-lg border ${cardClass} ${compact ? "p-4" : "p-5"} backdrop-blur-xl`}>
@@ -111,8 +134,8 @@ function ContactItem({
           type="button"
           onClick={onCopy}
           className={`inline-flex size-10 shrink-0 items-center justify-center rounded-full border transition ${buttonClass}`}
-          aria-label={`Copy ${label}`}
-          title={`Copy ${label}`}
+          aria-label={copyLabel}
+          title={copyLabel}
         >
           {copied ? <Check size={16} /> : <Copy size={16} />}
         </button>
