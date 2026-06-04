@@ -4,7 +4,7 @@ import logging
 import traceback
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from supabase import Client
 
 from app.core.auth import get_authenticated_user, get_bearer_token
@@ -45,6 +45,7 @@ async def avatar_health() -> dict:
 
 @router.post("/generate")
 async def generate_avatar_video(
+    background_tasks: BackgroundTasks,
     video_file: UploadFile = File(...),
     audio_file: UploadFile = File(...),
     token: str = Depends(get_bearer_token),
@@ -75,34 +76,12 @@ async def generate_avatar_video(
             allowed_format_label="wav, mp3, m4a, aac",
         )
         task = _create_avatar_task(supabase, user["id"], video_url, audio_url)
-
-        def update_stage(stage: str) -> None:
-            _update_avatar_task(supabase, task["id"], {"progress_stage": stage})
-
-        await ensure_gpu_ready(update_stage)
-        _update_avatar_task(supabase, task["id"], {"status": "running", "progress_stage": "video_generating"})
-        result_url = await generate_avatar_video_with_musetalk(
-            supabase,
-            video_url=video_url,
-            audio_url=audio_url,
-            task_id=task["id"],
-        )
-        task = _update_avatar_task(
-            supabase,
-            task["id"],
-            {
-                "status": "completed",
-                "progress_stage": "completed",
-                "result_url": result_url,
-                "last_gpu_used_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-        log_generation_usage(supabase, user_id=user["id"], task_id=task["id"])
+        background_tasks.add_task(_process_avatar_task, task["id"], user["id"], video_url, audio_url)
         return {
             "success": True,
+            "status": "queued",
             "task": task,
-            "video_url": result_url,
-            "result_video_url": result_url,
+            "task_id": task["id"],
         }
     except HTTPException as error:
         if task:
@@ -120,6 +99,42 @@ async def generate_avatar_video(
                 "traceback": traceback.format_exc()[-6000:],
             },
         ) from error
+
+
+async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio_url: str) -> None:
+    supabase = get_supabase()
+
+    def update_stage(stage: str) -> None:
+        _update_avatar_task(supabase, task_id, {"progress_stage": stage})
+
+    logger.info("Avatar MuseTalk task started task_id=%s video_url=%s audio_url=%s", task_id, video_url, audio_url)
+    try:
+        await ensure_gpu_ready(update_stage)
+        _update_avatar_task(supabase, task_id, {"status": "running", "progress_stage": "video_generating"})
+        result_url = await generate_avatar_video_with_musetalk(
+            supabase,
+            video_url=video_url,
+            audio_url=audio_url,
+            task_id=task_id,
+        )
+        _update_avatar_task(
+            supabase,
+            task_id,
+            {
+                "status": "completed",
+                "progress_stage": "completed",
+                "result_url": result_url,
+                "last_gpu_used_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        log_generation_usage(supabase, user_id=user_id, task_id=task_id)
+        logger.info("Avatar MuseTalk task completed task_id=%s result_url=%s", task_id, result_url)
+    except HTTPException as error:
+        logger.exception("Avatar MuseTalk task failed task_id=%s detail=%s", task_id, error.detail)
+        _safe_fail_task(supabase, task_id, str(error.detail))
+    except Exception as error:
+        logger.exception("Avatar MuseTalk task failed task_id=%s", task_id)
+        _safe_fail_task(supabase, task_id, str(error))
 
 
 @router.get("/tasks")
