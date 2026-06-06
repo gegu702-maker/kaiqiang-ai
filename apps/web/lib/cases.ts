@@ -7,11 +7,31 @@ export type CustomerCase = {
   description: Record<CaseLocale, string>;
   thumbnailUrl: string;
   videoUrl: string;
+  taskId: string;
+  duration: string;
   language: CaseLocale | "multi";
   featured?: boolean;
 };
 
 export const customerCases: CustomerCase[] = [
+  {
+    id: "ai-avatar-production-demo",
+    category: "avatar",
+    title: {
+      zh: "真实 AI 数字人口播演示",
+      en: "Real AI Talking Avatar Demo",
+    },
+    description: {
+      zh: "生产环境完整链路生成：输入文案、自动配音、MuseTalk 数字人口播和 MP4 下载。",
+      en: "Generated through the production flow: script input, synthesized voice, MuseTalk avatar video, and MP4 delivery.",
+    },
+    thumbnailUrl: "/avatars/ai_female_01.png",
+    videoUrl: "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/133d03f9-05db-455d-9559-2c5ad9e14982/ce39f0da8f8c4794ab015758ed7da048.mp4?",
+    taskId: "133d03f9-05db-455d-9559-2c5ad9e14982",
+    duration: "13.032s",
+    language: "zh",
+    featured: true,
+  },
   {
     id: "product-launch-demo",
     category: "product",
@@ -24,23 +44,9 @@ export const customerCases: CustomerCase[] = [
       en: "Upload presenter footage and a voiceover to create a talking avatar clip for landing pages, ads, and social channels.",
     },
     thumbnailUrl: "/avatars/business_female_01.png",
-    videoUrl: "",
-    language: "multi",
-    featured: true,
-  },
-  {
-    id: "ai-avatar-spokesperson",
-    category: "avatar",
-    title: {
-      zh: "AI 数字人口播",
-      en: "AI Talking Avatar",
-    },
-    description: {
-      zh: "用一段清晰人物视频驱动自然口型同步，快速验证数字人主持、课程和品牌介绍效果。",
-      en: "Use clear person footage to validate digital hosts, course intros, and brand explainers with natural lip sync.",
-    },
-    thumbnailUrl: "/avatars/ai_female_01.png",
-    videoUrl: "",
+    videoUrl: "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/19e8db33-799a-4986-98e2-61ca00fd4329/b353170a4dcc4f0797242a84cf7d1974.mp4?",
+    taskId: "19e8db33-799a-4986-98e2-61ca00fd4329",
+    duration: "17.520s",
     language: "multi",
     featured: true,
   },
@@ -56,7 +62,9 @@ export const customerCases: CustomerCase[] = [
       en: "Create human-feeling product narration for PDPs, livestream previews, and performance creatives.",
     },
     thumbnailUrl: "/avatars/business_male_01.png",
-    videoUrl: "",
+    videoUrl: "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/56b1468c-f7a4-4cba-bab4-aaaa706a6ee8/e4385c1df5af4906a441828a1fe11126.mp4?",
+    taskId: "56b1468c-f7a4-4cba-bab4-aaaa706a6ee8",
+    duration: "15.552s",
     language: "multi",
   },
   {
@@ -71,7 +79,9 @@ export const customerCases: CustomerCase[] = [
       en: "Turn reports, process explainers, and training scripts into consistent video assets.",
     },
     thumbnailUrl: "/logo-transparent.png",
-    videoUrl: "",
+    videoUrl: "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/e81a5831-6ff2-49b4-9e73-23742138b7ef/76cc7d699bac46cfb32f5da615919240.mp4?",
+    taskId: "e81a5831-6ff2-49b4-9e73-23742138b7ef",
+    duration: "15.216s",
     language: "multi",
   },
 ];

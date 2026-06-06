@@ -68,6 +68,7 @@ User
 
 - `775f2db` - Wire MuseTalk into avatar studio
 - `a528311` - Start MuseTalk after AutoDL power on
+- `2b6b35c9b32959b1e7682fb2ed06d0488b83ace0` - Wire script TTS into avatar MuseTalk flow
 
 ## Verified Features
 
@@ -86,11 +87,51 @@ User
 - AutoDL manual startup runs `/etc/autodl-init`, which invokes `/root/autodl-tmp/start_musetalk.sh`.
 - Current AutoDL production validation strategy keeps the normal container running after the administrator manually starts it, so real user tests do not fail because the developer token cannot automatically wake the container.
 - `/root/autodl-tmp/idle_shutdown.sh` was previously verified to stop the AutoDL container after 10 minutes of inactivity, but it is currently disabled.
+- Production `/api/avatar/generate` accepts `script_text`, generates TTS through Volcengine, calls MuseTalk, uploads a real MP4, and returns `result_video_url`.
+
+## Stable Production Video Generation Record
+
+Validated on 2026-06-06.
+
+- Stable GitHub master commit: `2b6b35c9b32959b1e7682fb2ed06d0488b83ace0`
+- Production API: `https://api.kaiqiang.ai`
+- Production frontend: `https://kaiqiang.ai`
+- Stable task id: `133d03f9-05db-455d-9559-2c5ad9e14982`
+- Result video URL: `https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/133d03f9-05db-455d-9559-2c5ad9e14982/ce39f0da8f8c4794ab015758ed7da048.mp4?`
+- Verification:
+  - HTTP `200`
+  - `video/mp4`
+  - H.264 video stream
+  - AAC audio stream
+  - Duration `13.032s`
+  - Downloadable and playable MP4
+
+Production flow verified:
+
+```text
+script_text
+  -> Volcengine TTS
+  -> MuseTalk /generate
+  -> real MP4
+  -> Supabase Storage
+  -> result_video_url
+  -> frontend download/playback
+```
+
+## Production Customer Example Videos
+
+These videos were generated through the production `/api/avatar/generate` flow. They are suitable for homepage Hero Demo and Customer Examples. Do not replace them with placeholder assets.
+
+| Type | task_id | Duration | Playable | result_video_url |
+| --- | --- | ---: | --- | --- |
+| Real AI talking avatar demo | `133d03f9-05db-455d-9559-2c5ad9e14982` | `13.032s` | Yes | `https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/133d03f9-05db-455d-9559-2c5ad9e14982/ce39f0da8f8c4794ab015758ed7da048.mp4?` |
+| Product introduction | `19e8db33-799a-4986-98e2-61ca00fd4329` | `17.520s` | Yes | `https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/19e8db33-799a-4986-98e2-61ca00fd4329/b353170a4dcc4f0797242a84cf7d1974.mp4?` |
+| E-commerce selling video | `56b1468c-f7a4-4cba-bab4-aaaa706a6ee8` | `15.552s` | Yes | `https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/56b1468c-f7a4-4cba-bab4-aaaa706a6ee8/e4385c1df5af4906a441828a1fe11126.mp4?` |
+| Business training / knowledge course | `e81a5831-6ff2-49b4-9e73-23742138b7ef` | `15.216s` | Yes | `https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/e81a5831-6ff2-49b4-9e73-23742138b7ef/76cc7d699bac46cfb32f5da615919240.mp4?` |
 
 ## Known Issues
 
-- `/api/avatar/generate` is currently synchronous and waits for MuseTalk generation to finish before returning.
-- A long-running browser request may appear idle while the backend is generating video.
+- `/api/avatar/generate` creates an async avatar task and the frontend polls task status; the backend task can still take multiple minutes while MuseTalk is generating video.
 - AutoDL custom service URLs can return an AutoDL HTML 404 if the 6006 service is not running.
 - MuseTalk is currently deployed on a normal AutoDL container instance: `3ec3448547-93ee30c2`.
 - Normal AutoDL container instances are not supported by the current developer token for automatic `power_on`.
