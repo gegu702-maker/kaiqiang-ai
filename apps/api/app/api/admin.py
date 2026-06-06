@@ -1,4 +1,5 @@
 import secrets
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from postgrest.exceptions import APIError
@@ -115,6 +116,30 @@ def get_admin_users(supabase: Client = Depends(get_supabase)) -> list[dict]:
 @router.get("/orders", dependencies=[Depends(verify_admin)])
 def get_orders(supabase: Client = Depends(get_supabase)) -> list[dict]:
     return list_admin_orders(supabase)
+
+
+def _count_table(supabase: Client, table: str, *, created_since: str | None = None) -> int:
+    query = supabase.table(table).select("id", count="exact").limit(1)
+    if created_since:
+        query = query.gte("created_at", created_since)
+    result = query.execute()
+    return result.count or 0
+
+
+@router.get("/stats", dependencies=[Depends(verify_admin)])
+def get_admin_stats(supabase: Client = Depends(get_supabase)) -> dict:
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    users = list_admin_users(supabase)
+    return {
+        "total_users": len(users),
+        "free_users": sum(1 for user in users if user.get("plan") == "free"),
+        "business_users": sum(1 for user in users if user.get("plan") == "business"),
+        "waitlist_count": _count_table(supabase, "waitlist"),
+        "avatar_generations": _count_table(supabase, "avatar_tasks"),
+        "today_generations": _count_table(supabase, "avatar_tasks", created_since=today_start),
+        "today_registrations": sum(1 for user in users if str(user.get("created_at") or "") >= today_start),
+        "supabase_service_role_key_configured": bool(settings.supabase_service_role_key.strip()),
+    }
 
 
 @router.patch("/users/{user_id}", dependencies=[Depends(verify_admin)])

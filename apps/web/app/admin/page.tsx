@@ -7,13 +7,12 @@ import { AdminUpdateForm } from "@/components/AdminUpdateForm";
 import { RefreshOnInterval } from "@/components/RefreshOnInterval";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { getAdminTasks, getAdminUsers } from "@/lib/api";
-import { getAdminStats, isAdminEmail } from "@/lib/admin";
+import { getAdminStats, getAdminTasks } from "@/lib/api";
+import { isAdminEmail } from "@/lib/admin";
 import { getAvatarProfile } from "@/lib/avatars";
 import { createClient } from "@/lib/supabase/server";
 import { getLanguageLabel, getTTSVoiceLabel } from "@/lib/tts";
-import type { AdminStats } from "@/lib/admin";
-import type { AdminUser } from "@/lib/types";
+import type { AdminStats } from "@/lib/types";
 import type { VideoTask } from "@/lib/types";
 
 export default async function AdminPage() {
@@ -30,26 +29,24 @@ export default async function AdminPage() {
   }
 
   let tasks: VideoTask[] = [];
-  let users: AdminUser[] = [];
   let stats: AdminStats | null = null;
   let error = "";
 
   try {
-    [tasks, users] = await Promise.all([getAdminTasks(), getAdminUsers()]);
-    stats = await getAdminStats(users, tasks);
+    [tasks, stats] = await Promise.all([getAdminTasks(), getAdminStats()]);
   } catch (err) {
     error = err instanceof Error ? err.message : "管理员数据加载失败";
   }
 
   const statCards = stats
     ? [
-        ["总用户数", stats.totalUsers, UsersRound],
-        ["Free 用户数", stats.freeUsers, UserCheck],
-        ["Business 用户数", stats.businessUsers, UserCheck],
-        ["Waitlist 数量", stats.waitlistCount ?? "需服务密钥", ListChecks],
-        ["Avatar 总生成数", stats.avatarGenerations ?? "需服务密钥", Sparkles],
-        ["今日生成数", stats.todayGenerations ?? "需服务密钥", CalendarClock],
-        ["今日注册数", stats.todayRegistrations, UsersRound],
+        ["总用户数", stats.total_users, UsersRound],
+        ["Free 用户数", stats.free_users, UserCheck],
+        ["Business 用户数", stats.business_users, UserCheck],
+        ["Waitlist 数量", stats.waitlist_count, ListChecks],
+        ["Avatar 总生成数", stats.avatar_generations, Sparkles],
+        ["今日生成数", stats.today_generations, CalendarClock],
+        ["今日注册数", stats.today_registrations, UsersRound],
       ] as const
     : [];
 
@@ -71,6 +68,12 @@ export default async function AdminPage() {
       </div>
 
       {error ? <p className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-rose-100">{error}</p> : null}
+
+      {stats && !stats.supabase_service_role_key_configured ? (
+        <p className="mb-5 rounded-lg border border-amber-300/25 bg-amber-300/10 p-4 text-sm text-amber-100">
+          后端 SUPABASE_SERVICE_ROLE_KEY 未配置，统计数据可能无法读取完整数据库。
+        </p>
+      ) : null}
 
       {statCards.length > 0 ? (
         <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

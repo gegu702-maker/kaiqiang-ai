@@ -1,4 +1,4 @@
-import type { AdminUser, CheckoutResponse, Order, UsageLog, UsageSummary, VideoTask, VoiceClone } from "@/lib/types";
+import type { AdminStats, AdminUser, CheckoutResponse, Order, UsageLog, UsageSummary, VideoTask, VoiceClone } from "@/lib/types";
 
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -207,6 +207,14 @@ export async function getAdminOrders(): Promise<Order[]> {
     cache: "no-store",
   });
   return parseResponse<Order[]>(response);
+}
+
+export async function getAdminStats(): Promise<AdminStats> {
+  const response = await fetch(`${API_URL}/api/admin/stats`, {
+    headers: adminHeaders(),
+    cache: "no-store",
+  });
+  return parseResponse<AdminStats>(response);
 }
 
 export async function updateAdminUser(userId: string, formData: FormData): Promise<AdminUser> {

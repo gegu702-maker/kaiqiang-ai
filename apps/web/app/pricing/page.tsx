@@ -9,26 +9,26 @@ const plans = [
     name: "Free",
     code: "free",
     price: "¥0",
-    quota: "少量生成额度",
-    desc: "适合注册后快速验证数字人口播效果。",
-    features: ["免费体验额度", "上传人物视频和音频", "生成 MP4 成片"],
+    quota: "每月 3 次生成",
+    desc: "适合首次体验和验证数字人口播效果。",
+    features: ["每月 3 次生成额度", "上传人物视频和音频", "生成 MP4 成片", "基础历史记录"],
   },
   {
-    name: "Plus",
+    name: "Creator",
     code: "plus",
     price: "¥199/月",
-    quota: "更多生成额度",
-    desc: "适合开始稳定测试账号内容和转化素材。",
-    features: ["更多月度生成额度", "优先排队预留", "公开视频下载链接"],
+    quota: "适合稳定创作",
+    desc: "适合个人创作者、小团队和电商账号持续制作口播素材。",
+    features: ["更多月度生成额度", "优先排队预留", "公开视频下载链接", "适合短视频和商品讲解"],
     badge: "推荐",
   },
   {
-    name: "Pro",
-    code: "pro",
-    price: "¥799/月",
-    quota: "高级能力预留",
-    desc: "适合团队验证声音克隆和高级模板工作流。",
-    features: ["包含声音克隆预留", "高级模板预留", "团队/API 能力预留"],
+    name: "Business",
+    code: "business",
+    price: "联系商务",
+    quota: "团队与高频使用",
+    desc: "适合企业内容团队、培训、电商矩阵和定制数字人项目。",
+    features: ["自定义生成额度", "声音克隆与模板支持", "团队/API 能力预留", "商务授权与交付支持"],
   },
 ] as const;
 
@@ -39,7 +39,7 @@ export default function PricingPage() {
         <p className="text-sm font-medium text-cyan">Pricing</p>
         <h1 className="mt-3 text-4xl font-semibold text-white">AI 数字人口播 SaaS 套餐</h1>
         <p className="mt-3 text-slate-400">
-          当前阶段先开放用户注册、免费额度、生成消耗和升级订单。支付 provider 已抽象，后续可接 Stripe Checkout、Lemon Squeezy 或 Creem。
+          从免费验证到稳定创作，再到企业级数字人口播生产。当前阶段先完成套餐展示和订单预留，不接入在线支付。
         </p>
       </div>
 
@@ -73,7 +73,7 @@ export default function PricingPage() {
       </div>
 
       <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.04] p-5 text-sm leading-6 text-slate-400">
-        支付系统即将开放：当前没有支付密钥时，升级按钮会创建 pending 订单并提示稍后开放；未来配置 provider 密钥后，可跳转托管 checkout。
+        商业化准备：Creator 可作为首个自助套餐，Business 保留人工沟通和定制额度。在线支付接入前，升级按钮仅创建待处理订单或引导联系。
       </div>
 
       <PricingContactSection />
