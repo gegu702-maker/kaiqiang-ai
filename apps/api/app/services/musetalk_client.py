@@ -44,6 +44,18 @@ async def generate_avatar_video_with_musetalk(
             video_response = await client.get(output_url)
             if not video_response.is_success:
                 raise HTTPException(status_code=502, detail=f"MuseTalk output download failed: {video_response.status_code}")
+            if not _looks_like_mp4(video_response.content):
+                content_type = video_response.headers.get("content-type", "")
+                preview = video_response.text[:300] if "text" in content_type or "html" in content_type else ""
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "message": "MuseTalk output is not a valid MP4 file",
+                        "content_type": content_type,
+                        "bytes": len(video_response.content),
+                        "preview": preview,
+                    },
+                )
     except HTTPException:
         raise
     except httpx.TimeoutException as error:
@@ -113,3 +125,9 @@ def _normalize_musetalk_result_url(output_url: str, base_url: str) -> str:
     if parsed_output.path.startswith("/results/") and parsed_output.hostname in {parsed_base.hostname, "127.0.0.1", "localhost"}:
         return f"{base_url.rstrip('/')}{parsed_output.path}"
     return output_url
+
+
+def _looks_like_mp4(content: bytes) -> bool:
+    if len(content) < 1024:
+        return False
+    return b"ftyp" in content[:32]
