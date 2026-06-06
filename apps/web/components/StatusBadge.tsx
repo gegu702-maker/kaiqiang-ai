@@ -18,10 +18,26 @@ const styles: Record<TaskStatus, string> = {
   failed: "border-rose-300/30 bg-rose-400/10 text-rose-200",
 };
 
+export const statusLabels: Record<TaskStatus, string> = {
+  waiting: "等待中",
+  generating_script: "生成文案",
+  cloning_voice: "克隆声音",
+  generating_voice: "生成配音",
+  generating_avatar: "生成数字人",
+  rendering: "视频渲染",
+  success: "成功",
+  pending: "等待中",
+  scripting: "生成文案",
+  producing: "生成数字人",
+  processing: "视频渲染",
+  completed: "已完成",
+  failed: "失败",
+};
+
 export function StatusBadge({ status }: { status: TaskStatus }) {
   return (
-  <span className={clsx("rounded-full border px-2.5 py-1 text-xs font-medium", styles[status] ?? styles.pending)}>
-      {status}
+    <span className={clsx("rounded-full border px-2.5 py-1 text-xs font-medium", styles[status] ?? styles.pending)}>
+      {statusLabels[status] ?? status}
     </span>
   );
 }

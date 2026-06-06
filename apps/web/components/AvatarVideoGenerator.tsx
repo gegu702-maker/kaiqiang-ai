@@ -32,6 +32,7 @@ const copy = {
     audio: "口播音频",
     videoHint: "支持 mp4 / mov / webm，建议正脸、光线清晰。",
     audioHint: "支持 wav / mp3 / m4a，建议 16kHz 单声道 wav。",
+    steps: ["上传人物视频", "上传口播音频", "生成并下载 MP4"],
     generate: "生成口播视频",
     generating: "生成中",
     login: "请先登录后再生成。",
@@ -74,6 +75,7 @@ const copy = {
     audio: "Voice Audio",
     videoHint: "mp4 / mov / webm. Use a clear frontal face when possible.",
     audioHint: "wav / mp3 / m4a. 16kHz mono wav is recommended.",
+    steps: ["Upload person video", "Upload voice audio", "Generate and download MP4"],
     generate: "Generate Avatar Video",
     generating: "Generating",
     login: "Sign in before generating.",
@@ -351,6 +353,14 @@ export function AvatarVideoGenerator({ initialTemplateId }: { initialTemplateId?
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.title}</h1>
           <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">{current.subtitle}</p>
+        </div>
+        <div className="grid gap-2 rounded-md border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-3">
+          {current.steps.map((step, index) => (
+            <div key={step} className="flex items-center gap-2 rounded-md bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-blue-600 text-xs text-white">{index + 1}</span>
+              {step}
+            </div>
+          ))}
         </div>
         <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">

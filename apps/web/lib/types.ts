@@ -153,6 +153,17 @@ export type AdminUser = {
   created_at: string;
 };
 
+export type AdminStats = {
+  totalUsers: number;
+  freeUsers: number;
+  businessUsers: number;
+  waitlistCount: number;
+  avatarGenerations: number;
+  todayGenerations: number;
+  todayRegistrations: number;
+  supabaseServiceRoleKeyConfigured: boolean;
+};
+
 export type CheckoutResponse = {
   order: Order;
   checkout_url: string | null;

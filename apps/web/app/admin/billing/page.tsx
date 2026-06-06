@@ -1,12 +1,27 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowLeft, Ban, ReceiptText, UsersRound } from "lucide-react";
 
 import { AdminOrderPaidForm, AdminUserForm } from "@/components/AdminBillingForms";
 import { Button } from "@/components/ui/button";
 import { getAdminOrders, getAdminUsers } from "@/lib/api";
+import { isAdminEmail } from "@/lib/admin";
+import { createClient } from "@/lib/supabase/server";
 import type { AdminUser, Order } from "@/lib/types";
 
 export default async function AdminBillingPage() {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.user) {
+    redirect("/login?next=/admin/billing");
+  }
+  if (!isAdminEmail(session.user.email)) {
+    redirect("/account");
+  }
+
   let users: AdminUser[] = [];
   let orders: Order[] = [];
   let error = "";

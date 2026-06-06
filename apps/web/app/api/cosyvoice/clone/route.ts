@@ -4,7 +4,7 @@ const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ??
 const COSYVOICE_PROXY_TIMEOUT_MS = 30 * 60 * 1000;
 
 function adminApiKey(): string {
-  return (process.env.ADMIN_API_KEY ?? "").replace(/^ADMIN_API_KEY=/, "").trim();
+  return (process.env.SERVER_ADMIN_API_KEY ?? process.env.ADMIN_API_KEY ?? "").replace(/^ADMIN_API_KEY=/, "").trim();
 }
 
 export const dynamic = "force-dynamic";

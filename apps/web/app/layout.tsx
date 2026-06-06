@@ -7,13 +7,64 @@ import { AuthNav } from "@/components/AuthNav";
 import { LanguageProvider } from "@/components/LanguageProvider";
 import { PostHogClientProvider } from "@/components/PostHogClientProvider";
 import { SiteHeader } from "@/components/SiteHeader";
+import { SiteFooter } from "@/components/SiteFooter";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
 
+const softwareApplicationJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Kaiqiang AI",
+  applicationCategory: "MultimediaApplication",
+  operatingSystem: "Web",
+  url: "https://kaiqiang.ai",
+  description:
+    "Kaiqiang AI is an AI Avatar Generator for AI Talking Avatar videos, Digital Human content, and AI Video Generator workflows.",
+  keywords: "AI Avatar Generator, AI Talking Avatar, Digital Human, AI Video Generator, Kaiqiang AI",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "CNY",
+  },
+};
+
 export const metadata: Metadata = {
-  title: "KAIQIANG.AI - AI Content Creation",
-  description: "Kaiqiang.ai 专注于数字人、AI 视频生成与创作者工具。",
+  metadataBase: new URL("https://kaiqiang.ai"),
+  title: {
+    default: "Kaiqiang AI - AI Avatar Generator",
+    template: "%s | Kaiqiang AI",
+  },
+  description:
+    "Kaiqiang AI is an AI Avatar Generator for AI Talking Avatar videos, AI Video Generator workflows, Digital Human content, and creator tools.",
+  keywords: ["AI Avatar Generator", "AI Talking Avatar", "AI Video Generator", "Digital Human", "Kaiqiang AI"],
+  openGraph: {
+    title: "Kaiqiang AI - AI Avatar Generator",
+    description:
+      "Create AI talking avatar videos with Kaiqiang AI, a Digital Human and AI Video Generator platform for creators.",
+    url: "https://kaiqiang.ai",
+    siteName: "Kaiqiang AI",
+    images: [
+      {
+        url: "/logo.png",
+        width: 512,
+        height: 512,
+        alt: "Kaiqiang AI logo",
+      },
+    ],
+    locale: "zh_CN",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "Kaiqiang AI - AI Avatar Generator",
+    description:
+      "AI Talking Avatar, AI Video Generator, and Digital Human tools for creators.",
+    images: ["/logo.png"],
+  },
+  alternates: {
+    canonical: "https://kaiqiang.ai",
+  },
   icons: {
     icon: "/favicon.ico",
   },
@@ -23,6 +74,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="zh-CN">
       <body className={`${inter.className} antialiased`}>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareApplicationJsonLd) }}
+        />
         <PostHogClientProvider>
           <LanguageProvider>
             <Suspense fallback={null}>
@@ -31,6 +86,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             <div className="min-h-screen">
               <SiteHeader authSlot={<AuthNav />} />
               {children}
+              <SiteFooter />
             </div>
           </LanguageProvider>
         </PostHogClientProvider>

@@ -2,45 +2,65 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowUpRight, Captions, Mic2, PlayCircle, Sparkles, Video, Zap } from "lucide-react";
+import { ArrowUpRight, Captions, Database, Gauge, Mic2, MousePointerClick, PlayCircle, ShieldCheck, Sparkles, UserRoundCheck, Video, Zap } from "lucide-react";
 
+import { HomeConversionSections } from "@/components/HomeConversionSections";
 import { useLanguage } from "@/components/LanguageProvider";
 import { trackEvent } from "@/lib/analytics";
 
 const copy = {
   zh: {
-    titlePrefix: "正在构建",
-    titleAccent: "AI",
-    titleSuffix: "内容创作的未来",
-    subtitle: "Kaiqiang.ai 专注于数字人、AI 视频生成与创作者工具，让 AI 内容创作更简单、更高效。",
+    titlePrefix: "上传视频和音频",
+    titleAccent: "自动生成",
+    titleSuffix: "数字人口播",
+    subtitle: "Kaiqiang.ai 将真人视频与口播音频合成为自然口型同步的 AI 数字人视频，适合产品介绍、课程讲解和电商内容。",
     start: "立即开始",
     examples: "查看示例",
     badge: "AI 数字人口播视频创作平台",
+    flow: ["上传视频", "上传音频", "自动生成数字人口播"],
+    whyTitle: "为什么选择 Kaiqiang AI",
+    whySubtitle: "围绕真实数字人口播生成流程打造，减少学习成本，让创作者更快得到可用成片。",
     cards: [
       ["AI 数字人口播", "真实数字人口播视频", "一键生成"],
       ["AI 配音", "多种语音风格", "自然流畅"],
       ["自动字幕", "智能识别生成字幕", "支持多语言"],
       ["高效创作", "简单高效的创作流程", "节省时间成本"],
     ],
+    trust: [
+      ["快速生成", "异步生成任务，清晰展示排队、生成和上传进度。"],
+      ["真实数字人", "基于真实人物视频生成自然口型同步的 AI 数字人口播。"],
+      ["安全存储", "生成素材和结果文件通过云端存储管理，访问更稳定。"],
+      ["简单易用", "上传视频和音频即可开始，适合快速验证内容创意。"],
+    ],
   },
   en: {
-    titlePrefix: "Building the Future of",
-    titleAccent: "AI",
-    titleSuffix: "Content Creation",
-    subtitle: "Kaiqiang.ai is an independent AI project focused on digital humans, AI video generation, and creator tools.",
+    titlePrefix: "Upload video and audio",
+    titleAccent: "Generate",
+    titleSuffix: "AI talking avatars",
+    subtitle: "Kaiqiang.ai turns person footage and voice audio into natural lip-synced digital human videos for product demos, courses, and commerce.",
     start: "Get Started",
     examples: "View Examples",
     badge: "AI Digital Human Video Creation Platform",
+    flow: ["Upload video", "Upload audio", "Generate talking avatar"],
+    whyTitle: "Why Kaiqiang AI",
+    whySubtitle: "Built around a real avatar generation workflow so creators can move from upload to usable video with less friction.",
     cards: [
       ["Digital Human Videos", "Real digital human talking videos", "One-click generation"],
       ["AI Voiceover", "Multiple voice styles", "Natural and fluent"],
       ["Auto Captions", "Smart subtitle generation", "Multilingual support"],
       ["Efficient Creation", "A simpler creative workflow", "Save time and cost"],
     ],
+    trust: [
+      ["Fast Generation", "Async generation tasks with clear queue, render, and upload progress."],
+      ["Real AI Avatar", "Create natural AI talking avatar videos from real person footage."],
+      ["Secure Storage", "Uploaded assets and generated videos are managed with cloud storage."],
+      ["Easy to Use", "Upload a video and audio file to quickly validate creative ideas."],
+    ],
   },
 };
 
 const icons = [Video, Mic2, Captions, Zap];
+const trustIcons = [Gauge, UserRoundCheck, ShieldCheck, MousePointerClick];
 
 export function LandingPage({ startHref }: { startHref: string }) {
   const { locale } = useLanguage();
@@ -66,9 +86,9 @@ export function LandingPage({ startHref }: { startHref: string }) {
           </div>
 
           <div className="space-y-6">
-            <h1 className="max-w-[600px] text-5xl font-semibold leading-[1.12] tracking-[-0.045em] text-slate-900 sm:text-6xl lg:text-[60px]">
-              <span className="block whitespace-nowrap">{current.titlePrefix}</span>
-              <span className="block whitespace-nowrap">
+            <h1 className="max-w-[640px] text-4xl font-semibold leading-[1.12] text-slate-900 sm:text-6xl lg:text-[54px]">
+              <span className="block">{current.titlePrefix}</span>
+              <span className="block">
                 <span className="bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-500 bg-clip-text font-semibold text-transparent">
                   {current.titleAccent}
                 </span>{" "}
@@ -78,6 +98,14 @@ export function LandingPage({ startHref }: { startHref: string }) {
             <p className="max-w-[500px] whitespace-pre-line text-lg font-normal leading-8 text-slate-500">
               {current.subtitle}
             </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-700">
+              {current.flow.map((item, index) => (
+                <div key={item} className="flex items-center gap-2">
+                  <span className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 shadow-sm">{item}</span>
+                  {index < current.flow.length - 1 ? <span className="text-slate-300">→</span> : null}
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-5 pt-1">
@@ -118,13 +146,15 @@ export function LandingPage({ startHref }: { startHref: string }) {
         </div>
       </section>
 
-      <section id="examples" className="mx-auto max-w-[1280px] px-6 pb-16 sm:px-10 lg:-mt-8 lg:pb-24">
+      <HomeConversionSections />
+
+      <section className="mx-auto max-w-[1280px] px-6 py-16 sm:px-10 lg:py-24">
         <div className="grid gap-4 sm:grid-cols-2 min-[1180px]:grid-cols-4">
           {current.cards.map(([title, desc], index) => {
             const Icon = icons[index];
             return (
-              <article key={title} className="group rounded-3xl border border-slate-200/65 bg-white/66 p-6 shadow-[0_12px_36px_rgba(15,23,42,0.04)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white/86">
-                <div className="grid size-12 place-items-center rounded-2xl bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.11)] transition group-hover:scale-[1.03]">
+              <article key={title} className="group rounded-lg border border-slate-200/65 bg-white/66 p-6 shadow-[0_12px_36px_rgba(15,23,42,0.04)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white/86">
+                <div className="grid size-12 place-items-center rounded-lg bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.11)] transition group-hover:scale-[1.03]">
                   <Icon size={22} />
                 </div>
                 <div className="mt-6">
@@ -135,6 +165,33 @@ export function LandingPage({ startHref }: { startHref: string }) {
               </article>
             );
           })}
+        </div>
+      </section>
+
+      <section className="border-y border-slate-200/70 bg-white/62 px-6 py-16 sm:px-10 lg:py-20">
+        <div className="mx-auto max-w-[1280px]">
+          <div className="max-w-2xl">
+            <p className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+              <Database size={16} className="text-indigo-500" />
+              {current.whyTitle}
+            </p>
+            <p className="mt-4 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.whyTitle}</p>
+            <p className="mt-4 text-base leading-7 text-slate-500">{current.whySubtitle}</p>
+          </div>
+          <div className="mt-9 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {current.trust.map(([title, desc], index) => {
+              const Icon = trustIcons[index];
+              return (
+                <article key={title} className="rounded-lg border border-slate-200 bg-white p-5 shadow-[0_14px_36px_rgba(15,23,42,0.045)]">
+                  <div className="grid size-11 place-items-center rounded-lg bg-slate-100 text-slate-900">
+                    <Icon size={21} />
+                  </div>
+                  <h2 className="mt-5 text-lg font-semibold text-slate-950">{title}</h2>
+                  <p className="mt-3 text-sm leading-6 text-slate-500">{desc}</p>
+                </article>
+              );
+            })}
+          </div>
         </div>
       </section>
     </main>

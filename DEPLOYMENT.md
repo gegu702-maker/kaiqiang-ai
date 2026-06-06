@@ -33,11 +33,11 @@ SERVER_API_URL=https://your-fastapi-api.example.com
 | `SERVER_API_URL` | Production/Preview/Development | `https://api.kaiqiang.ai` | Yes |
 | `NEXT_PUBLIC_SUPABASE_URL` | Production/Preview/Development | `https://xxx.supabase.co` | Yes |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Production/Preview/Development | `eyJ...` | Yes |
-| `ADMIN_API_KEY` | Production/Preview/Development | strong random secret | Yes |
+| `SERVER_ADMIN_API_KEY` | Production/Preview/Development | same as FastAPI `ADMIN_API_KEY` | Yes |
 
 不要在 Vercel 前端项目里配置 `SUPABASE_SERVICE_ROLE_KEY`。
 
-`ADMIN_API_KEY` 必须只填写密钥值本身，不能填写成 `ADMIN_API_KEY=xxxx`。前端会自动清理这种误填，但生产环境仍建议保持 Vercel 与 Railway/FastAPI 完全一致。可访问后端 `/debug/config` 查看 `admin_api_key_fingerprint`，用它和本地/部署平台中同一密钥的 SHA-256 前 12 位对齐排查，不要公开原始密钥。
+`SERVER_ADMIN_API_KEY` 必须只填写密钥值本身，不能填写成 `ADMIN_API_KEY=xxxx`。Web 服务端会优先读取 `SERVER_ADMIN_API_KEY`，并兼容旧的 `ADMIN_API_KEY`。不要配置 `NEXT_PUBLIC_ADMIN_API_KEY`。可访问后端 `/debug/config` 查看 `admin_api_key_fingerprint`，用它和本地/部署平台中同一密钥的 SHA-256 前 12 位对齐排查，不要公开原始密钥。
 
 ## 4. FastAPI 生产环境变量
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CreditCard, Download, Gauge, KeyRound, ReceiptText, ShieldCheck } from "lucide-react";
+import { ArrowRight, CreditCard, Download, Gauge, History, KeyRound, LayoutTemplate, ReceiptText, ShieldCheck, Sparkles, UserCircle } from "lucide-react";
 
 import { getUserOrders, getUserTasks, getUserUsageLogs, getUsageSummary } from "@/lib/api";
 import { getVoiceClones } from "@/lib/api";
@@ -64,18 +64,88 @@ export default async function AccountPage() {
 
   const plan = usage.plan;
   const remaining = usage.remaining === null ? "自定义" : `${usage.remaining} 次`;
+  const monthlyQuota = usage.monthly_quota ?? null;
+  const usedPercent = monthlyQuota && usage.remaining !== null ? Math.min(100, Math.round((usage.used / monthlyQuota) * 100)) : null;
+  const avatarUrl = typeof session.user.user_metadata?.avatar_url === "string" ? session.user.user_metadata.avatar_url : "";
+  const fullName = typeof session.user.user_metadata?.full_name === "string" ? session.user.user_metadata.full_name : "";
+  const completedTasks = tasks.filter((task) => task.result_video_url);
+  const quickLinks = [
+    { href: "/studio/avatar", label: "Avatar Studio", desc: "上传视频和音频生成数字人口播", icon: Sparkles, primary: true },
+    { href: "/pricing", label: "Pricing", desc: "查看套餐和升级选项", icon: CreditCard },
+    { href: "/tasks", label: "历史任务", desc: "查看生成记录和下载结果", icon: History },
+    { href: "/studio/templates", label: "Templates", desc: "从官方模板开始生成", icon: LayoutTemplate },
+  ];
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
-      <div className="mb-8">
-        <p className="text-sm text-cyan">Account</p>
-        <h1 className="mt-3 text-4xl font-semibold text-white">账户与额度</h1>
-        <p className="mt-3 text-slate-400">{session.user.email}</p>
-      </div>
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:py-10">
+      <section className="overflow-hidden rounded-lg border border-white/10 bg-panel/90 shadow-glow">
+        <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-[1.2fr_0.8fr] lg:p-7">
+          <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-center">
+            <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/[0.06]">
+              {avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={avatarUrl} alt={fullName || session.user.email || "Google avatar"} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <UserCircle className="text-slate-400" size={42} />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-cyan">Account Center</p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">账户与生成额度</h1>
+              <p className="mt-3 truncate text-sm text-slate-400">{fullName ? `${fullName} · ` : ""}{session.user.email}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className="rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1 text-xs font-semibold uppercase text-cyan">{plan}</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-slate-300">Google 登录</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm text-slate-400">本月剩余额度</p>
+                <p className="mt-2 text-4xl font-semibold text-lime">{remaining}</p>
+              </div>
+              <Gauge className="text-lime" size={24} />
+            </div>
+            <div className="mt-4">
+              <div className="flex justify-between text-xs text-slate-500">
+                <span>已用 {usage.used} 次</span>
+                <span>{monthlyQuota ? `共 ${monthlyQuota} 次` : "自定义额度"}</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-lime" style={{ width: `${usedPercent ?? 100}%` }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {error ? <p className="mb-5 rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-rose-100">{error}</p> : null}
 
-      <div className="grid gap-5 md:grid-cols-3">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {quickLinks.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={item.primary ? "group rounded-lg border border-cyan/35 bg-cyan/10 p-4 shadow-glow transition hover:-translate-y-0.5 hover:bg-cyan/15" : "group rounded-lg border border-white/10 bg-white/[0.035] p-4 transition hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.06]"}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className={item.primary ? "grid size-10 place-items-center rounded-lg bg-cyan text-ink" : "grid size-10 place-items-center rounded-lg bg-white/[0.06] text-cyan"}>
+                  <Icon size={19} />
+                </span>
+                <ArrowRight className="text-slate-500 transition group-hover:translate-x-0.5 group-hover:text-cyan" size={17} />
+              </div>
+              <h2 className="mt-4 text-base font-semibold text-white">{item.label}</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-400">{item.desc}</p>
+            </Link>
+          );
+        })}
+      </div>
+
+      <div className="mt-5 grid gap-5 md:grid-cols-3">
         <section className="rounded-lg border border-white/10 bg-panel/80 p-5">
           <ShieldCheck className="text-cyan" size={22} />
           <h2 className="mt-4 text-lg font-semibold text-white">当前套餐</h2>
@@ -89,17 +159,8 @@ export default async function AccountPage() {
         <section className="rounded-lg border border-white/10 bg-panel/80 p-5">
           <CreditCard className="text-cyan" size={22} />
           <h2 className="mt-4 text-lg font-semibold text-white">支付状态</h2>
-          <p className="mt-2 text-sm text-slate-400">真实支付未启用，订单和 provider 层已预留。</p>
+          <p className="mt-2 text-sm text-slate-400">{orders.length > 0 ? `${orders.length} 个订单记录` : "暂无订单记录"}</p>
         </section>
-      </div>
-
-      <div className="mt-6 flex flex-wrap gap-3">
-        <Link className="rounded-md bg-cyan px-5 py-3 text-sm font-semibold text-ink hover:bg-cyan/90" href="/pricing">
-          查看套餐
-        </Link>
-        <Link className="rounded-md border border-white/10 px-5 py-3 text-sm text-slate-200 hover:bg-white/10" href="/tasks">
-          我的任务
-        </Link>
       </div>
 
       <div className="mt-8 grid gap-5 lg:grid-cols-2">
@@ -148,8 +209,7 @@ export default async function AccountPage() {
           <h2 className="text-lg font-semibold text-white">可下载视频</h2>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          {tasks
-            .filter((task) => task.result_video_url)
+          {completedTasks
             .slice(0, 6)
             .map((task) => (
               <TrackedDownloadLink
@@ -165,7 +225,7 @@ export default async function AccountPage() {
                 {task.product_name}
               </TrackedDownloadLink>
             ))}
-          {tasks.filter((task) => task.result_video_url).length === 0 ? (
+          {completedTasks.length === 0 ? (
             <p className="text-sm text-slate-500">暂无已完成视频。</p>
           ) : null}
         </div>
