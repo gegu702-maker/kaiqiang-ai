@@ -131,14 +131,14 @@ def get_admin_stats(supabase: Client = Depends(get_supabase)) -> dict:
     today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     users = list_admin_users(supabase)
     return {
-        "total_users": len(users),
-        "free_users": sum(1 for user in users if user.get("plan") == "free"),
-        "business_users": sum(1 for user in users if user.get("plan") == "business"),
-        "waitlist_count": _count_table(supabase, "waitlist"),
-        "avatar_generations": _count_table(supabase, "avatar_tasks"),
-        "today_generations": _count_table(supabase, "avatar_tasks", created_since=today_start),
-        "today_registrations": sum(1 for user in users if str(user.get("created_at") or "") >= today_start),
-        "supabase_service_role_key_configured": bool(settings.supabase_service_role_key.strip()),
+        "totalUsers": len(users),
+        "freeUsers": sum(1 for user in users if user.get("plan") == "free"),
+        "businessUsers": sum(1 for user in users if user.get("plan") == "business"),
+        "waitlistCount": _count_table(supabase, "waitlist"),
+        "avatarGenerations": _count_table(supabase, "avatar_tasks"),
+        "todayGenerations": _count_table(supabase, "avatar_tasks", created_since=today_start),
+        "todayRegistrations": sum(1 for user in users if str(user.get("created_at") or "") >= today_start),
+        "supabaseServiceRoleKeyConfigured": bool(settings.supabase_service_role_key.strip()),
     }
 
 

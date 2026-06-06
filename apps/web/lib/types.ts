@@ -154,14 +154,14 @@ export type AdminUser = {
 };
 
 export type AdminStats = {
-  total_users: number;
-  free_users: number;
-  business_users: number;
-  waitlist_count: number;
-  avatar_generations: number;
-  today_generations: number;
-  today_registrations: number;
-  supabase_service_role_key_configured: boolean;
+  totalUsers: number;
+  freeUsers: number;
+  businessUsers: number;
+  waitlistCount: number;
+  avatarGenerations: number;
+  todayGenerations: number;
+  todayRegistrations: number;
+  supabaseServiceRoleKeyConfigured: boolean;
 };
 
 export type CheckoutResponse = {
