@@ -140,6 +140,20 @@ export type UsageLog = {
   created_at: string;
 };
 
+export type Plan = {
+  code: PlanCode;
+  name: string;
+  description: string;
+  monthly_quota: number | null;
+  monthly_price_cny: number;
+  yearly_price_cny: number;
+  voice_clone_enabled: boolean;
+  is_active: boolean;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type AdminUser = {
   id: string;
   email: string;
@@ -151,6 +165,44 @@ export type AdminUser = {
   voice_clone_count: number;
   status: "active" | "banned";
   created_at: string;
+};
+
+export type Subscription = {
+  id: string;
+  user_id: string;
+  plan: PlanCode;
+  status: "active" | "trialing" | "past_due" | "canceled";
+  provider: PaymentProvider;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end?: boolean;
+  provider_subscription_id?: string;
+  created_at: string;
+};
+
+export type Payment = {
+  id: string;
+  order_id: string | null;
+  user_id: string;
+  provider: PaymentProvider;
+  status: OrderStatus;
+  provider_payment_id: string;
+  amount: number;
+  currency: "CNY" | "USD";
+  created_at: string;
+};
+
+export type AdminQuota = {
+  id: string;
+  user_id: string;
+  email?: string;
+  plan: PlanCode;
+  monthly_limit: number;
+  used_count: number;
+  remaining_count: number;
+  reset_month: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type AdminStats = {

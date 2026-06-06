@@ -1,4 +1,17 @@
-import type { AdminStats, AdminUser, CheckoutResponse, Order, UsageLog, UsageSummary, VideoTask, VoiceClone } from "@/lib/types";
+import type {
+  AdminQuota,
+  AdminStats,
+  AdminUser,
+  CheckoutResponse,
+  Order,
+  Payment,
+  Plan,
+  Subscription,
+  UsageLog,
+  UsageSummary,
+  VideoTask,
+  VoiceClone,
+} from "@/lib/types";
 
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -207,6 +220,58 @@ export async function getAdminOrders(): Promise<Order[]> {
     cache: "no-store",
   });
   return parseResponse<Order[]>(response);
+}
+
+export async function getAdminSubscriptions(): Promise<Subscription[]> {
+  const response = await fetch(`${API_URL}/api/admin/subscriptions`, {
+    headers: adminHeaders(),
+    cache: "no-store",
+  });
+  return parseResponse<Subscription[]>(response);
+}
+
+export async function getAdminPayments(): Promise<Payment[]> {
+  const response = await fetch(`${API_URL}/api/admin/payments`, {
+    headers: adminHeaders(),
+    cache: "no-store",
+  });
+  return parseResponse<Payment[]>(response);
+}
+
+export async function getAdminPlans(): Promise<Plan[]> {
+  const response = await fetch(`${API_URL}/api/admin/plans`, {
+    headers: adminHeaders(),
+    cache: "no-store",
+  });
+  return parseResponse<Plan[]>(response);
+}
+
+export async function updateAdminPlan(code: string, formData: FormData): Promise<Plan> {
+  const response = await fetch(`${API_URL}/api/admin/plans/${code}`, {
+    method: "PATCH",
+    headers: adminHeaders(),
+    body: formData,
+    cache: "no-store",
+  });
+  return parseResponse<Plan>(response);
+}
+
+export async function getAdminQuotas(): Promise<AdminQuota[]> {
+  const response = await fetch(`${API_URL}/api/admin/quotas`, {
+    headers: adminHeaders(),
+    cache: "no-store",
+  });
+  return parseResponse<AdminQuota[]>(response);
+}
+
+export async function updateAdminQuota(quotaId: string, formData: FormData): Promise<AdminQuota> {
+  const response = await fetch(`${API_URL}/api/admin/quotas/${quotaId}`, {
+    method: "PATCH",
+    headers: adminHeaders(),
+    body: formData,
+    cache: "no-store",
+  });
+  return parseResponse<AdminQuota>(response);
 }
 
 export async function getAdminStats(): Promise<AdminStats> {

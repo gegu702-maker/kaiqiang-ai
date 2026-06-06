@@ -40,6 +40,52 @@ PLAN_MONTHLY_QUOTAS = {
 VOICE_CLONE_PLANS = {"pro", "business"}
 FREE_PLAN = "free"
 FREE_MONTHLY_QUOTA = 3
+DEFAULT_PLAN_ROWS: list[dict[str, Any]] = [
+    {
+        "code": "free",
+        "name": "Free",
+        "description": "免费体验额度",
+        "monthly_quota": 3,
+        "monthly_price_cny": 0,
+        "yearly_price_cny": 0,
+        "voice_clone_enabled": False,
+        "is_active": True,
+        "sort_order": 10,
+    },
+    {
+        "code": "plus",
+        "name": "Plus",
+        "description": "轻量创作者套餐",
+        "monthly_quota": 100,
+        "monthly_price_cny": 19900,
+        "yearly_price_cny": 199000,
+        "voice_clone_enabled": False,
+        "is_active": True,
+        "sort_order": 20,
+    },
+    {
+        "code": "pro",
+        "name": "Pro",
+        "description": "专业创作者套餐",
+        "monthly_quota": 1000,
+        "monthly_price_cny": 79900,
+        "yearly_price_cny": 799000,
+        "voice_clone_enabled": True,
+        "is_active": True,
+        "sort_order": 30,
+    },
+    {
+        "code": "business",
+        "name": "Business",
+        "description": "企业定制套餐",
+        "monthly_quota": None,
+        "monthly_price_cny": 0,
+        "yearly_price_cny": 0,
+        "voice_clone_enabled": True,
+        "is_active": True,
+        "sort_order": 40,
+    },
+]
 
 
 def current_period_start() -> str:
@@ -258,6 +304,71 @@ def _quota_for_user(supabase: Client, *, user_id: str) -> tuple[str, int | None]
     return FREE_PLAN, FREE_MONTHLY_QUOTA
 
 
+def _default_plan_row(code: str) -> dict[str, Any]:
+    return next((plan for plan in DEFAULT_PLAN_ROWS if plan["code"] == code), DEFAULT_PLAN_ROWS[0]).copy()
+
+
+def _get_plan_row(supabase: Client, code: str) -> dict[str, Any]:
+    try:
+        result = supabase.table("plans").select("*").eq("code", code).limit(1).execute()
+        if result.data:
+            return {**_default_plan_row(code), **result.data[0]}
+    except APIError:
+        pass
+    return _default_plan_row(code)
+
+
+def list_admin_plans(supabase: Client) -> list[dict[str, Any]]:
+    try:
+        result = supabase.table("plans").select("*").order("sort_order").execute()
+        if result.data:
+            return result.data
+    except APIError:
+        pass
+    return [plan.copy() for plan in DEFAULT_PLAN_ROWS]
+
+
+def update_plan_admin(
+    supabase: Client,
+    *,
+    code: str,
+    name: str | None = None,
+    description: str | None = None,
+    monthly_quota: int | None = None,
+    monthly_quota_unlimited: bool = False,
+    monthly_price_cny: int | None = None,
+    yearly_price_cny: int | None = None,
+    voice_clone_enabled: bool | None = None,
+    is_active: bool | None = None,
+    sort_order: int | None = None,
+) -> dict[str, Any]:
+    if code not in PLAN_QUOTAS:
+        raise HTTPException(status_code=400, detail="Invalid plan code")
+    payload: dict[str, Any] = {"code": code, "updated_at": datetime.now(UTC).isoformat()}
+    if name is not None:
+        payload["name"] = name
+    if description is not None:
+        payload["description"] = description
+    if monthly_quota_unlimited:
+        payload["monthly_quota"] = None
+    elif monthly_quota is not None:
+        payload["monthly_quota"] = monthly_quota
+    if monthly_price_cny is not None:
+        payload["monthly_price_cny"] = monthly_price_cny
+    if yearly_price_cny is not None:
+        payload["yearly_price_cny"] = yearly_price_cny
+    if voice_clone_enabled is not None:
+        payload["voice_clone_enabled"] = voice_clone_enabled
+    if is_active is not None:
+        payload["is_active"] = is_active
+    if sort_order is not None:
+        payload["sort_order"] = sort_order
+    existing = _get_plan_row(supabase, code)
+    upsert_payload = {**existing, **payload}
+    result = supabase.table("plans").upsert(upsert_payload, on_conflict="code").execute()
+    return result.data[0]
+
+
 def get_usage_summary(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
     profile = ensure_profile(supabase, user_id=user_id, email=email)
     if profile.get("status") == "banned":
@@ -267,7 +378,7 @@ def get_usage_summary(supabase: Client, *, user_id: str, email: str) -> dict[str
     if quota is None:
         quota = profile.get("monthly_quota")
     if quota is None and plan in PLAN_QUOTAS:
-        quota = PLAN_QUOTAS[plan]
+        quota = _get_plan_row(supabase, plan).get("monthly_quota")
 
     period = current_period_start()
     quota_record = _get_user_quota(supabase, user_id=user_id)
@@ -287,7 +398,7 @@ def get_usage_summary(supabase: Client, *, user_id: str, email: str) -> dict[str
         "used": used,
         "remaining": remaining,
         "period_start": period,
-        "voice_clone_enabled": bool(profile.get("voice_clone_enabled")) or plan in VOICE_CLONE_PLANS,
+        "voice_clone_enabled": bool(profile.get("voice_clone_enabled")) or bool(_get_plan_row(supabase, plan).get("voice_clone_enabled")),
         "default_voice_id": profile.get("default_voice_id"),
     }
 
@@ -445,6 +556,55 @@ def list_admin_orders(supabase: Client) -> list[dict[str, Any]]:
     return result.data
 
 
+def list_admin_subscriptions(supabase: Client) -> list[dict[str, Any]]:
+    result = supabase.table("subscriptions").select("*").order("created_at", desc=True).limit(200).execute()
+    return result.data
+
+
+def list_admin_payments(supabase: Client) -> list[dict[str, Any]]:
+    result = supabase.table("payments").select("*").order("created_at", desc=True).limit(200).execute()
+    return result.data
+
+
+def list_admin_quotas(supabase: Client) -> list[dict[str, Any]]:
+    result = supabase.table("user_quotas").select("*").order("updated_at", desc=True).limit(500).execute()
+    quotas = result.data
+    if not quotas:
+        return quotas
+    user_ids = sorted({quota["user_id"] for quota in quotas if quota.get("user_id")})
+    email_by_user: dict[str, str] = {}
+    if user_ids:
+        try:
+            profiles = supabase.table("profiles").select("id,email").in_("id", user_ids).execute()
+            email_by_user = {profile["id"]: profile.get("email", "") for profile in profiles.data or []}
+        except APIError:
+            email_by_user = {}
+    for quota in quotas:
+        quota["email"] = email_by_user.get(quota.get("user_id"), "")
+    return quotas
+
+
+def update_quota_admin(
+    supabase: Client,
+    *,
+    quota_id: str,
+    monthly_limit: int | None = None,
+    used_count: int | None = None,
+    remaining_count: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"updated_at": datetime.now(UTC).isoformat()}
+    if monthly_limit is not None:
+        payload["monthly_limit"] = monthly_limit
+    if used_count is not None:
+        payload["used_count"] = used_count
+    if remaining_count is not None:
+        payload["remaining_count"] = remaining_count
+    result = supabase.table("user_quotas").update(payload).eq("id", quota_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Quota not found")
+    return result.data[0]
+
+
 def update_profile_admin(
     supabase: Client,
     *,
@@ -458,8 +618,9 @@ def update_profile_admin(
     payload: dict[str, Any] = {"updated_at": datetime.now(UTC).isoformat()}
     if plan:
         payload["plan"] = plan
-        payload["monthly_quota"] = PLAN_MONTHLY_QUOTAS.get(plan)
-        payload["voice_clone_enabled"] = plan in VOICE_CLONE_PLANS
+        plan_row = _get_plan_row(supabase, plan)
+        payload["monthly_quota"] = plan_row.get("monthly_quota")
+        payload["voice_clone_enabled"] = bool(plan_row.get("voice_clone_enabled"))
     if monthly_quota is not None:
         payload["monthly_quota"] = monthly_quota
     if custom_quota is not None:
@@ -479,7 +640,8 @@ def mark_order_paid_and_upgrade(supabase: Client, *, order_id: str, provider_pay
     order = order_result.data[0]
     now = datetime.now(UTC)
     plan = order["plan"]
-    quota = PLAN_MONTHLY_QUOTAS.get(plan)
+    plan_row = _get_plan_row(supabase, plan)
+    quota = plan_row.get("monthly_quota")
 
     supabase.table("orders").update(
         {"status": "paid", "updated_at": now.isoformat()}
@@ -499,7 +661,7 @@ def mark_order_paid_and_upgrade(supabase: Client, *, order_id: str, provider_pay
         {
             "plan": plan,
             "monthly_quota": quota,
-            "voice_clone_enabled": plan in VOICE_CLONE_PLANS,
+            "voice_clone_enabled": bool(plan_row.get("voice_clone_enabled")),
             "custom_quota": None,
             "status": "active",
             "updated_at": now.isoformat(),
@@ -528,6 +690,9 @@ def create_order(
     billing_cycle: str,
 ) -> dict[str, Any]:
     amount = PLAN_PRICES.get(plan, {}).get(billing_cycle, {}).get(currency, 0)
+    if currency == "CNY":
+        plan_row = _get_plan_row(supabase, plan)
+        amount = int(plan_row.get("yearly_price_cny" if billing_cycle == "yearly" else "monthly_price_cny") or amount)
     result = supabase.table("orders").insert(
         {
             "user_id": user_id,

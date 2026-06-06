@@ -8,7 +8,18 @@ from supabase import Client
 from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.models.video_task import TaskStatus, VideoTask
-from app.services.billing import list_admin_orders, list_admin_users, mark_order_paid_and_upgrade, update_profile_admin
+from app.services.billing import (
+    list_admin_orders,
+    list_admin_payments,
+    list_admin_plans,
+    list_admin_quotas,
+    list_admin_subscriptions,
+    list_admin_users,
+    mark_order_paid_and_upgrade,
+    update_plan_admin,
+    update_profile_admin,
+    update_quota_admin,
+)
 from app.services.storage import upload_public_bytes, upload_public_file
 from app.services.subtitles import build_script_webvtt
 from app.services.tasks import get_task, list_all_tasks, update_task
@@ -116,6 +127,72 @@ def get_admin_users(supabase: Client = Depends(get_supabase)) -> list[dict]:
 @router.get("/orders", dependencies=[Depends(verify_admin)])
 def get_orders(supabase: Client = Depends(get_supabase)) -> list[dict]:
     return list_admin_orders(supabase)
+
+
+@router.get("/subscriptions", dependencies=[Depends(verify_admin)])
+def get_subscriptions(supabase: Client = Depends(get_supabase)) -> list[dict]:
+    return list_admin_subscriptions(supabase)
+
+
+@router.get("/payments", dependencies=[Depends(verify_admin)])
+def get_payments(supabase: Client = Depends(get_supabase)) -> list[dict]:
+    return list_admin_payments(supabase)
+
+
+@router.get("/plans", dependencies=[Depends(verify_admin)])
+def get_plans(supabase: Client = Depends(get_supabase)) -> list[dict]:
+    return list_admin_plans(supabase)
+
+
+@router.patch("/plans/{code}", dependencies=[Depends(verify_admin)])
+def patch_plan(
+    code: str,
+    name: str | None = Form(default=None),
+    description: str | None = Form(default=None),
+    monthly_quota: int | None = Form(default=None),
+    monthly_quota_unlimited: bool = Form(default=False),
+    monthly_price_cny: int | None = Form(default=None),
+    yearly_price_cny: int | None = Form(default=None),
+    voice_clone_enabled: bool | None = Form(default=None),
+    is_active: bool | None = Form(default=None),
+    sort_order: int | None = Form(default=None),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    return update_plan_admin(
+        supabase,
+        code=code,
+        name=name,
+        description=description,
+        monthly_quota=monthly_quota,
+        monthly_quota_unlimited=monthly_quota_unlimited,
+        monthly_price_cny=monthly_price_cny,
+        yearly_price_cny=yearly_price_cny,
+        voice_clone_enabled=voice_clone_enabled,
+        is_active=is_active,
+        sort_order=sort_order,
+    )
+
+
+@router.get("/quotas", dependencies=[Depends(verify_admin)])
+def get_quotas(supabase: Client = Depends(get_supabase)) -> list[dict]:
+    return list_admin_quotas(supabase)
+
+
+@router.patch("/quotas/{quota_id}", dependencies=[Depends(verify_admin)])
+def patch_quota(
+    quota_id: str,
+    monthly_limit: int | None = Form(default=None),
+    used_count: int | None = Form(default=None),
+    remaining_count: int | None = Form(default=None),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    return update_quota_admin(
+        supabase,
+        quota_id=quota_id,
+        monthly_limit=monthly_limit,
+        used_count=used_count,
+        remaining_count=remaining_count,
+    )
 
 
 def _count_table(supabase: Client, table: str, *, created_since: str | None = None) -> int:

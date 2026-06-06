@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowLeft, Ban, ReceiptText, UsersRound } from "lucide-react";
+import { ArrowLeft, Ban, CreditCard, Gauge, ReceiptText, UsersRound } from "lucide-react";
 
 import { AdminOrderPaidForm, AdminUserForm } from "@/components/AdminBillingForms";
 import { Button } from "@/components/ui/button";
-import { getAdminOrders, getAdminUsers } from "@/lib/api";
+import { getAdminOrders, getAdminPayments, getAdminSubscriptions, getAdminUsers } from "@/lib/api";
 import { isAdminEmail } from "@/lib/admin";
 import { createClient } from "@/lib/supabase/server";
-import type { AdminUser, Order } from "@/lib/types";
+import type { AdminUser, Order, Payment, Subscription } from "@/lib/types";
 
 export default async function AdminBillingPage() {
   const supabase = await createClient();
@@ -24,10 +24,17 @@ export default async function AdminBillingPage() {
 
   let users: AdminUser[] = [];
   let orders: Order[] = [];
+  let subscriptions: Subscription[] = [];
+  let payments: Payment[] = [];
   let error = "";
 
   try {
-    [users, orders] = await Promise.all([getAdminUsers(), getAdminOrders()]);
+    [users, orders, subscriptions, payments] = await Promise.all([
+      getAdminUsers(),
+      getAdminOrders(),
+      getAdminSubscriptions(),
+      getAdminPayments(),
+    ]);
   } catch (err) {
     error = err instanceof Error ? err.message : "商业化数据加载失败";
   }
@@ -40,6 +47,26 @@ export default async function AdminBillingPage() {
           返回管理后台
         </Link>
       </Button>
+      <div className="mb-5 flex flex-wrap gap-2">
+        <Button asChild variant="outline" size="sm">
+          <Link href="/admin/users">
+            <UsersRound size={16} />
+            用户管理
+          </Link>
+        </Button>
+        <Button asChild variant="outline" size="sm">
+          <Link href="/admin/plans">
+            <CreditCard size={16} />
+            套餐管理
+          </Link>
+        </Button>
+        <Button asChild variant="outline" size="sm">
+          <Link href="/admin/quotas">
+            <Gauge size={16} />
+            额度管理
+          </Link>
+        </Button>
+      </div>
 
       <div className="mb-6">
         <p className="text-sm text-cyan">Commercial Console</p>
@@ -48,6 +75,20 @@ export default async function AdminBillingPage() {
       </div>
 
       {error ? <p className="mb-5 rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-rose-100">{error}</p> : null}
+
+      <section className="mb-6 grid gap-4 md:grid-cols-4">
+        {[
+          ["用户", users.length],
+          ["订单", orders.length],
+          ["订阅", subscriptions.length],
+          ["支付", payments.length],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-lg border border-white/10 bg-panel/80 p-5">
+            <p className="text-sm text-slate-400">{label}</p>
+            <p className="mt-3 text-3xl font-semibold text-white">{value}</p>
+          </div>
+        ))}
+      </section>
 
       <section className="rounded-lg border border-white/10 bg-panel/80 p-5">
         <div className="mb-4 flex items-center gap-2">
@@ -101,6 +142,44 @@ export default async function AdminBillingPage() {
             </div>
           ))}
           {orders.length === 0 ? <p className="text-sm text-slate-500">暂无订单。</p> : null}
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-lg border border-white/10 bg-panel/80 p-5">
+        <h2 className="mb-4 text-xl font-semibold text-white">订阅</h2>
+        <div className="space-y-3">
+          {subscriptions.map((subscription) => (
+            <div key={subscription.id} className="rounded-md border border-white/10 bg-white/[0.03] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium text-white">{subscription.plan.toUpperCase()} · {subscription.status}</p>
+                  <p className="mt-1 text-sm text-slate-400">{subscription.provider}</p>
+                  <p className="mt-1 break-all text-xs text-slate-500">{subscription.user_id}</p>
+                </div>
+                <span className="text-xs text-slate-500">{subscription.current_period_end ? new Date(subscription.current_period_end).toLocaleDateString() : "no period end"}</span>
+              </div>
+            </div>
+          ))}
+          {subscriptions.length === 0 ? <p className="text-sm text-slate-500">暂无订阅。</p> : null}
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-lg border border-white/10 bg-panel/80 p-5">
+        <h2 className="mb-4 text-xl font-semibold text-white">支付记录</h2>
+        <div className="space-y-3">
+          {payments.map((payment) => (
+            <div key={payment.id} className="rounded-md border border-white/10 bg-white/[0.03] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium text-white">{payment.currency} {(payment.amount / 100).toFixed(2)} · {payment.status}</p>
+                  <p className="mt-1 text-sm text-slate-400">{payment.provider} · {payment.provider_payment_id || "no payment id"}</p>
+                  <p className="mt-1 break-all text-xs text-slate-500">{payment.user_id}</p>
+                </div>
+                <span className="text-xs text-slate-500">{new Date(payment.created_at).toLocaleString()}</span>
+              </div>
+            </div>
+          ))}
+          {payments.length === 0 ? <p className="text-sm text-slate-500">暂无支付记录。</p> : null}
         </div>
       </section>
     </main>

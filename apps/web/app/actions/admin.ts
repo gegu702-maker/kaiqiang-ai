@@ -2,7 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 
-import { cloneVoice, markAdminOrderPaid, retryAdminTask, updateAdminTask, updateAdminUser } from "@/lib/api";
+import {
+  cloneVoice,
+  markAdminOrderPaid,
+  retryAdminTask,
+  updateAdminPlan,
+  updateAdminQuota,
+  updateAdminTask,
+  updateAdminUser,
+} from "@/lib/api";
 import type { ActionState } from "@/lib/types";
 
 export async function updateTaskAction(
@@ -70,11 +78,66 @@ export async function updateAdminUserAction(
   try {
     await updateAdminUser(userId, formData);
     revalidatePath("/admin/billing");
+    revalidatePath("/admin/users");
+    revalidatePath("/admin/quotas");
     return { ok: true, message: "用户额度已更新。" };
   } catch (error) {
     return {
       ok: false,
       message: error instanceof Error ? error.message : "用户更新失败。",
+    };
+  }
+}
+
+export async function updateAdminPlanAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const code = String(formData.get("code") ?? "");
+  formData.delete("code");
+  if (formData.get("monthly_quota") === "") {
+    formData.delete("monthly_quota");
+  }
+  for (const key of ["monthly_price_cny", "yearly_price_cny", "sort_order"]) {
+    if (formData.get(key) === "") {
+      formData.delete(key);
+    }
+  }
+
+  try {
+    await updateAdminPlan(code, formData);
+    revalidatePath("/admin/plans");
+    revalidatePath("/admin/billing");
+    return { ok: true, message: "套餐已更新。" };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "套餐更新失败。",
+    };
+  }
+}
+
+export async function updateAdminQuotaAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const quotaId = String(formData.get("quota_id") ?? "");
+  formData.delete("quota_id");
+  for (const key of Array.from(formData.keys())) {
+    if (String(formData.get(key) ?? "") === "") {
+      formData.delete(key);
+    }
+  }
+
+  try {
+    await updateAdminQuota(quotaId, formData);
+    revalidatePath("/admin/quotas");
+    revalidatePath("/admin/billing");
+    return { ok: true, message: "额度已更新。" };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "额度更新失败。",
     };
   }
 }

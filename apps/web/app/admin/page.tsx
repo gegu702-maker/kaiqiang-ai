@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CalendarClock, ExternalLink, ListChecks, Sparkles, UserCheck, UsersRound, WandSparkles } from "lucide-react";
+import { CalendarClock, CreditCard, ExternalLink, Gauge, ListChecks, Sparkles, UserCheck, UsersRound, WandSparkles } from "lucide-react";
 
 import { AdminUpdateForm } from "@/components/AdminUpdateForm";
 import { RefreshOnInterval } from "@/components/RefreshOnInterval";
@@ -62,9 +62,26 @@ export default async function AdminPage() {
         <div className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-300">
           共 {tasks.length} 个任务
         </div>
-        <Button asChild variant="outline">
-          <Link href="/admin/billing">商业化后台</Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link href="/admin/users">
+              <UsersRound size={16} />
+              用户管理
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/admin/plans">
+              <CreditCard size={16} />
+              套餐管理
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/admin/quotas">
+              <Gauge size={16} />
+              额度管理
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {error ? <p className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-rose-100">{error}</p> : null}
