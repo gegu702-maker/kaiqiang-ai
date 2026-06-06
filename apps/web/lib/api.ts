@@ -3,14 +3,14 @@ import type { AdminUser, CheckoutResponse, Order, UsageLog, UsageSummary, VideoT
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function readAdminApiKey(): string {
-  const raw = process.env.ADMIN_API_KEY ?? "";
+  const raw = process.env.SERVER_ADMIN_API_KEY ?? process.env.ADMIN_API_KEY ?? "";
   return raw.replace(/^ADMIN_API_KEY=/, "").trim();
 }
 
 function adminHeaders(): HeadersInit {
   const key = readAdminApiKey();
   if (!key) {
-    throw new Error("Vercel 缺少 ADMIN_API_KEY，请设置为与 Railway 后端完全相同的值。");
+    throw new Error("Vercel 缺少 SERVER_ADMIN_API_KEY 或 ADMIN_API_KEY，请设置为与 Railway 后端完全相同的值。");
   }
   return { "x-admin-key": key };
 }
