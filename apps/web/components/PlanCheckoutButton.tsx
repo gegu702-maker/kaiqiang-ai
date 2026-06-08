@@ -32,7 +32,7 @@ export function PlanCheckoutButton({ plan }: { plan: "plus" | "pro" | "business"
       </div>
       <button className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-cyan px-4 text-sm font-semibold text-ink hover:bg-cyan/90">
         <CreditCard size={16} />
-        {plan === "plus" ? "升级 Plus" : plan === "pro" ? "升级 Pro" : "创建 Business 咨询订单"}
+        {plan === "plus" ? "升级 Creator" : plan === "pro" ? "升级 Pro" : "创建 Business 咨询订单"}
       </button>
       {state.message ? <p className={state.ok ? "text-xs text-lime" : "text-xs text-rose-200"}>{state.message}</p> : null}
     </form>
