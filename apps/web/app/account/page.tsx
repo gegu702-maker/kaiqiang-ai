@@ -70,7 +70,7 @@ export default async function AccountPage() {
   const fullName = typeof session.user.user_metadata?.full_name === "string" ? session.user.user_metadata.full_name : "";
   const completedTasks = tasks.filter((task) => task.result_video_url);
   const quickLinks = [
-    { href: "/studio/avatar", label: "Avatar Studio", desc: "上传视频和音频生成数字人口播", icon: Sparkles, primary: true },
+    { href: "/studio", label: "Studio", desc: "从爆款链接到数字人口播视频导出", icon: Sparkles, primary: true },
     { href: "/pricing", label: "Pricing", desc: "查看套餐和升级选项", icon: CreditCard },
     { href: "/tasks", label: "历史任务", desc: "查看生成记录和下载结果", icon: History },
     { href: "/studio/templates", label: "Templates", desc: "从官方模板开始生成", icon: LayoutTemplate },

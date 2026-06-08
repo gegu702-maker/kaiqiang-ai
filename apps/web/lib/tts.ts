@@ -1,8 +1,8 @@
 export const ttsVoiceLabels: Record<string, string> = {
-  minimax_zh_female: "MiniMax 中文女声",
-  minimax_en_female: "MiniMax English Female",
-  BV001_streaming: "火山引擎 BV001 女声",
-  BV002_streaming: "火山引擎 BV002 男声",
+  minimax_zh_female: "Kaiqiang 中文女声",
+  minimax_en_female: "Kaiqiang English Female",
+  BV001_streaming: "Kaiqiang 女声",
+  BV002_streaming: "Kaiqiang 男声",
 };
 
 export function getTTSVoiceLabel(voiceName: string) {

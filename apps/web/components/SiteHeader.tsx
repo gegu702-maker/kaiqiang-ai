@@ -8,42 +8,15 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
-
-const navCopy = {
-  zh: {
-    home: "首页",
-    pricing: "定价",
-    templates: "模板",
-    viralAnalyzer: "爆款拆解",
-    avatarStudio: "数字人工作台",
-    contact: "联系",
-    menu: "菜单",
-  },
-  en: {
-    home: "Home",
-    pricing: "Pricing",
-    templates: "Templates",
-    viralAnalyzer: "Viral Analyzer",
-    avatarStudio: "Avatar Studio",
-    contact: "Contact",
-    menu: "Menu",
-  },
-};
+import { mainNavigationItems, navigationCopy } from "@/lib/i18n/navigation";
 
 export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
   const { locale, setLocale } = useLanguage();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const copy = navCopy[locale];
+  const copy = navigationCopy[locale];
   const isLanding = pathname === "/";
-  const navItems = [
-    { href: "/", label: copy.home },
-    { href: "/pricing", label: copy.pricing },
-    { href: "/studio/templates", label: copy.templates },
-    { href: "/studio/viral-analyzer", label: copy.viralAnalyzer },
-    { href: "/studio/avatar", label: copy.avatarStudio },
-    { href: "/#contact", label: copy.contact },
-  ];
+  const navItems = mainNavigationItems.map((item) => ({ href: item.href, label: copy[item.key] }));
   const desktopLinkClass = isLanding
     ? "rounded-full px-4 py-2 transition hover:bg-white hover:text-slate-950 hover:shadow-sm"
     : "rounded-md px-3 py-2 hover:bg-white/10";

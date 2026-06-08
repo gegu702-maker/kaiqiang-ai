@@ -1,16 +1,20 @@
-import { Clapperboard, Film, Layers3, LineChart, Sparkles, WandSparkles, type LucideIcon } from "lucide-react";
+"use client";
+
+import { Film, LineChart, WandSparkles, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 
-const navItems: Array<[string, string, LucideIcon]> = [
-  ["Agent", "/studio", WandSparkles],
-  ["Viral", "/studio/viral-analyzer", Sparkles],
-  ["Script", "/studio", Layers3],
-  ["Shots", "/studio/templates", Film],
-  ["Render", "/studio/avatar", Clapperboard],
-  ["Data", "/account", LineChart],
-];
+import { useLanguage } from "@/components/LanguageProvider";
+import { navigationCopy } from "@/lib/i18n/navigation";
 
 export function StudioNavigation() {
+  const { locale } = useLanguage();
+  const copy = navigationCopy[locale];
+  const navItems: Array<[string, string, LucideIcon]> = [
+    [copy.studio, "/studio", WandSparkles],
+    [copy.templates, "/studio/templates", Film],
+    [copy.account, "/account", LineChart],
+  ];
+
   return (
     <aside className="hidden h-[calc(100vh-86px)] border-r border-white/10 bg-ink/55 px-3 py-5 lg:block">
       <div className="flex h-full flex-col items-center justify-between">

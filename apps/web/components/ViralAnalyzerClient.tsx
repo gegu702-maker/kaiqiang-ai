@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { analyzeViralScript } from "@/lib/api";
+import { advancedAnalyzerCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
 import type { ViralAnalyzeResult, ViralIndustry } from "@/lib/types";
 
@@ -17,61 +18,6 @@ const industries: Array<{ value: ViralIndustry; zh: string; en: string }> = [
   { value: "global", zh: "出海营销", en: "Global marketing" },
 ];
 
-const copy = {
-  zh: {
-    eyebrow: "爆款拆解",
-    title: "Viral Script Analyzer",
-    subtitle: "粘贴短视频链接或原始文案，拆解爆点结构，并生成适合数字人口播的原创改写稿。",
-    url: "短视频链接",
-    rawScript: "原始视频文案",
-    upload: "上传视频文件",
-    uploadHint: "第一版不自动转写视频；上传用于记录来源，请同时粘贴文案继续拆解。",
-    industry: "行业/场景",
-    language: "输出语言",
-    start: "开始拆解",
-    analyzing: "拆解中",
-    linkPlaceholder: "抖音 / 小红书 / 快手 / TikTok / YouTube Shorts 链接",
-    scriptPlaceholder: "粘贴原视频文案，系统会学习结构并生成原创改写，不会逐字复制。",
-    fallback: "如果链接无法自动解析，请粘贴视频文案或上传视频后补充文案。",
-    topic: "视频核心主题",
-    hook: "黄金开头",
-    sellingPoints: "爆点拆解",
-    structure: "文案结构",
-    template: "可复用模板",
-    rewrites: "原创改写版本",
-    copy: "复制",
-    copied: "已复制",
-    generate: "使用此文案生成数字人",
-    quota: "本月拆解次数",
-  },
-  en: {
-    eyebrow: "Viral Analyzer",
-    title: "Viral Script Analyzer",
-    subtitle: "Paste a short-video link or script, analyze the structure, and create original talking-avatar scripts.",
-    url: "Short-video link",
-    rawScript: "Original script",
-    upload: "Upload video file",
-    uploadHint: "MVP does not transcribe videos yet. Upload as a source note and paste the script to analyze.",
-    industry: "Industry",
-    language: "Output language",
-    start: "Analyze",
-    analyzing: "Analyzing",
-    linkPlaceholder: "Douyin / RED / Kuaishou / TikTok / YouTube Shorts URL",
-    scriptPlaceholder: "Paste the original script. The system learns the structure and creates original rewrites.",
-    fallback: "If the link cannot be parsed, paste the video script or upload the video and add script text.",
-    topic: "Core Topic",
-    hook: "Golden Hook",
-    sellingPoints: "Viral Angles",
-    structure: "Script Structure",
-    template: "Reusable Template",
-    rewrites: "Original Rewrites",
-    copy: "Copy",
-    copied: "Copied",
-    generate: "Generate avatar with this script",
-    quota: "Monthly analyses",
-  },
-};
-
 export function ViralAnalyzerClient() {
   const supabase = useMemo(() => createClient(), []);
   const [language, setLanguage] = useState<"zh" | "en">("zh");
@@ -83,7 +29,7 @@ export function ViralAnalyzerClient() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  const t = copy[language];
+  const t = advancedAnalyzerCopy[language];
 
   async function handleAnalyze() {
     setError("");
@@ -94,7 +40,7 @@ export function ViralAnalyzerClient() {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session?.access_token) {
-        throw new Error("请先登录后再使用爆款拆解。");
+        throw new Error(t.loginError);
       }
       const payload = await analyzeViralScript(
         {
@@ -107,7 +53,7 @@ export function ViralAnalyzerClient() {
       );
       setResult(payload);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "拆解失败，请稍后重试。");
+      setError(err instanceof Error ? err.message : t.failedError);
     } finally {
       setLoading(false);
     }

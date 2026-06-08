@@ -17,15 +17,16 @@ import type { VoiceClone } from "@/lib/types";
 const initialState = { ok: false, message: "" };
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const displayProviderName = (provider: string) => (provider && provider.toLowerCase() !== "volcengine" ? provider : "kaiqiang");
 const copy = {
   zh: {
     imageType: "图片仅支持 jpg、png、webp。",
     imageSize: "图片最大支持 10MB。",
     email: "邮箱",
-    productName: "产品名称",
-    productPlaceholder: "智能补光化妆镜",
-    highlights: "产品卖点",
-    highlightsPlaceholder: "例如：便携、防水、续航长、适合户外、质感高级、价格有优势...",
+    productName: "项目名称",
+    productPlaceholder: "例如：夏季防晒新品 / 老板 IP 口播",
+    highlights: "口播要点",
+    highlightsPlaceholder: "例如：目标痛点、核心卖点、使用场景、行动号召...",
     audience: "目标人群",
     audiencePlaceholder: "例如：露营爱好者、宝妈、通勤上班族",
     style: "视频风格",
@@ -38,7 +39,7 @@ const copy = {
     chooseFile: "选择文件",
     noFile: "未选择任何文件",
     clonedVoice: "使用我的克隆声音",
-    voiceType: "火山引擎音色",
+    voiceType: "语音音色",
     ttsTitle: "语音试听",
     ttsDescription: "输入口播文案，先生成一段可播放的 MP3。",
     ttsText: "口播文案",
@@ -48,10 +49,10 @@ const copy = {
     ttsSuccess: "语音已生成",
     ttsFailed: "TTS 失败",
     ttsNetworkError: "网络错误，请稍后重试。",
-    ttsProviderError: "provider 错误，请检查 Volcengine 配置。",
+    ttsProviderError: "语音服务暂时不可用，请稍后重试。",
     ttsDownload: "下载 MP3",
     avatarTemplate: "数字人模板",
-    avatarTemplateHint: "普通会员可选择固定模板，Pro 后续开放自定义形象。",
+    avatarTemplateHint: "可选择固定数字人模板，Pro 支持更多数字人管理能力。",
     recommended: "推荐场景",
     videoTitle: "静态头像口播视频",
     videoDescription: "把当前文案合成为 1080x1920 竖屏 MP4。",
@@ -69,14 +70,14 @@ const copy = {
       BV001_streaming: "女声（BV001_streaming）",
       BV002_streaming: "男声（BV002_streaming）",
     },
-    cloneUpsell: "升级到 Pro 解锁声音克隆，后续视频可直接使用你的专属 voice_id。",
+    cloneUpsell: "升级到 Pro 解锁声音克隆，后续视频可直接使用你的专属声音。",
     loginHint: "可以先填写和上传素材，点击生成时再登录，登录后回到工作台。",
     draftRestored: "已恢复上次填写的工作台草稿。",
     businessQuota: "Business 套餐：自定义额度",
     quotaLoadFailed: "额度加载失败，请刷新后重试。",
     remaining: (quota: number) => `本月剩余 ${quota} 次生成`,
     loggedOutQuota: "登录后可生成，每月免费 3 次。",
-    submit: "生成带货视频方案",
+    submit: "生成数字人口播方案",
     loginSubmit: "登录并生成",
     pending: "正在生成",
     loginPending: "正在跳转登录",
@@ -95,10 +96,10 @@ const copy = {
     imageType: "Images support jpg, png, and webp only.",
     imageSize: "Images can be up to 10MB.",
     email: "Email",
-    productName: "Product Name",
-    productPlaceholder: "Smart fill-light makeup mirror",
-    highlights: "Product Highlights",
-    highlightsPlaceholder: "e.g. portable, waterproof, long battery life, outdoor-friendly, premium texture, price advantage...",
+    productName: "Project Name",
+    productPlaceholder: "e.g. summer sunscreen launch / founder IP script",
+    highlights: "Talking Points",
+    highlightsPlaceholder: "e.g. audience pain point, core value, usage scenario, call to action...",
     audience: "Target Audience",
     audiencePlaceholder: "e.g. campers, moms, commuters",
     style: "Video Style",
@@ -111,7 +112,7 @@ const copy = {
     chooseFile: "Choose File",
     noFile: "No file selected",
     clonedVoice: "Use my cloned voice",
-    voiceType: "Volcengine Voice",
+    voiceType: "Voice",
     ttsTitle: "Voice Preview",
     ttsDescription: "Generate a playable MP3 from your talking script.",
     ttsText: "Script",
@@ -121,10 +122,10 @@ const copy = {
     ttsSuccess: "Voice generated",
     ttsFailed: "TTS failed",
     ttsNetworkError: "Network error. Please try again.",
-    ttsProviderError: "Provider error. Please check Volcengine settings.",
+    ttsProviderError: "Voice service is temporarily unavailable. Please try again later.",
     ttsDownload: "Download MP3",
     avatarTemplate: "Avatar Template",
-    avatarTemplateHint: "Members can use fixed templates. Custom avatars will come with Pro.",
+    avatarTemplateHint: "Choose a fixed avatar template. Pro includes more multi-avatar management options.",
     recommended: "Recommended",
     videoTitle: "Static Avatar Video",
     videoDescription: "Render the current script into a 1080x1920 MP4.",
@@ -149,7 +150,7 @@ const copy = {
     quotaLoadFailed: "Quota failed to load. Please refresh and try again.",
     remaining: (quota: number) => `${quota} generations left this month`,
     loggedOutQuota: "Sign in to generate. Free plan includes 3 generations per month.",
-    submit: "Generate Now",
+    submit: "Generate Avatar Video Plan",
     loginSubmit: "Sign in and Generate",
     pending: "Generating",
     loginPending: "Redirecting to login",
@@ -208,7 +209,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [personalImageName, setPersonalImageName] = useState("");
   const [useDigitalHuman, setUseDigitalHuman] = useState(true);
   const [draftRestored, setDraftRestored] = useState(false);
-  const [ttsText, setTtsText] = useState(initialScriptText || current.ttsPlaceholder);
+  const [ttsText, setTtsText] = useState(current.ttsPlaceholder);
   const [ttsVoiceType, setTtsVoiceType] = useState("BV001_streaming");
   const [avatarTemplateId, setAvatarTemplateId] = useState("business_female_01");
   const [ttsStatus, setTtsStatus] = useState<TTSStatus>("idle");
@@ -222,9 +223,8 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [videoMode, setVideoMode] = useState<"static" | "liveportrait">("static");
 
   useEffect(() => {
-    const text = initialScriptText.trim();
-    if (text) {
-      setTtsText(text);
+    if (initialScriptText.trim()) {
+      setTtsText(initialScriptText);
     }
   }, [initialScriptText]);
 
@@ -340,7 +340,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
         throw new Error(detail || (isProviderError ? current.ttsProviderError : current.ttsFailed));
       }
       setTtsAudioUrl(payload.audio_url);
-      setTtsProvider(payload.provider || "volcengine");
+      setTtsProvider(payload.provider || "kaiqiang");
       setTtsStatus("success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
@@ -549,7 +549,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
             <audio className="w-full" src={ttsAudioUrl} controls preload="metadata" />
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-slate-500">
-                {ttsProvider || "volcengine"} · {ttsVoiceType}
+                {displayProviderName(ttsProvider)} · {ttsVoiceType}
               </p>
               <button
                 type="button"
