@@ -191,9 +191,10 @@ type TaskFormProps = {
   voiceCloneEnabled?: boolean;
   voiceClones?: VoiceClone[];
   livePortraitEnabled?: boolean;
+  initialScriptText?: string;
 };
 
-export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], livePortraitEnabled = false }: TaskFormProps) {
+export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], livePortraitEnabled = false, initialScriptText = "" }: TaskFormProps) {
   const { locale } = useLanguage();
   const current = copy[locale];
   const displayedRemainingQuota = userEmail && remainingQuota === undefined ? 3 : remainingQuota;
@@ -207,7 +208,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [personalImageName, setPersonalImageName] = useState("");
   const [useDigitalHuman, setUseDigitalHuman] = useState(true);
   const [draftRestored, setDraftRestored] = useState(false);
-  const [ttsText, setTtsText] = useState(current.ttsPlaceholder);
+  const [ttsText, setTtsText] = useState(initialScriptText || current.ttsPlaceholder);
   const [ttsVoiceType, setTtsVoiceType] = useState("BV001_streaming");
   const [avatarTemplateId, setAvatarTemplateId] = useState("business_female_01");
   const [ttsStatus, setTtsStatus] = useState<TTSStatus>("idle");
@@ -219,6 +220,13 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [videoUrl, setVideoUrl] = useState("");
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoMode, setVideoMode] = useState<"static" | "liveportrait">("static");
+
+  useEffect(() => {
+    const text = initialScriptText.trim();
+    if (text) {
+      setTtsText(text);
+    }
+  }, [initialScriptText]);
 
   useEffect(() => {
     const form = document.getElementById("task-submit-form") as HTMLFormElement | null;

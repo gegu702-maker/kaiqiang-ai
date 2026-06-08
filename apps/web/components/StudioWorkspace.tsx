@@ -4,10 +4,13 @@ import { ArrowRight, CheckCircle2, Clapperboard, Copy, ExternalLink, FileText, L
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { HomeVideoAgentPreview } from "@/components/HomeVideoAgentPreview";
 import { useLanguage } from "@/components/LanguageProvider";
+import { StudioNavigation } from "@/components/StudioNavigation";
+import { TaskForm } from "@/components/TaskForm";
 import { runViralPipeline } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
-import type { ViralPipelineResult, ViralPipelineStatus, ViralRewrite } from "@/lib/types";
+import type { ViralPipelineResult, ViralPipelineStatus, ViralRewrite, VoiceClone } from "@/lib/types";
 
 type StepState = "idle" | "running" | "done";
 
@@ -23,6 +26,15 @@ const failedStepIndex: Record<ViralPipelineStatus, number> = {
   rewriting: 5,
   ready: 6,
   failed: 0,
+};
+
+type StudioWorkspaceProps = {
+  userEmail?: string | null;
+  remainingQuota?: number | null;
+  quotaLoadFailed?: boolean;
+  voiceCloneEnabled?: boolean;
+  voiceClones?: VoiceClone[];
+  livePortraitEnabled?: boolean;
 };
 
 const copy = {
@@ -49,7 +61,11 @@ const copy = {
     copy: "复制",
     copied: "已复制",
     continue: "继续仿写",
+    useScript: "使用此文案",
     avatar: "生成数字人",
+    avatarStudio: "数字人口播工作台",
+    avatarStudioSubtitle: "选择固定数字人模板、火山引擎音色、声音试听或克隆声音，然后生成口播视频。",
+    deepAvatar: "打开深度 MuseTalk 上传生成页",
     empty: "粘贴一个爆款链接后开始。",
     noResult: "完成分析后，这里会显示自动拆解结果和原创仿写版本。",
   },
@@ -76,19 +92,24 @@ const copy = {
     copy: "Copy",
     copied: "Copied",
     continue: "Rewrite more",
+    useScript: "Use script",
     avatar: "Generate avatar",
+    avatarStudio: "Avatar Studio",
+    avatarStudioSubtitle: "Choose a fixed avatar template, Volcengine voice, preview or cloned voice, then generate a talking-avatar video.",
+    deepAvatar: "Open advanced MuseTalk uploader",
     empty: "Paste a viral link to begin.",
     noResult: "Analysis results and original rewrites will appear here after the run.",
   },
 };
 
-export function StudioWorkspace() {
+export function StudioWorkspace({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], livePortraitEnabled = false }: StudioWorkspaceProps) {
   const { locale } = useLanguage();
   const t = copy[locale];
   const supabase = useMemo(() => createClient(), []);
   const [sourceUrl, setSourceUrl] = useState("");
   const [activeStep, setActiveStep] = useState(-1);
   const [copied, setCopied] = useState<string | null>(null);
+  const [selectedScript, setSelectedScript] = useState("");
   const [pipelineResult, setPipelineResult] = useState<ViralPipelineResult | null>(null);
   const [notice, setNotice] = useState("");
   const [isRunning, setIsRunning] = useState(false);
@@ -157,8 +178,17 @@ export function StudioWorkspace() {
     void copyRewrite(rewrite.title, nextScript);
   }
 
+  function selectRewriteScript(script: string) {
+    setSelectedScript(script);
+    window.requestAnimationFrame(() => {
+      document.getElementById("avatar-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   return (
-    <main className="min-h-[calc(100vh-86px)] bg-ink text-slate-100">
+    <main className="grid min-h-[calc(100vh-86px)] bg-ink text-slate-100 lg:grid-cols-[72px_1fr]">
+      <StudioNavigation />
+      <div className="w-full">
       <div className="mx-auto grid max-w-[1500px] gap-6 px-4 py-6 sm:px-6 xl:grid-cols-[1.08fr_0.92fr]">
         <section className="space-y-5">
           <div className="rounded-lg border border-white/10 bg-panel/85 p-5 shadow-glow">
@@ -261,6 +291,13 @@ export function StudioWorkspace() {
                       <button type="button" className="inline-flex h-9 items-center gap-2 rounded-md border border-cyan/25 px-3 text-xs font-semibold text-cyan hover:bg-cyan/10" onClick={() => continueRewrite(rewrite)}>
                         {t.continue}
                       </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-9 items-center gap-2 rounded-md border border-lime/25 px-3 text-xs font-semibold text-lime hover:bg-lime/10"
+                        onClick={() => selectRewriteScript(rewrite.script)}
+                      >
+                        {t.useScript}
+                      </button>
                       <Link
                         className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan px-3 text-xs font-semibold text-ink hover:bg-cyan/90"
                         href={`/studio/avatar?script_text=${encodeURIComponent(rewrite.script)}`}
@@ -315,6 +352,32 @@ export function StudioWorkspace() {
             </Link>
           </section>
         </aside>
+      </div>
+      <section id="avatar-studio" className="mx-auto w-full max-w-[1500px] px-4 pb-8 sm:px-6">
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-cyan">Avatar Studio</p>
+            <h2 className="mt-2 text-3xl font-semibold text-white">{t.avatarStudio}</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">{t.avatarStudioSubtitle}</p>
+          </div>
+          <Link className="inline-flex h-10 items-center gap-2 rounded-md border border-white/10 px-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.06]" href="/studio/avatar">
+            {t.deepAvatar}
+            <ExternalLink size={15} />
+          </Link>
+        </div>
+        <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
+          <TaskForm
+            userEmail={userEmail}
+            remainingQuota={remainingQuota}
+            quotaLoadFailed={quotaLoadFailed}
+            voiceCloneEnabled={voiceCloneEnabled}
+            voiceClones={voiceClones}
+            livePortraitEnabled={livePortraitEnabled}
+            initialScriptText={selectedScript}
+          />
+          <HomeVideoAgentPreview />
+        </div>
+      </section>
       </div>
     </main>
   );

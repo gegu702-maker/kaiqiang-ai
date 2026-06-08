@@ -9,17 +9,17 @@ const plans = [
     name: "Free",
     code: "free",
     price: "¥0",
-    quota: "每月 3 次生成",
-    desc: "适合首次体验和验证数字人口播效果。",
-    features: ["每月 3 次生成额度", "上传人物视频和音频", "生成 MP4 成片", "基础历史记录"],
+    quota: "每月 3 次体验",
+    desc: "适合首次验证爆款链接拆解、AI 仿写和数字人口播生成效果。",
+    features: ["每月 3 次数字人口播生成", "爆款链接分析体验", "基础 AI 仿写", "固定数字人模板", "MP4 成片导出"],
   },
   {
     name: "Creator",
     code: "plus",
     price: "¥199/月",
-    quota: "适合稳定创作",
-    desc: "适合个人创作者、小团队和电商账号持续制作口播素材。",
-    features: ["更多月度生成额度", "优先排队预留", "公开视频下载链接", "适合短视频和商品讲解"],
+    quota: "稳定内容生产",
+    desc: "适合自媒体、电商卖家和知识 IP 持续生产原创口播短视频。",
+    features: ["更高月度生成额度", "爆款拆解与原创仿写", "1080P 数字人口播导出", "商务女主播 / 男主播 / AI 女主播", "火山引擎音色与声音试听", "优先生成队列"],
     badge: "推荐",
   },
   {
@@ -27,8 +27,8 @@ const plans = [
     code: "business",
     price: "联系商务",
     quota: "团队与高频使用",
-    desc: "适合企业内容团队、培训、电商矩阵和定制数字人项目。",
-    features: ["自定义生成额度", "声音克隆与模板支持", "团队/API 能力预留", "商务授权与交付支持"],
+    desc: "适合企业内容团队、电商矩阵、培训交付和定制数字人项目。",
+    features: ["自定义生成额度", "声音克隆与专属 voice_id", "团队/API 能力预留", "专属数字人模板支持", "商务授权与交付支持", "专属客服与实施支持"],
   },
 ] as const;
 
@@ -39,7 +39,7 @@ export default function PricingPage() {
         <p className="text-sm font-medium text-cyan">Pricing</p>
         <h1 className="mt-3 text-4xl font-semibold text-white">AI 数字人口播 SaaS 套餐</h1>
         <p className="mt-3 text-slate-400">
-          从免费验证到稳定创作，再到企业级数字人口播生产。当前阶段先完成套餐展示和订单预留，不接入在线支付。
+          从爆款链接拆解到 AI 仿写，再到数字人口播导出。三档套餐覆盖体验验证、稳定创作和企业级交付。
         </p>
       </div>
 
@@ -73,7 +73,7 @@ export default function PricingPage() {
       </div>
 
       <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.04] p-5 text-sm leading-6 text-slate-400">
-        商业化准备：Creator 可作为首个自助套餐，Business 保留人工沟通和定制额度。在线支付接入前，升级按钮仅创建待处理订单或引导联系。
+        Creator 面向持续创作，Business 面向团队、矩阵账号和定制交付。支付接入前，升级按钮用于创建待处理订单或引导商务沟通。
       </div>
 
       <PricingContactSection />
