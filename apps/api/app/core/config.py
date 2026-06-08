@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
+    faster_whisper_model_size: str = Field("small", validation_alias=AliasChoices("FASTER_WHISPER_MODEL_SIZE", "ASR_MODEL_SIZE"))
+    faster_whisper_device: str = Field("cpu", validation_alias=AliasChoices("FASTER_WHISPER_DEVICE", "ASR_DEVICE"))
+    faster_whisper_compute_type: str = Field("int8", validation_alias=AliasChoices("FASTER_WHISPER_COMPUTE_TYPE", "ASR_COMPUTE_TYPE"))
+    viral_max_video_duration_seconds: int = 120
+    viral_max_download_mb: int = 100
+    viral_pipeline_timeout_seconds: int = 180
+    viral_pipeline_allowed_emails: str = ""
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
     volcengine_tts_app_id: str = ""

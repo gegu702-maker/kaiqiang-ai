@@ -242,6 +242,7 @@ export type ViralRewrite = {
 };
 
 export type ViralAnalyzeResult = {
+  project_id?: string;
   topic: string;
   hook: string;
   selling_points: string[];
@@ -265,4 +266,43 @@ export type VideoLinkResolveResult = {
   webpage_url: string;
   downloadable: boolean;
   fallback_reason: string;
+};
+
+export type ViralPipelineStatus =
+  | "pending"
+  | "resolving_link"
+  | "downloading_video"
+  | "extracting_audio"
+  | "transcribing"
+  | "analyzing"
+  | "rewriting"
+  | "ready"
+  | "failed";
+
+export type ViralPipelineMetadata = {
+  platform: "douyin" | "unknown" | string;
+  title: string;
+  description: string;
+  duration: number;
+  thumbnail: string;
+  webpage_url: string;
+  downloadable: boolean;
+};
+
+export type ViralPipelineResult = {
+  ok: boolean;
+  status: ViralPipelineStatus;
+  failed_at: ViralPipelineStatus | "";
+  fallback_reason: string;
+  project_id: string;
+  transcript: string;
+  analysis: {
+    topic: string;
+    hook: string;
+    selling_points: string[];
+    structure: string[];
+    template: string;
+  } | null;
+  rewrites: ViralRewrite[];
+  metadata: ViralPipelineMetadata;
 };

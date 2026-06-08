@@ -172,8 +172,9 @@ async def analyze_viral_script(
         "rewrites": _rewrites(data.get("rewrites"), topic),
     }
 
+    project_id = ""
     try:
-        supabase.table("viral_analyses").insert(
+        insert_result = supabase.table("viral_analyses").insert(
             {
                 "user_id": user_id,
                 "source_url": source_url,
@@ -188,6 +189,8 @@ async def analyze_viral_script(
                 "rewrites": result["rewrites"],
             }
         ).execute()
+        if insert_result.data and isinstance(insert_result.data, list):
+            project_id = str(insert_result.data[0].get("id") or "")
     except APIError:
         pass
 
@@ -203,4 +206,4 @@ async def analyze_viral_script(
     except APIError:
         pass
 
-    return {**result, "quota": {**quota, "used": quota["used"] + 1}}
+    return {**result, "project_id": project_id, "quota": {**quota, "used": quota["used"] + 1}}

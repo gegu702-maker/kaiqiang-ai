@@ -10,6 +10,7 @@ import type {
   UsageLog,
   UsageSummary,
   ViralAnalyzeResult,
+  ViralPipelineResult,
   VideoLinkResolveResult,
   VideoTask,
   VoiceClone,
@@ -201,6 +202,25 @@ export async function resolveVideoLink(sourceUrl: string, accessToken?: string):
     cache: "no-store",
   });
   return parseResponse<VideoLinkResolveResult>(response, { url: `${API_URL}/api/viral/link/resolve`, method: "POST" });
+}
+
+export async function runViralPipeline(
+  payload: {
+    source_url: string;
+    industry?: string;
+    language?: "zh" | "en";
+  },
+  accessToken?: string,
+): Promise<ViralPipelineResult> {
+  const response = await fetch(`${API_URL}/api/viral/pipeline/run`, {
+    method: "POST",
+    headers: accessToken
+      ? { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }
+      : { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return parseResponse<ViralPipelineResult>(response, { url: `${API_URL}/api/viral/pipeline/run`, method: "POST" });
 }
 
 export async function uploadVoiceClone(formData: FormData, accessToken?: string): Promise<VoiceClone> {
