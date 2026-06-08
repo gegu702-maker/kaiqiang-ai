@@ -4,6 +4,7 @@ from supabase import Client
 
 from app.core.auth import get_authenticated_user, get_bearer_token
 from app.core.supabase import get_supabase
+from app.services.video_link_resolver import resolve_video_link
 from app.services.viral_analyzer import analyze_viral_script
 
 router = APIRouter(prefix="/viral", tags=["viral"])
@@ -14,6 +15,20 @@ class ViralAnalyzeRequest(BaseModel):
     raw_script: str = Field(default="", max_length=6000)
     industry: str
     language: str = "zh"
+
+
+class ViralLinkResolveRequest(BaseModel):
+    source_url: str = Field(..., min_length=1, max_length=3000)
+
+
+@router.post("/link/resolve")
+async def resolve_viral_link(
+    payload: ViralLinkResolveRequest,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    get_authenticated_user(supabase, token)
+    return await resolve_video_link(payload.source_url)
 
 
 @router.post("/analyze")

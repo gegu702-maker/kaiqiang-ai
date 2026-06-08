@@ -254,3 +254,15 @@ export type ViralAnalyzeResult = {
     monthly_limit: number | null;
   };
 };
+
+export type VideoLinkResolveResult = {
+  ok: boolean;
+  platform: "douyin" | "unknown" | string;
+  title: string;
+  description: string;
+  duration: number;
+  thumbnail: string;
+  webpage_url: string;
+  downloadable: boolean;
+  fallback_reason: string;
+};
