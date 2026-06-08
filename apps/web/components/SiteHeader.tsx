@@ -14,6 +14,7 @@ const navCopy = {
     home: "首页",
     pricing: "定价",
     templates: "模板",
+    viralAnalyzer: "爆款拆解",
     avatarStudio: "数字人工作台",
     contact: "联系",
     menu: "菜单",
@@ -22,6 +23,7 @@ const navCopy = {
     home: "Home",
     pricing: "Pricing",
     templates: "Templates",
+    viralAnalyzer: "Viral Analyzer",
     avatarStudio: "Avatar Studio",
     contact: "Contact",
     menu: "Menu",
@@ -38,6 +40,7 @@ export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
     { href: "/", label: copy.home },
     { href: "/pricing", label: copy.pricing },
     { href: "/studio/templates", label: copy.templates },
+    { href: "/studio/viral-analyzer", label: copy.viralAnalyzer },
     { href: "/studio/avatar", label: copy.avatarStudio },
     { href: "/#contact", label: copy.contact },
   ];

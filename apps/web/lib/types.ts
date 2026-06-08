@@ -234,3 +234,23 @@ export type VoiceClone = {
   status: "uploaded" | "pending" | "ready" | "completed" | "failed" | "deleted";
   created_at: string;
 };
+export type ViralIndustry = "ecommerce" | "knowledge" | "training" | "local" | "personal_brand" | "global";
+
+export type ViralRewrite = {
+  title: string;
+  script: string;
+};
+
+export type ViralAnalyzeResult = {
+  topic: string;
+  hook: string;
+  selling_points: string[];
+  structure: string[];
+  template: string;
+  rewrites: ViralRewrite[];
+  quota?: {
+    plan: PlanCode;
+    used: number;
+    monthly_limit: number | null;
+  };
+};

@@ -129,14 +129,20 @@ const copy = {
   },
 };
 
-export function AvatarVideoGenerator({ initialTemplateId }: { initialTemplateId?: string }) {
+export function AvatarVideoGenerator({
+  initialTemplateId,
+  initialScriptText = "",
+}: {
+  initialTemplateId?: string;
+  initialScriptText?: string;
+}) {
   const { locale } = useLanguage();
   const current = copy[locale];
   const supabase = useMemo(() => createClient(), []);
   const selectedTemplate = useMemo(() => findAvatarStudioTemplate(initialTemplateId), [initialTemplateId]);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [scriptText, setScriptText] = useState("");
+  const [scriptText, setScriptText] = useState(initialScriptText);
   const [state, setState] = useState<GenerateState>("idle");
   const [progressStage, setProgressStage] = useState<ProgressStage>("waiting_gpu");
   const [progress, setProgress] = useState(0);

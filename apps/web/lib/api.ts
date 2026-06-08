@@ -9,6 +9,7 @@ import type {
   Subscription,
   UsageLog,
   UsageSummary,
+  ViralAnalyzeResult,
   VideoTask,
   VoiceClone,
 } from "@/lib/types";
@@ -169,6 +170,25 @@ export async function getVoiceClones(accessToken?: string): Promise<VoiceClone[]
   return parseResponse<VoiceClone[]>(response);
 }
 
+export async function analyzeViralScript(
+  payload: {
+    source_url?: string;
+    raw_script?: string;
+    industry: string;
+    language: "zh" | "en";
+  },
+  accessToken?: string,
+): Promise<ViralAnalyzeResult> {
+  const response = await fetch(`${API_URL}/api/viral/analyze`, {
+    method: "POST",
+    headers: accessToken
+      ? { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }
+      : { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return parseResponse<ViralAnalyzeResult>(response, { url: `${API_URL}/api/viral/analyze`, method: "POST" });
+}
 export async function uploadVoiceClone(formData: FormData, accessToken?: string): Promise<VoiceClone> {
   const response = await fetch(`${API_URL}/api/voice-clone/upload`, {
     method: "POST",

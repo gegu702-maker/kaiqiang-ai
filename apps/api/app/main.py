@@ -14,6 +14,7 @@ from app.api.cosyvoice import router as cosyvoice_router
 from app.api.debug import router as debug_router
 from app.api.health import router as health_router
 from app.api.tasks import router as tasks_router
+from app.api.viral import router as viral_router
 from app.api.voice_clone import router as voice_clone_router
 from app.core.config import settings
 from app.services.autodl_client import autodl_idle_shutdown_loop
@@ -64,6 +65,7 @@ app.include_router(avatar_router, prefix="/api")
 app.include_router(billing_router, prefix="/api")
 app.include_router(quota_router, prefix="/api")
 app.include_router(voice_clone_router, prefix="/api")
+app.include_router(viral_router, prefix="/api")
 app.include_router(admin_router, prefix="/api/admin")
 app.include_router(cosyvoice_router, prefix="/api")
 app.include_router(debug_router)
