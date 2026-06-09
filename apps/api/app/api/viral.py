@@ -45,7 +45,26 @@ async def resolve_viral_link(
     supabase: Client = Depends(get_supabase),
 ) -> dict:
     get_authenticated_user(supabase, token)
-    return await resolve_video_link(payload.source_url)
+    try:
+        return await asyncio.wait_for(resolve_video_link(payload.source_url), timeout=min(settings.viral_pipeline_timeout_seconds, 45))
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "platform": "douyin",
+            "title": "",
+            "description": "",
+            "duration": 0,
+            "thumbnail": "",
+            "webpage_url": "",
+            "downloadable": False,
+            "fallback_reason": "链接解析超时，请稍后重试，或上传视频/粘贴文案继续。",
+            "error_code": "resolver_timeout",
+            "errorCode": "resolver_timeout",
+            "input_url": payload.source_url,
+            "inputUrl": payload.source_url,
+            "fallback_actions": ["upload_video", "paste_script", "check_link"],
+            "fallbackActions": ["upload_video", "paste_script", "check_link"],
+        }
 
 
 @router.post("/pipeline/run")
