@@ -177,6 +177,8 @@ def _metadata_with_ytdlp(url: str) -> dict[str, Any]:
             return _fallback(webpage_url=url, error_code="resolver_timeout", input_url=url)
         if any(token in message for token in ["403", "forbidden", "blocked", "captcha", "cookies", "login", "sign in"]):
             return _fallback(webpage_url=url, error_code="metadata_blocked", input_url=url)
+        if "unsupported url" in message or "no video formats" in message:
+            return _fallback(webpage_url=url, error_code="not_downloadable", input_url=url)
         return _fallback(webpage_url=url, error_code="unknown_error", input_url=url)
 
     if not isinstance(info, dict):
