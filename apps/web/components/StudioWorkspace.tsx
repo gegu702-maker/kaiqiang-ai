@@ -94,6 +94,7 @@ export function StudioWorkspace() {
   const [isRunning, setIsRunning] = useState(false);
   const hasStarted = activeStep >= 0;
   const rewrites = pipelineResult?.rewrites || [];
+  const fallbackActions = notice && sourceUrl.trim() && pipelineResult?.ok === false ? getFallbackActions(locale) : [];
   const steps = useMemo(
     () =>
       workflowSteps.map((label, index): { label: string; state: StepState } => ({
@@ -186,7 +187,38 @@ export function StudioWorkspace() {
               </button>
             </div>
             <p className="mt-3 text-sm text-slate-500">{t.supports}</p>
-            {notice ? <p className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">{notice}</p> : null}
+            {notice ? (
+              <div className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">
+                <p>{notice}</p>
+                {sourceUrl ? <p className="mt-2 break-words text-xs text-amber-100/75">{sourceUrl}</p> : null}
+                {fallbackActions.length ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {fallbackActions.map((action) =>
+                      action.href ? (
+                        <Link
+                          key={action.label}
+                          href={action.href}
+                          className="inline-flex h-9 items-center gap-2 rounded-md border border-amber-200/25 px-3 text-xs font-semibold text-amber-50 hover:bg-amber-100/10"
+                        >
+                          <action.icon size={14} />
+                          {action.label}
+                        </Link>
+                      ) : (
+                        <button
+                          key={action.label}
+                          type="button"
+                          onClick={action.onClick}
+                          className="inline-flex h-9 items-center gap-2 rounded-md border border-amber-200/25 px-3 text-xs font-semibold text-amber-50 hover:bg-amber-100/10"
+                        >
+                          <action.icon size={14} />
+                          {action.label}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
@@ -327,4 +359,37 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-slate-200">{value}</p>
     </div>
   );
+}
+
+function getFallbackActions(locale: "zh" | "en") {
+  const text = {
+    zh: {
+      upload: "上传视频",
+      paste: "粘贴文案",
+      check: "检查链接",
+    },
+    en: {
+      upload: "Upload video",
+      paste: "Paste script",
+      check: "Check link",
+    },
+  }[locale];
+
+  return [
+    {
+      label: text.upload,
+      icon: Video,
+      href: "/studio/viral-analyzer",
+    },
+    {
+      label: text.paste,
+      icon: FileText,
+      href: "/studio/viral-analyzer",
+    },
+    {
+      label: text.check,
+      icon: ExternalLink,
+      onClick: () => document.querySelector<HTMLInputElement>("input")?.focus(),
+    },
+  ];
 }
