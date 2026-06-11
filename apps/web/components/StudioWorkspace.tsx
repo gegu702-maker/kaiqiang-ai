@@ -7,12 +7,13 @@ import { useMemo, useState } from "react";
 import { HomeVideoAgentPreview } from "@/components/HomeVideoAgentPreview";
 import { TaskForm } from "@/components/TaskForm";
 import { useLanguage } from "@/components/LanguageProvider";
-import { resolveVideoLink } from "@/lib/api";
+import { runViralPipeline } from "@/lib/api";
 import { studioCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
-import type { VideoLinkResolveResult, VoiceClone } from "@/lib/types";
+import type { ViralPipelineResult, ViralRewrite, VideoLinkResolveResult, VoiceClone } from "@/lib/types";
 
 type StepState = "idle" | "running" | "done";
+type CurrentAnalysis = NonNullable<ViralPipelineResult["analysis"]>;
 
 type StudioWorkspaceProps = {
   userEmail?: string | null;
@@ -38,10 +39,35 @@ export function StudioWorkspace({
   const [activeStep, setActiveStep] = useState(-1);
   const [copied, setCopied] = useState<string | null>(null);
   const [resolveResult, setResolveResult] = useState<VideoLinkResolveResult | null>(null);
+  const [currentAnalysis, setCurrentAnalysis] = useState<CurrentAnalysis | null>(null);
+  const [rewriteVersions, setRewriteVersions] = useState<ViralRewrite[]>([]);
   const [notice, setNotice] = useState("");
   const [selectedScript, setSelectedScript] = useState("");
+  const [avatarFormVersion, setAvatarFormVersion] = useState(0);
   const isRunning = activeStep >= 0 && activeStep < 3;
   const hasStarted = activeStep >= 0;
+  const sampleLabel = locale === "zh" ? "示例预览" : "Sample preview";
+  const waitingLabel = isRunning ? t.analyzing : locale === "zh" ? "等待当前分析结果" : "Waiting for current analysis";
+  const analysisRows = currentAnalysis
+    ? [
+        [t.topic, currentAnalysis.topic],
+        [t.hook, currentAnalysis.hook],
+        [t.pain, ""],
+        [t.selling, currentAnalysis.selling_points.join(" / ")],
+        [t.cta, ""],
+        [t.structure, currentAnalysis.structure.join(" → ")],
+        [t.template, currentAnalysis.template],
+      ]
+    : [
+        [t.topic, t.sampleAnalysis.topic],
+        [t.hook, t.sampleAnalysis.hook],
+        [t.pain, t.sampleAnalysis.pain],
+        [t.selling, t.sampleAnalysis.selling],
+        [t.cta, t.sampleAnalysis.cta],
+        [t.structure, t.sampleAnalysis.structure],
+        [t.template, t.sampleAnalysis.template],
+      ];
+  const displayRewrites = rewriteVersions.map((item) => [item.title, item.script] as const);
   const steps = useMemo(
     () =>
       t.steps.map((label, index): { label: string; state: StepState } => ({
@@ -55,6 +81,10 @@ export function StudioWorkspace({
     if (!sourceUrl.trim()) return;
     setNotice("");
     setResolveResult(null);
+    setCurrentAnalysis(null);
+    setRewriteVersions([]);
+    setSelectedScript("");
+    setAvatarFormVersion((version) => version + 1);
     setActiveStep(0);
     window.setTimeout(() => setActiveStep(1), 360);
     window.setTimeout(() => setActiveStep(2), 720);
@@ -67,14 +97,30 @@ export function StudioWorkspace({
       return;
     }
     try {
-      const result = await resolveVideoLink(sourceUrl, session.access_token);
-      setResolveResult(result);
+      const result = await runViralPipeline({ source_url: sourceUrl, language: locale }, session.access_token);
+      setResolveResult({
+        ok: result.ok,
+        platform: result.metadata?.platform || "douyin",
+        title: result.metadata?.title || "",
+        description: result.metadata?.description || "",
+        duration: result.metadata?.duration || 0,
+        thumbnail: result.metadata?.thumbnail || "",
+        webpage_url: result.metadata?.webpage_url || sourceUrl,
+        downloadable: Boolean(result.metadata?.downloadable),
+        fallback_reason: result.fallback_reason,
+      });
+      setCurrentAnalysis(result.analysis);
+      setRewriteVersions(result.rewrites || []);
       setActiveStep(3);
       if (!result.ok) {
+        setCurrentAnalysis(null);
+        setRewriteVersions([]);
         setNotice(result.fallback_reason || t.fallback);
       }
     } catch (error) {
       setActiveStep(3);
+      setCurrentAnalysis(null);
+      setRewriteVersions([]);
       setNotice(error instanceof Error ? error.message : t.fallback);
     }
   }
@@ -171,7 +217,8 @@ export function StudioWorkspace({
           <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
             <h2 className="text-lg font-semibold text-white">{t.rewrites}</h2>
             <div className="mt-4 grid gap-3">
-              {t.rewriteSamples.map(([title, script]) => (
+              {displayRewrites.length > 0 ? (
+                displayRewrites.map(([title, script]) => (
                 <article key={title} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <h3 className="font-semibold text-cyan">{title}</h3>
@@ -202,7 +249,10 @@ export function StudioWorkspace({
                   </div>
                   <p className="mt-3 text-sm leading-7 text-slate-300">{script}</p>
                 </article>
-              ))}
+                ))
+              ) : (
+                <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-slate-500">{hasStarted ? waitingLabel : t.empty}</div>
+              )}
             </div>
           </section>
         </section>
@@ -232,14 +282,13 @@ export function StudioWorkspace({
               <FileText className="text-cyan" size={20} />
               {t.topic}
             </h2>
+            {!hasStarted ? <p className="mt-3 inline-flex rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1 text-xs font-semibold text-cyan">{sampleLabel}</p> : null}
             <div className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
-              <InfoRow label={t.topic} value={t.sampleAnalysis.topic} />
-              <InfoRow label={t.hook} value={t.sampleAnalysis.hook} />
-              <InfoRow label={t.pain} value={t.sampleAnalysis.pain} />
-              <InfoRow label={t.selling} value={t.sampleAnalysis.selling} />
-              <InfoRow label={t.cta} value={t.sampleAnalysis.cta} />
-              <InfoRow label={t.structure} value={t.sampleAnalysis.structure} />
-              <InfoRow label={t.template} value={t.sampleAnalysis.template} />
+              {hasStarted && !currentAnalysis ? (
+                <div className="rounded-md border border-white/10 bg-white/[0.035] p-3 text-slate-500">{waitingLabel}</div>
+              ) : (
+                analysisRows.map(([label, value]) => <InfoRow key={label} label={label} value={hasStarted ? value || waitingLabel : value} />)
+              )}
             </div>
             <Link className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-cyan hover:text-cyan/80" href="/studio/viral-analyzer">
               {t.advancedAnalyzer}
@@ -254,6 +303,7 @@ export function StudioWorkspace({
           <p className="mt-2 text-sm leading-6 text-slate-400">{t.avatarStudioSubtitle}</p>
         </div>
         <TaskForm
+          key={avatarFormVersion}
           userEmail={userEmail}
           remainingQuota={remainingQuota}
           quotaLoadFailed={quotaLoadFailed}
