@@ -256,6 +256,17 @@ export type ViralAnalyzeResult = {
   };
 };
 
+export type VideoLinkResolveErrorCode =
+  | ""
+  | "no_url"
+  | "non_douyin_url"
+  | "redirect_failed"
+  | "redirect_timeout"
+  | "metadata_blocked"
+  | "not_downloadable"
+  | "resolver_timeout"
+  | "unknown_error";
+
 export type VideoLinkResolveResult = {
   ok: boolean;
   platform: "douyin" | "unknown" | string;
@@ -266,6 +277,9 @@ export type VideoLinkResolveResult = {
   webpage_url: string;
   downloadable: boolean;
   fallback_reason: string;
+  errorCode: VideoLinkResolveErrorCode;
+  inputUrl: string;
+  fallbackActions: Array<"upload_video" | "paste_script" | "check_link" | string>;
 };
 
 export type ViralPipelineStatus =

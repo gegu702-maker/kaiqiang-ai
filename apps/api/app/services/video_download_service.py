@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
+from app.services.video_link_resolver import DOUYIN_REQUEST_HEADERS
 
 DOWNLOAD_FALLBACK = "该视频暂不支持自动解析，请上传视频继续分析。"
 
@@ -38,8 +39,10 @@ def _download_with_ytdlp(url: str, work_dir: Path) -> DownloadedVideo:
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "http_headers": DOUYIN_REQUEST_HEADERS,
         "retries": 2,
         "fragment_retries": 2,
+        "extractor_retries": 2,
         "socket_timeout": 30,
     }
     try:

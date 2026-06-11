@@ -201,7 +201,19 @@ export async function resolveVideoLink(sourceUrl: string, accessToken?: string):
     body: JSON.stringify({ source_url: sourceUrl }),
     cache: "no-store",
   });
-  return parseResponse<VideoLinkResolveResult>(response, { url: `${API_URL}/api/viral/link/resolve`, method: "POST" });
+  const payload = await parseResponse<
+    VideoLinkResolveResult & {
+      error_code?: VideoLinkResolveResult["errorCode"];
+      input_url?: string;
+      fallback_actions?: VideoLinkResolveResult["fallbackActions"];
+    }
+  >(response, { url: `${API_URL}/api/viral/link/resolve`, method: "POST" });
+  return {
+    ...payload,
+    errorCode: payload.errorCode ?? payload.error_code ?? "",
+    inputUrl: payload.inputUrl ?? payload.input_url ?? sourceUrl,
+    fallbackActions: payload.fallbackActions ?? payload.fallback_actions ?? [],
+  };
 }
 
 export async function runViralPipeline(
