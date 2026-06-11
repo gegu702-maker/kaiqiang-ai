@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
-from app.services.video_link_resolver import DOUYIN_REQUEST_HEADERS
+from app.services.douyin_ytdlp import build_douyin_ytdlp_options, normalize_douyin_web_url
 
 DOWNLOAD_FALLBACK = "该视频暂不支持自动解析，请上传视频继续分析。"
 
@@ -25,52 +25,47 @@ class DownloadedVideo:
 
 
 def _download_with_ytdlp(url: str, work_dir: Path) -> DownloadedVideo:
+    normalized_url = normalize_douyin_web_url(url)
     try:
         from yt_dlp import YoutubeDL
     except ImportError:
-        return DownloadedVideo(ok=False, webpage_url=url, fallback_reason="服务端未安装 yt-dlp，暂时无法下载视频。")
+        return DownloadedVideo(ok=False, webpage_url=normalized_url, fallback_reason="服务端未安装 yt-dlp，暂时无法下载视频。")
 
     work_dir.mkdir(parents=True, exist_ok=True)
-    options = {
-        "format": "bv*+ba/best",
-        "merge_output_format": "mp4",
-        "outtmpl": str(work_dir / "%(id)s.%(ext)s"),
-        "max_filesize": settings.viral_max_download_mb * 1024 * 1024,
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "http_headers": DOUYIN_REQUEST_HEADERS,
-        "retries": 2,
-        "fragment_retries": 2,
-        "extractor_retries": 2,
-        "socket_timeout": 30,
-    }
+    options = build_douyin_ytdlp_options("download")
+    options.update(
+        {
+            "merge_output_format": "mp4",
+            "outtmpl": str(work_dir / "%(id)s.%(ext)s"),
+            "max_filesize": settings.viral_max_download_mb * 1024 * 1024,
+        }
+    )
     try:
         with YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(normalized_url, download=True)
     except Exception:
-        return DownloadedVideo(ok=False, webpage_url=url, fallback_reason=DOWNLOAD_FALLBACK)
+        return DownloadedVideo(ok=False, webpage_url=normalized_url, fallback_reason=DOWNLOAD_FALLBACK)
 
     if not isinstance(info, dict):
-        return DownloadedVideo(ok=False, webpage_url=url, fallback_reason=DOWNLOAD_FALLBACK)
+        return DownloadedVideo(ok=False, webpage_url=normalized_url, fallback_reason=DOWNLOAD_FALLBACK)
 
     duration = int(info.get("duration") or 0)
     if duration and duration > settings.viral_max_video_duration_seconds:
         return DownloadedVideo(
             ok=False,
-            webpage_url=str(info.get("webpage_url") or url),
+            webpage_url=str(info.get("webpage_url") or normalized_url),
             fallback_reason=f"当前仅支持 {settings.viral_max_video_duration_seconds} 秒以内的视频，请上传较短视频继续分析。",
         )
 
     video_path = _find_downloaded_file(work_dir, info)
     if not video_path:
-        return DownloadedVideo(ok=False, webpage_url=str(info.get("webpage_url") or url), fallback_reason=DOWNLOAD_FALLBACK)
+        return DownloadedVideo(ok=False, webpage_url=str(info.get("webpage_url") or normalized_url), fallback_reason=DOWNLOAD_FALLBACK)
 
     max_bytes = settings.viral_max_download_mb * 1024 * 1024
     if video_path.stat().st_size > max_bytes:
         return DownloadedVideo(
             ok=False,
-            webpage_url=str(info.get("webpage_url") or url),
+            webpage_url=str(info.get("webpage_url") or normalized_url),
             fallback_reason=f"当前仅支持 {settings.viral_max_download_mb}MB 以内的视频，请上传较小视频继续分析。",
         )
 
@@ -81,7 +76,7 @@ def _download_with_ytdlp(url: str, work_dir: Path) -> DownloadedVideo:
         description=str(info.get("description") or info.get("fulltitle") or ""),
         duration=duration,
         thumbnail=str(info.get("thumbnail") or ""),
-        webpage_url=str(info.get("webpage_url") or url),
+        webpage_url=str(info.get("webpage_url") or normalized_url),
     )
 
 
