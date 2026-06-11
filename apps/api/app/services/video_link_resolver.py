@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.services.douyin_ytdlp import DOUYIN_REQUEST_HEADERS, build_douyin_ytdlp_options, normalize_douyin_web_url
+
 DOUYIN_FALLBACK = "当前抖音链接暂时无法自动解析，请粘贴视频文案或上传视频继续分析。"
 URL_RE = re.compile(
     r"(?:(?:https?://)?(?:v\.)?douyin\.com|(?:https?://)?(?:www\.)?iesdouyin\.com|https?://[^\s\"'<>，。；、]+)"
@@ -15,15 +17,6 @@ URL_RE = re.compile(
     re.IGNORECASE,
 )
 TRAILING_URL_PUNCTUATION = ")]}>,.，。；;、！!？?"
-DOUYIN_REQUEST_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-    ),
-    "Referer": "https://www.douyin.com/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-}
 FALLBACK_ACTIONS = ["upload_video", "paste_script", "check_link"]
 
 ERROR_MESSAGES = {
@@ -147,47 +140,38 @@ def _fallback(
 
 
 def _metadata_with_ytdlp(url: str) -> dict[str, Any]:
+    normalized_url = normalize_douyin_web_url(url)
     try:
         from yt_dlp import YoutubeDL
     except ImportError:
         return _fallback(
-            webpage_url=url,
+            webpage_url=normalized_url,
             reason="服务端未安装 yt-dlp，暂时无法自动解析抖音链接，请粘贴视频文案或上传视频继续分析。",
             error_code="unknown_error",
-            input_url=url,
+            input_url=normalized_url,
         )
 
-    options = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "noplaylist": True,
-        "extract_flat": False,
-        "http_headers": DOUYIN_REQUEST_HEADERS,
-        "retries": 3,
-        "extractor_retries": 3,
-        "socket_timeout": 20,
-    }
+    options = build_douyin_ytdlp_options("metadata")
     try:
         with YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(normalized_url, download=False)
     except Exception as error:
         message = str(error).lower()
         if "timed out" in message or "timeout" in message:
-            return _fallback(webpage_url=url, error_code="resolver_timeout", input_url=url)
+            return _fallback(webpage_url=normalized_url, error_code="resolver_timeout", input_url=normalized_url)
         if any(token in message for token in ["403", "forbidden", "blocked", "captcha", "cookies", "login", "sign in"]):
-            return _fallback(webpage_url=url, error_code="metadata_blocked", input_url=url)
+            return _fallback(webpage_url=normalized_url, error_code="metadata_blocked", input_url=normalized_url)
         if "unsupported url" in message or "no video formats" in message:
-            return _fallback(webpage_url=url, error_code="not_downloadable", input_url=url)
-        return _fallback(webpage_url=url, error_code="unknown_error", input_url=url)
+            return _fallback(webpage_url=normalized_url, error_code="not_downloadable", input_url=normalized_url)
+        return _fallback(webpage_url=normalized_url, error_code="unknown_error", input_url=normalized_url)
 
     if not isinstance(info, dict):
-        return _fallback(webpage_url=url, error_code="unknown_error", input_url=url)
+        return _fallback(webpage_url=normalized_url, error_code="unknown_error", input_url=normalized_url)
 
     formats = info.get("formats") or []
     downloadable = bool(info.get("url") or formats)
     if not downloadable:
-        return _fallback(webpage_url=info.get("webpage_url") or url, error_code="not_downloadable", input_url=url)
+        return _fallback(webpage_url=info.get("webpage_url") or normalized_url, error_code="not_downloadable", input_url=normalized_url)
 
     return ResolvedVideoLink(
         ok=True,
@@ -196,11 +180,11 @@ def _metadata_with_ytdlp(url: str) -> dict[str, Any]:
         description=str(info.get("description") or info.get("fulltitle") or ""),
         duration=int(info.get("duration") or 0),
         thumbnail=str(info.get("thumbnail") or ""),
-        webpage_url=str(info.get("webpage_url") or url),
+        webpage_url=str(info.get("webpage_url") or normalized_url),
         downloadable=True,
         fallback_reason="",
         error_code="",
-        input_url=url,
+        input_url=normalized_url,
         fallback_actions=[],
     ).to_dict()
 
@@ -211,7 +195,7 @@ async def resolve_video_link(source_url: str) -> dict[str, Any]:
         return _fallback(platform="unknown", error_code="no_url", input_url=source_url)
 
     try:
-        expanded_url = await expand_short_url(extracted_url)
+        expanded_url = normalize_douyin_web_url(await expand_short_url(extracted_url))
     except ResolverError as error:
         return _fallback(webpage_url=extracted_url, error_code=error.error_code, input_url=source_url)
 

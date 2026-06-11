@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     viral_max_download_mb: int = 100
     viral_pipeline_timeout_seconds: int = 180
     viral_pipeline_allowed_emails: str = ""
+    douyin_cookie_file: str = ""
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
     volcengine_tts_app_id: str = ""
