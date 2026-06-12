@@ -54,7 +54,7 @@ SERVER_API_URL=https://your-fastapi-api.example.com
 | `SUPABASE_SUBTITLE_BUCKET` | `subtitles` | Yes |
 | `ADMIN_API_KEY` | same as Vercel | Yes |
 | `WEB_ORIGIN` | `https://kaiqiang.ai` | Yes |
-| `CORS_ORIGINS` | `https://kaiqiang.ai,https://www.kaiqiang.ai` | Yes |
+| `CORS_ORIGINS` | `https://kaiqiang.ai,https://www.kaiqiang.ai,https://kaiqiang-58mkzjhmo-kaiqiang-ai-s-projects.vercel.app` | Yes |
 | `MINIMAX_API_KEY` | MiniMax key | Optional for current semi-auto flow |
 | `MINIMAX_GROUP_ID` | MiniMax group id | Optional for current semi-auto flow |
 | `COSYVOICE_URL` | `http://localhost:50000` | Optional |
