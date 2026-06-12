@@ -79,7 +79,18 @@ async def render_static_avatar_video(
         except subprocess.TimeoutExpired as error:
             raise HTTPException(status_code=504, detail="FFmpeg static avatar render timed out") from error
         if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"FFmpeg static avatar render failed: {result.stderr[-1200:]}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": "FFmpeg static avatar render failed",
+                    "command": cmd,
+                    "returncode": result.returncode,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "output_exists": output_path.exists(),
+                    "output_size": output_path.stat().st_size if output_path.exists() else 0,
+                },
+            )
 
         video_bytes = output_path.read_bytes()
 
