@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     supabase_subtitle_bucket: str = "subtitles"
     admin_api_key: str = "dev-admin-key"
     web_origin: str = "http://localhost:3000"
-    cors_origins: str = "https://kaiqiang.ai,https://www.kaiqiang.ai,http://localhost:3000,http://127.0.0.1:3000"
+    cors_origins: str = "https://kaiqiang.ai,https://www.kaiqiang.ai,https://kaiqiang-58mkzjhmo-kaiqiang-ai-s-projects.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
     minimax_api_key: str = ""
     minimax_group_id: str = ""
     cosyvoice_url: str = "http://localhost:50000"
@@ -114,7 +114,13 @@ class Settings(BaseSettings):
         origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
         if self.web_origin not in origins:
             origins.append(self.web_origin)
-        for origin in ["https://kaiqiang.ai", "https://www.kaiqiang.ai", "http://localhost:3000", "http://127.0.0.1:3000"]:
+        for origin in [
+            "https://kaiqiang.ai",
+            "https://www.kaiqiang.ai",
+            "https://kaiqiang-58mkzjhmo-kaiqiang-ai-s-projects.vercel.app",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]:
             if origin not in origins:
                 origins.append(origin)
         return origins
