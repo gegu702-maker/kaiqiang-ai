@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import logging
 import subprocess
 import tempfile
 from pathlib import Path
@@ -13,6 +14,8 @@ from supabase import Client
 from app.core.config import settings
 from app.services.storage import upload_public_bytes
 
+logger = logging.getLogger(__name__)
+
 
 async def render_static_avatar_video(
     supabase: Client,
@@ -22,15 +25,11 @@ async def render_static_avatar_video(
     avatar_image_url: str | None = None,
     duration: float | None = None,
 ) -> str:
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0), follow_redirects=True) as client:
         audio_response = await client.get(audio_url)
         audio_response.raise_for_status()
         audio_bytes = audio_response.content
-        avatar_bytes = None
-        if avatar_image_url:
-            avatar_response = await client.get(avatar_image_url)
-            avatar_response.raise_for_status()
-            avatar_bytes = avatar_response.content
+    avatar_bytes = await _fetch_optional_avatar_image(avatar_image_url)
 
     duration_seconds = max(1.0, float(duration or 5.0))
 
@@ -75,7 +74,10 @@ async def render_static_avatar_video(
             "+faststart",
             str(output_path),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=45)
+        except subprocess.TimeoutExpired as error:
+            raise HTTPException(status_code=504, detail="FFmpeg static avatar render timed out") from error
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"FFmpeg static avatar render failed: {result.stderr[-1200:]}")
 
@@ -89,6 +91,19 @@ async def render_static_avatar_video(
         ".mp4",
         "video/mp4",
     )
+
+
+async def _fetch_optional_avatar_image(avatar_image_url: str | None) -> bytes | None:
+    if not avatar_image_url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(4.0, connect=2.0), follow_redirects=True) as client:
+            response = await client.get(avatar_image_url)
+            response.raise_for_status()
+            return response.content
+    except httpx.HTTPError as error:
+        logger.warning("Static avatar image unavailable; using generated fallback avatar. url=%s error=%s", avatar_image_url, error)
+        return None
 
 
 async def package_dynamic_avatar_video(
