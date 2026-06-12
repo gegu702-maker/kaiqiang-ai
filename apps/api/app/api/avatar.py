@@ -5,6 +5,7 @@ import traceback
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 from supabase import Client
 
 from app.core.auth import get_authenticated_user, get_bearer_token
@@ -12,7 +13,9 @@ from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.services.billing import assert_generation_quota, log_generation_usage
 from app.services.autodl_client import ensure_gpu_ready
+from app.services.avatar_templates import avatar_template_public_url, get_avatar_template
 from app.services.musetalk_client import check_musetalk_health, generate_avatar_video_with_musetalk
+from app.services.static_avatar_video import render_static_avatar_video
 from app.services.storage import upload_public_file
 from app.services.tts import synthesize_speech_to_storage
 
@@ -36,11 +39,79 @@ AUDIO_TYPES = {
 }
 
 
+class StaticAvatarVideoRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    voice_type: str | None = None
+    avatar_template_id: str | None = None
+    speed_ratio: float = 1.0
+    volume_ratio: float = 1.0
+    pitch_ratio: float = 1.0
+
+
 @router.get("/health")
 async def avatar_health() -> dict:
     return {
         "status": "ok",
         "musetalk": await check_musetalk_health(),
+    }
+
+
+@router.post("/static-video")
+async def generate_static_avatar_video(payload: StaticAvatarVideoRequest, supabase: Client = Depends(get_supabase)) -> dict:
+    template = get_avatar_template(payload.avatar_template_id)
+    selected_voice_type = payload.voice_type or template.voice_type
+
+    try:
+        tts_result = await synthesize_speech_to_storage(
+            supabase,
+            text=payload.text,
+            folder="avatar/static-video/tts",
+            voice_type=selected_voice_type,
+            speed_ratio=payload.speed_ratio,
+            volume_ratio=payload.volume_ratio,
+            pitch_ratio=payload.pitch_ratio,
+        )
+    except HTTPException as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_static_video_error("tts_failed", "TTS 失败", error.detail),
+        ) from error
+    except Exception as error:
+        logger.exception("Static avatar TTS failed")
+        raise HTTPException(
+            status_code=502,
+            detail=_static_video_error("tts_failed", "TTS 失败", str(error)),
+        ) from error
+
+    try:
+        video_url = await render_static_avatar_video(
+            supabase,
+            audio_url=tts_result["audio_url"],
+            subtitle_text=payload.text,
+            avatar_image_url=avatar_template_public_url(template),
+            duration=tts_result.get("duration"),
+        )
+    except HTTPException as error:
+        code = _classify_static_video_error(error)
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_static_video_error(code, _static_video_error_title(code), error.detail),
+        ) from error
+    except Exception as error:
+        logger.exception("Static avatar video render failed")
+        raise HTTPException(
+            status_code=502,
+            detail=_static_video_error("ffmpeg_failed", "FFmpeg 失败", str(error)),
+        ) from error
+
+    return {
+        "success": True,
+        "video_url": video_url,
+        "audio_url": tts_result["audio_url"],
+        "provider": tts_result["provider"],
+        "voice_type": tts_result.get("voice_type") or selected_voice_type or settings.volcengine_tts_voice_type,
+        "avatar_template_id": template.id,
+        "avatar_template_name": template.name,
     }
 
 
@@ -241,3 +312,42 @@ def _serialize_avatar_task(task: dict) -> dict:
         "result_url": result_url,
         "result_video_url": result_url,
     }
+
+
+def _classify_static_video_error(error: HTTPException) -> str:
+    detail = error.detail
+    text = _detail_text(detail).lower()
+    if error.status_code == 504 or "timed out" in text or "timeout" in text:
+        return "timeout"
+    if isinstance(detail, dict) and detail.get("error") == "storage_upload_failed":
+        return "storage_upload_failed"
+    if "storage" in text or "supabase" in text or "upload" in text:
+        return "storage_upload_failed"
+    return "ffmpeg_failed"
+
+
+def _static_video_error_title(code: str) -> str:
+    return {
+        "tts_failed": "TTS 失败",
+        "ffmpeg_failed": "FFmpeg 失败",
+        "storage_upload_failed": "Storage 上传失败",
+        "timeout": "生成超时",
+    }.get(code, "视频生成失败")
+
+
+def _static_video_error(code: str, message: str, detail: object) -> dict:
+    return {
+        "success": False,
+        "error": code,
+        "message": message,
+        "detail": detail,
+    }
+
+
+def _detail_text(detail: object) -> str:
+    if isinstance(detail, str):
+        return detail
+    if isinstance(detail, dict):
+        values = [detail.get("message"), detail.get("error"), detail.get("detail")]
+        return " ".join(str(value) for value in values if value)
+    return str(detail)

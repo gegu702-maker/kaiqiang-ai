@@ -173,7 +173,9 @@ type TTSTestResponse = {
   audio_url?: string;
   provider?: string;
   voice_type?: string;
-  detail?: string;
+  detail?: unknown;
+  error?: string;
+  message?: string;
 };
 
 type AvatarVideoTestResponse = TTSTestResponse & {
@@ -191,9 +193,10 @@ type TaskFormProps = {
   voiceCloneEnabled?: boolean;
   voiceClones?: VoiceClone[];
   livePortraitEnabled?: boolean;
+  initialScriptText?: string;
 };
 
-export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], livePortraitEnabled = false }: TaskFormProps) {
+export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], livePortraitEnabled = false, initialScriptText = "" }: TaskFormProps) {
   const { locale } = useLanguage();
   const current = copy[locale];
   const displayedRemainingQuota = userEmail && remainingQuota === undefined ? 3 : remainingQuota;
@@ -207,7 +210,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [personalImageName, setPersonalImageName] = useState("");
   const [useDigitalHuman, setUseDigitalHuman] = useState(true);
   const [draftRestored, setDraftRestored] = useState(false);
-  const [ttsText, setTtsText] = useState(current.ttsPlaceholder);
+  const [ttsText, setTtsText] = useState(initialScriptText || current.ttsPlaceholder);
   const [ttsVoiceType, setTtsVoiceType] = useState("BV001_streaming");
   const [avatarTemplateId, setAvatarTemplateId] = useState("business_female_01");
   const [ttsStatus, setTtsStatus] = useState<TTSStatus>("idle");
@@ -219,6 +222,10 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [videoUrl, setVideoUrl] = useState("");
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoMode, setVideoMode] = useState<"static" | "liveportrait">("static");
+
+  useEffect(() => {
+    if (initialScriptText) setTtsText(initialScriptText);
+  }, [initialScriptText]);
 
   useEffect(() => {
     const form = document.getElementById("task-submit-form") as HTMLFormElement | null;
@@ -327,7 +334,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       });
       const payload = (await response.json().catch(() => ({}))) as TTSTestResponse;
       if (!response.ok || !payload.success || !payload.audio_url) {
-        const detail = payload.detail || "";
+        const detail = readApiError(payload);
         const isProviderError = /provider|VOLCENGINE|quota|permission|voice_type|invalid/i.test(detail);
         throw new Error(detail || (isProviderError ? current.ttsProviderError : current.ttsFailed));
       }
@@ -376,7 +383,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       progressTimer = window.setInterval(() => {
         setVideoProgress((currentProgress) => Math.min(currentProgress + 9, 82));
       }, 2500);
-      const response = await fetch(videoMode === "liveportrait" ? "/api/debug/liveportrait-test" : "/api/debug/avatar-video-test", {
+      const response = await fetch(videoMode === "liveportrait" ? "/api/debug/liveportrait-test" : "/api/avatar/static-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, voice_type: ttsVoiceType, avatar_template_id: avatarTemplateId }),
@@ -384,7 +391,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
       const resolvedVideoUrl = payload.final_video_url || payload.video_url || payload.dynamic_avatar_video_url;
       if (!response.ok || !payload.success || !resolvedVideoUrl) {
-        throw new Error(payload.detail || current.videoFailed);
+        throw new Error(readApiError(payload) || current.videoFailed);
       }
       setVideoUrl(resolvedVideoUrl);
       if (payload.audio_url) setTtsAudioUrl(payload.audio_url);
@@ -829,4 +836,15 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       </Card>
     </form>
   );
+}
+
+function readApiError(payload: TTSTestResponse): string {
+  if (payload.message) return payload.message;
+  if (payload.error) return payload.error;
+  if (typeof payload.detail === "string") return payload.detail;
+  if (payload.detail && typeof payload.detail === "object") {
+    const detail = payload.detail as { message?: unknown; error?: unknown; detail?: unknown };
+    return String(detail.message ?? detail.error ?? detail.detail ?? "");
+  }
+  return "";
 }

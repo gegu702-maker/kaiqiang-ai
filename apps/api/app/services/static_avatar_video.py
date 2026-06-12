@@ -102,14 +102,24 @@ async def render_static_avatar_video(
 
         video_bytes = output_path.read_bytes()
 
-    return upload_public_bytes(
-        supabase,
-        settings.supabase_video_bucket,
-        video_bytes,
-        "debug/static-avatar",
-        ".mp4",
-        "video/mp4",
-    )
+    try:
+        return upload_public_bytes(
+            supabase,
+            settings.supabase_video_bucket,
+            video_bytes,
+            "debug/static-avatar",
+            ".mp4",
+            "video/mp4",
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "success": False,
+                "error": "storage_upload_failed",
+                "message": f"Storage 上传失败：{error}",
+            },
+        ) from error
 
 
 async def _fetch_optional_avatar_image(avatar_image_url: str | None) -> bytes | None:

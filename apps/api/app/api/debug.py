@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
+import secrets
 from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -195,7 +196,23 @@ async def debug_tts_test(payload: TTSTestRequest) -> dict:
     }
 
 
-@router.post("/api/debug/avatar-video-test")
+def verify_debug_access(x_admin_key: str | None = Header(default=None)) -> None:
+    if _is_development_origin():
+        return
+    expected = settings.admin_api_key.strip()
+    if not expected:
+        raise HTTPException(status_code=500, detail="ADMIN_API_KEY is not configured on API service")
+    candidate = (x_admin_key or "").replace("ADMIN_API_KEY=", "", 1).strip()
+    if not candidate or not secrets.compare_digest(candidate, expected):
+        raise HTTPException(status_code=401, detail="Debug avatar video endpoint requires admin access")
+
+
+def _is_development_origin() -> bool:
+    origins = [settings.public_site_url, settings.web_origin]
+    return any(origin.startswith("http://localhost") or origin.startswith("http://127.0.0.1") for origin in origins if origin)
+
+
+@router.post("/api/debug/avatar-video-test", dependencies=[Depends(verify_debug_access)])
 async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict:
     template = get_avatar_template(payload.avatar_template_id)
     supabase = get_supabase()

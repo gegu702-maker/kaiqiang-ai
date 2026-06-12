@@ -145,6 +145,9 @@ export function StudioWorkspace({
         webpage_url: result.metadata?.webpage_url || sourceUrl,
         downloadable: Boolean(result.metadata?.downloadable),
         fallback_reason: result.fallback_reason,
+        errorCode: "",
+        inputUrl: sourceUrl,
+        fallbackActions: [],
       });
       setCurrentAnalysis(result.analysis);
       setRewriteVersions(result.rewrites || []);
