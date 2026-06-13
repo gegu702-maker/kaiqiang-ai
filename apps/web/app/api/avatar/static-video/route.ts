@@ -24,6 +24,7 @@ function errorMessage(data: unknown): string {
 }
 
 export async function POST(request: Request) {
+  const authorization = request.headers.get("authorization");
   let payload: unknown;
   try {
     payload = await request.json();
@@ -35,7 +36,10 @@ export async function POST(request: Request) {
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(authorization ? { Authorization: authorization } : {}),
+      },
       body: JSON.stringify(payload),
       cache: "no-store",
     });

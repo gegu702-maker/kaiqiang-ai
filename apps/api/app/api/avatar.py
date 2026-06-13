@@ -4,11 +4,12 @@ import logging
 import traceback
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Security, UploadFile
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from supabase import Client
 
-from app.core.auth import get_authenticated_user, get_bearer_token
+from app.core.auth import bearer_scheme, get_authenticated_user, get_bearer_token
 from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.services.billing import assert_generation_quota, log_generation_usage
@@ -67,9 +68,14 @@ async def avatar_health() -> dict:
 
 
 @router.post("/static-video")
-async def generate_static_avatar_video(payload: StaticAvatarVideoRequest, supabase: Client = Depends(get_supabase)) -> dict:
+async def generate_static_avatar_video(
+    payload: StaticAvatarVideoRequest,
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
     template = get_avatar_template(payload.avatar_template_id)
     selected_voice_type = payload.voice_type or template.voice_type
+    user = _optional_authenticated_user(supabase, credentials)
 
     try:
         tts_result = await synthesize_speech_to_storage(
@@ -114,6 +120,19 @@ async def generate_static_avatar_video(payload: StaticAvatarVideoRequest, supaba
             detail=_static_video_error("ffmpeg_failed", "FFmpeg 失败", str(error)),
         ) from error
 
+    task = None
+    if user:
+        try:
+            task = _create_completed_avatar_task(
+                supabase,
+                user["id"],
+                video_url=avatar_template_public_url(template),
+                audio_url=tts_result["audio_url"],
+                result_url=video_url,
+            )
+        except Exception:
+            logger.exception("Static avatar history task creation failed")
+
     return {
         "success": True,
         "video_url": video_url,
@@ -122,6 +141,8 @@ async def generate_static_avatar_video(payload: StaticAvatarVideoRequest, supaba
         "voice_type": tts_result.get("voice_type") or selected_voice_type or settings.volcengine_tts_voice_type,
         "avatar_template_id": template.id,
         "avatar_template_name": template.name,
+        "task_id": task["id"] if task else None,
+        "task": _serialize_avatar_task(task) if task else None,
     }
 
 
@@ -358,6 +379,27 @@ def _create_avatar_task(supabase: Client, user_id: str, video_url: str, audio_ur
     return response.data[0]
 
 
+def _create_completed_avatar_task(supabase: Client, user_id: str, video_url: str, audio_url: str, result_url: str) -> dict:
+    response = (
+        supabase.table("avatar_tasks")
+        .insert(
+            {
+                "user_id": user_id,
+                "video_url": video_url,
+                "audio_url": audio_url,
+                "status": "completed",
+                "progress_stage": "completed",
+                "result_url": result_url,
+                "last_gpu_used_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=500, detail="Failed to create avatar task")
+    return response.data[0]
+
+
 def _dynamic_template_video_url(template_id: str | None) -> str:
     selected_template_id = template_id or "test_musetalk_001"
     if selected_template_id != "test_musetalk_001":
@@ -394,9 +436,34 @@ def _serialize_avatar_task(task: dict) -> dict:
     result_url = task.get("result_url") or task.get("result_video_url")
     return {
         **task,
+        "name": _avatar_task_name(task),
+        "video_mode": _avatar_task_mode(task),
         "result_url": result_url,
         "result_video_url": result_url,
     }
+
+
+def _optional_authenticated_user(supabase: Client, credentials: HTTPAuthorizationCredentials | None) -> dict | None:
+    if not credentials or credentials.scheme.lower() != "bearer" or not credentials.credentials:
+        return None
+    try:
+        return get_authenticated_user(supabase, credentials.credentials.strip())
+    except HTTPException:
+        logger.info("Ignoring invalid optional auth token for static avatar history")
+        return None
+
+
+def _avatar_task_mode(task: dict) -> str:
+    result_url = str(task.get("result_url") or task.get("result_video_url") or "")
+    audio_url = str(task.get("audio_url") or "")
+    video_url = str(task.get("video_url") or "")
+    if "/debug/static-avatar/" in result_url or "/avatar/static-video/" in audio_url or "/avatar/static-video/" in video_url:
+        return "static"
+    return "dynamic"
+
+
+def _avatar_task_name(task: dict) -> str:
+    return "静态口播视频" if _avatar_task_mode(task) == "static" else "动态数字人视频"
 
 
 def _classify_static_video_error(error: HTTPException) -> str:

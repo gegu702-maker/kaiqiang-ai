@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useActionState } from "react";
-import { BriefcaseBusiness, CheckCircle2, ChevronDown, Clapperboard, Mail, Megaphone, PlayCircle, ShoppingBag, Sparkles, UsersRound } from "lucide-react";
+import { BriefcaseBusiness, CheckCircle2, ChevronDown, Clapperboard, Download, Mail, Megaphone, PlayCircle, ShoppingBag, Sparkles, UsersRound } from "lucide-react";
 
 import { joinWaitlistAction } from "@/app/actions/waitlist";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -18,6 +18,7 @@ const copy = {
     after: "产品介绍",
     placeholder: "真实案例生成中",
     previewSoon: "真实视频",
+    downloadVideo: "下载 MP4",
     examplesEyebrow: "案例展示",
     examplesTitle: "生产环境生成的真实案例视频",
     trustedTitle: "面向未来创作者",
@@ -48,6 +49,7 @@ const copy = {
     after: "Product Demo",
     placeholder: "Real case generating",
     previewSoon: "Real video",
+    downloadVideo: "Download MP4",
     examplesEyebrow: "Examples",
     examplesTitle: "Real production-generated customer examples",
     trustedTitle: "Trusted By Future Creators",
@@ -126,6 +128,12 @@ function DemoVideo({ label, item, locale, placeholder }: { label: string; item: 
         <video className="h-full w-full object-cover" src={item.videoUrl || undefined} poster={item.thumbnailUrl} controls muted autoPlay loop playsInline />
         {!item.videoUrl ? <p className="absolute bottom-3 left-3 right-3 rounded-md bg-slate-950/72 px-3 py-2 text-xs leading-5 text-white backdrop-blur">{placeholder}</p> : null}
       </div>
+      {item.videoUrl ? (
+        <a href={item.videoUrl} download className="flex h-10 items-center justify-center gap-2 border-t border-slate-100 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+          <Download size={15} />
+          MP4
+        </a>
+      ) : null}
     </article>
   );
 }
@@ -163,7 +171,7 @@ function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
                       ) : (
                         <Image src={item.thumbnailUrl} alt={`${title} preview`} fill sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw" className="object-cover opacity-70" />
                       )}
-                      <div className="absolute inset-0 grid place-items-center bg-slate-950/30 text-white">
+                      <div className="pointer-events-none absolute inset-0 grid place-items-center bg-slate-950/30 text-white">
                         <div className="flex items-center gap-2 rounded-full bg-slate-950/70 px-3 py-2 text-xs font-semibold backdrop-blur">
                           <PlayCircle size={15} />
                           {item.videoUrl ? item.category : current.previewSoon}
@@ -171,6 +179,12 @@ function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
                       </div>
                     </div>
                   </div>
+                  {item.videoUrl ? (
+                    <a href={item.videoUrl} download className="mt-3 inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                      <Download size={15} />
+                      {current.downloadVideo}
+                    </a>
+                  ) : null}
                 </div>
               </article>
             );

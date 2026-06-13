@@ -1,8 +1,8 @@
 "use client";
 
-import { ChangeEvent, useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { Check, Download, ImagePlus, Loader2, Mail, Mic2, Package, ScrollText, Target, Video } from "lucide-react";
+import { Check, Download, ImagePlus, Loader2, Mail, Mic2, Package, RefreshCw, ScrollText, Target, Video } from "lucide-react";
 
 import { submitTaskAction } from "@/app/actions/tasks";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -47,7 +47,7 @@ const copy = {
     ttsGenerate: "生成语音",
     ttsGenerating: "生成中",
     ttsSuccess: "语音已生成",
-    ttsFailed: "TTS 失败",
+    ttsFailed: "语音生成失败",
     ttsNetworkError: "网络错误，请稍后重试。",
     ttsProviderError: "provider 错误，请检查 Volcengine 配置。",
     ttsDownload: "下载 MP3",
@@ -58,14 +58,31 @@ const copy = {
     videoDescription: "静态视频快速生成；动态数字人使用 MuseTalk，生成耗时较长，请保持页面打开。",
     videoGenerate: "生成视频",
     videoGenerating: "视频生成中",
-    videoProcessing: "processing",
+    videoProcessing: "排队中",
     videoSuccess: "视频已生成",
     videoFailed: "视频生成失败",
     videoDownload: "下载 MP4",
     videoMode: "视频模式",
-    staticMode: "静态视频",
+    staticMode: "静态口播",
     dynamicMode: "动态数字人",
     livePortraitUnavailable: "动态数字人使用 MuseTalk，生成耗时较长，请保持页面打开。",
+    historyTitle: "最近生成记录",
+    historyEmpty: "暂无生成记录",
+    historyRefresh: "刷新",
+    historyLoadFailed: "生成记录读取失败",
+    createdAt: "创建时间",
+    status: "状态",
+    play: "播放",
+    stageLabels: {
+      queued: "排队中",
+      gpu_starting: "启动GPU",
+      model_loading: "加载模型",
+      video_generating: "生成视频",
+      uploading_result: "上传结果",
+      completed: "已完成",
+      failed: "失败",
+      running: "生成视频",
+    },
     voiceTypes: {
       BV001_streaming: "女声（BV001_streaming）",
       BV002_streaming: "男声（BV002_streaming）",
@@ -120,7 +137,7 @@ const copy = {
     ttsGenerate: "Generate Voice",
     ttsGenerating: "Generating",
     ttsSuccess: "Voice generated",
-    ttsFailed: "TTS failed",
+    ttsFailed: "Voice generation failed",
     ttsNetworkError: "Network error. Please try again.",
     ttsProviderError: "Provider error. Please check Volcengine settings.",
     ttsDownload: "Download MP3",
@@ -136,9 +153,26 @@ const copy = {
     videoFailed: "Video generation failed",
     videoDownload: "Download MP4",
     videoMode: "Video Mode",
-    staticMode: "Static Video",
+    staticMode: "Static Talking Video",
     dynamicMode: "Dynamic Avatar",
     livePortraitUnavailable: "Dynamic avatar uses MuseTalk and may take longer. Keep this page open.",
+    historyTitle: "Recent Generations",
+    historyEmpty: "No generation records yet",
+    historyRefresh: "Refresh",
+    historyLoadFailed: "Generation records failed to load",
+    createdAt: "Created",
+    status: "Status",
+    play: "Play",
+    stageLabels: {
+      queued: "Queued",
+      gpu_starting: "Starting GPU",
+      model_loading: "Loading model",
+      video_generating: "Generating video",
+      uploading_result: "Uploading result",
+      completed: "Completed",
+      failed: "Failed",
+      running: "Generating video",
+    },
     voiceTypes: {
       BV001_streaming: "Female (BV001_streaming)",
       BV002_streaming: "Male (BV002_streaming)",
@@ -199,6 +233,10 @@ type AvatarTaskResponse = {
   result_url?: string;
   result_video_url?: string;
   error_message?: string;
+  video_mode?: "static" | "dynamic";
+  name?: string;
+  created_at?: string;
+  audio_url?: string;
 };
 
 type TaskFormProps = {
@@ -239,6 +277,9 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoMode, setVideoMode] = useState<"static" | "musetalk">("static");
   const [videoProgressStage, setVideoProgressStage] = useState("");
+  const [historyTasks, setHistoryTasks] = useState<AvatarTaskResponse[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   useEffect(() => {
     if (initialScriptText) setTtsText(initialScriptText);
@@ -360,7 +401,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       setTtsStatus("success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      setTtsError(message || current.ttsNetworkError);
+      setTtsError(formatUserError(message || current.ttsNetworkError, locale));
       setTtsStatus("failed");
     }
   }
@@ -386,6 +427,43 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
     }
   }
 
+  const getSessionToken = useCallback(async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    return session?.access_token || "";
+  }, [supabase]);
+
+  const refreshAvatarHistory = useCallback(async () => {
+    const token = await getSessionToken();
+    if (!token) {
+      setHistoryTasks([]);
+      return;
+    }
+
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const response = await fetch("/api/avatar/tasks", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => [])) as AvatarTaskResponse[] | { detail?: unknown; message?: string; error?: string };
+      if (!response.ok || !Array.isArray(payload)) {
+        throw new Error(readApiError(payload) || current.historyLoadFailed);
+      }
+      setHistoryTasks(payload);
+    } catch (error) {
+      setHistoryError(formatUserError(error instanceof Error ? error.message : current.historyLoadFailed, locale));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [current.historyLoadFailed, getSessionToken, locale]);
+
+  useEffect(() => {
+    void refreshAvatarHistory();
+  }, [refreshAvatarHistory]);
+
   async function generateAvatarVideo() {
     const text = ttsText.trim();
     if (!text || videoStatus === "generating") return;
@@ -410,20 +488,26 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       if (payload.provider) setTtsProvider(payload.provider);
       setVideoProgress(100);
       setVideoStatus("success");
+      void refreshAvatarHistory();
     } catch (error) {
       setVideoProgress(0);
-      setVideoError(error instanceof Error ? error.message : current.ttsNetworkError);
+      setVideoError(formatUserError(error instanceof Error ? error.message : current.ttsNetworkError, locale));
       setVideoStatus("failed");
+      void refreshAvatarHistory();
     } finally {
       if (progressTimer) window.clearInterval(progressTimer);
     }
   }
 
   async function generateStaticAvatarVideo(text: string) {
-    setVideoProgressStage("");
+    setVideoProgressStage("queued");
+    const token = await getSessionToken();
     const response = await fetch("/api/avatar/static-video", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({ text, voice_type: ttsVoiceType, avatar_template_id: avatarTemplateId }),
     });
     const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
@@ -435,10 +519,8 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
 
   async function generateDynamicAvatarVideo(text: string) {
     setVideoProgressStage("queued");
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) {
+    const token = await getSessionToken();
+    if (!token) {
       throw new Error(current.loginHint);
     }
 
@@ -446,7 +528,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
         script_text: text,
@@ -465,7 +547,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
     if (!taskId) {
       throw new Error(current.videoFailed);
     }
-    const resultUrl = await pollDynamicAvatarTask(taskId, session.access_token);
+    const resultUrl = await pollDynamicAvatarTask(taskId, token);
     return { ...payload, success: true, video_url: resultUrl };
   }
 
@@ -489,11 +571,11 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
         return resultUrl;
       }
       if (task.status === "failed") {
-        throw new Error(task.error_message || current.videoFailed);
+        throw new Error(formatUserError(task.error_message || current.videoFailed, locale));
       }
       await new Promise((resolve) => window.setTimeout(resolve, 5000));
     }
-    throw new Error(locale === "zh" ? "MuseTalk 生成超时" : "MuseTalk generation timed out");
+    throw new Error(locale === "zh" ? "生成超时，请稍后重试" : "Generation timed out. Please try again later.");
   }
 
   function stageProgress(stage: string) {
@@ -502,9 +584,38 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       gpu_starting: 38,
       model_loading: 52,
       video_generating: 76,
+      uploading_result: 90,
       completed: 100,
       failed: 0,
     }[stage] ?? 60;
+  }
+
+  function stageLabel(stage?: string) {
+    if (!stage) return current.videoProcessing;
+    return (current.stageLabels as Record<string, string>)[stage] || stage;
+  }
+
+  function taskVideoUrl(task: AvatarTaskResponse) {
+    return task.result_video_url || task.result_url || "";
+  }
+
+  function taskModeLabel(task: AvatarTaskResponse) {
+    if (task.video_mode === "static") return current.staticMode;
+    return current.dynamicMode;
+  }
+
+  function formatCreatedAt(value?: string) {
+    if (!value) return "-";
+    try {
+      return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(value));
+    } catch {
+      return value;
+    }
   }
 
   async function downloadAvatarVideo() {
@@ -694,7 +805,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
           {videoStatus === "generating" ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>{videoProgressStage || current.videoProcessing}</span>
+                <span>{stageLabel(videoProgressStage)}</span>
                 <span>{videoProgress}%</span>
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
@@ -730,6 +841,68 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
             </div>
           ) : null}
         </div>
+        <section className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-white">{current.historyTitle}</h3>
+              <p className="mt-1 text-xs text-slate-500">{current.createdAt} · {current.status} · {current.videoMode}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void refreshAvatarHistory()}
+              disabled={historyLoading}
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-100 transition hover:bg-white/10 disabled:pointer-events-none disabled:opacity-60"
+            >
+              {historyLoading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+              {current.historyRefresh}
+            </button>
+          </div>
+          {historyError ? <p className="rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">{historyError}</p> : null}
+          {historyTasks.length === 0 && !historyLoading ? <p className="rounded-md border border-white/10 bg-black/10 px-3 py-3 text-sm text-slate-400">{current.historyEmpty}</p> : null}
+          {historyTasks.length > 0 ? (
+            <div className="grid gap-2">
+              {historyTasks.map((task) => {
+                const resultUrl = taskVideoUrl(task);
+                const statusText = stageLabel(task.progress_stage || task.status);
+                return (
+                  <article key={task.id || `${task.created_at}-${resultUrl}`} className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-semibold text-white">{task.name || taskModeLabel(task)}</p>
+                        <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-slate-300">{taskModeLabel(task)}</span>
+                        <span className={cn("rounded-md px-2 py-0.5 text-[11px]", task.status === "failed" ? "bg-rose-400/15 text-rose-100" : task.status === "completed" ? "bg-lime/10 text-lime" : "bg-cyan/10 text-cyan")}>
+                          {statusText}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500">{formatCreatedAt(task.created_at)}</p>
+                      {task.status === "failed" ? <p className="text-xs leading-5 text-rose-100">{formatUserError(task.error_message || current.videoFailed, locale)}</p> : null}
+                    </div>
+                    {resultUrl ? (
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setVideoUrl(resultUrl)}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-100 transition hover:bg-white/10"
+                        >
+                          <Video size={14} />
+                          {current.play}
+                        </button>
+                        <a
+                          href={resultUrl}
+                          download
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-100 transition hover:bg-white/10"
+                        >
+                          <Download size={14} />
+                          {current.videoDownload}
+                        </a>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
       </Card>
       <Card className="space-y-4 p-4">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -948,4 +1121,35 @@ function readApiError(payload: unknown): string {
     return String(detail.message ?? detail.error ?? detail.detail ?? "");
   }
   return "";
+}
+
+function formatUserError(message: string, locale: "zh" | "en") {
+  const fallback = locale === "zh" ? "视频生成失败，请稍后重试。" : "Video generation failed. Please try again later.";
+  const text = String(message || "").trim();
+  if (!text) return fallback;
+  const lower = text.toLowerCase();
+  const isZh = locale === "zh";
+
+  if (lower.includes("tts") || lower.includes("voice") || lower.includes("volcengine") || text.includes("语音")) {
+    return isZh ? "语音生成失败" : "Voice generation failed";
+  }
+  if (lower.includes("musetalk") || lower.includes("digital") || lower.includes("avatar") || text.includes("数字人")) {
+    return isZh ? "数字人生成失败" : "Digital avatar generation failed";
+  }
+  if (lower.includes("storage") || lower.includes("upload") || lower.includes("supabase") || lower.includes("bucket")) {
+    return isZh ? "视频上传失败" : "Video upload failed";
+  }
+  if (lower.includes("gpu") || lower.includes("autodl") || lower.includes("power_on") || text.includes("GPU")) {
+    return isZh ? "GPU启动失败" : "GPU startup failed";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out") || text.includes("超时")) {
+    return isZh ? "生成超时，请稍后重试" : "Generation timed out. Please try again later.";
+  }
+  if (lower.includes("ffmpeg")) {
+    return isZh ? "视频生成失败" : "Video generation failed";
+  }
+  if (lower.includes("python") || lower.includes("traceback") || lower.includes("httpexception") || lower.includes("httpexception")) {
+    return fallback;
+  }
+  return text.length > 90 ? fallback : text;
 }
