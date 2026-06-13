@@ -86,6 +86,10 @@ class Settings(BaseSettings):
         1800,
         validation_alias=AliasChoices("MUSE_TALK_TIMEOUT_SECONDS", "MUSETALK_TIMEOUT_SECONDS"),
     )
+    muse_talk_default_template_video_url: str = Field(
+        "",
+        validation_alias=AliasChoices("MUSE_TALK_DEFAULT_TEMPLATE_VIDEO_URL", "MUSETALK_DEFAULT_TEMPLATE_VIDEO_URL"),
+    )
     autodl_api_token: str = ""
     autodl_instance_id: str = ""
     autodl_region: str = ""

@@ -58,6 +58,7 @@ SERVER_API_URL=https://your-fastapi-api.example.com
 | `MINIMAX_API_KEY` | MiniMax key | Optional for current semi-auto flow |
 | `MINIMAX_GROUP_ID` | MiniMax group id | Optional for current semi-auto flow |
 | `COSYVOICE_URL` | `http://localhost:50000` | Optional |
+| `MUSE_TALK_DEFAULT_TEMPLATE_VIDEO_URL` | `https://.../template.mp4` | Required for `/api/avatar/dynamic-video` |
 
 ## 5. Supabase 上线检查
 

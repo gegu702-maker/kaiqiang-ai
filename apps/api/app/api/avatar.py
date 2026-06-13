@@ -48,6 +48,16 @@ class StaticAvatarVideoRequest(BaseModel):
     pitch_ratio: float = 1.0
 
 
+class DynamicAvatarVideoRequest(BaseModel):
+    script_text: str = Field(..., min_length=1)
+    voice_type: str | None = None
+    avatar_template_id: str | None = "test_musetalk_001"
+    audio_url: str | None = None
+    speed_ratio: float = 1.0
+    volume_ratio: float = 1.0
+    pitch_ratio: float = 1.0
+
+
 @router.get("/health")
 async def avatar_health() -> dict:
     return {
@@ -112,6 +122,63 @@ async def generate_static_avatar_video(payload: StaticAvatarVideoRequest, supaba
         "voice_type": tts_result.get("voice_type") or selected_voice_type or settings.volcengine_tts_voice_type,
         "avatar_template_id": template.id,
         "avatar_template_name": template.name,
+    }
+
+
+@router.post("/dynamic-video")
+async def generate_dynamic_avatar_video(
+    payload: DynamicAvatarVideoRequest,
+    background_tasks: BackgroundTasks,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    user = get_authenticated_user(supabase, token)
+    template_video_url = _dynamic_template_video_url(payload.avatar_template_id)
+    text = payload.script_text.strip()
+    selected_voice_type = payload.voice_type or settings.volcengine_tts_voice_type
+    audio_url = (payload.audio_url or "").strip()
+
+    assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
+
+    if not audio_url:
+        try:
+            tts_result = await synthesize_speech_to_storage(
+                supabase,
+                text=text,
+                folder="avatar/dynamic-video/tts",
+                voice_type=selected_voice_type,
+                speed_ratio=payload.speed_ratio,
+                volume_ratio=payload.volume_ratio,
+                pitch_ratio=payload.pitch_ratio,
+            )
+            audio_url = tts_result["audio_url"]
+        except HTTPException as error:
+            raise HTTPException(
+                status_code=error.status_code,
+                detail=_static_video_error("tts_failed", "TTS 失败", error.detail),
+            ) from error
+        except Exception as error:
+            logger.exception("Dynamic avatar TTS failed")
+            raise HTTPException(
+                status_code=502,
+                detail=_static_video_error("tts_failed", "TTS 失败", str(error)),
+            ) from error
+
+    task = _create_avatar_task(supabase, user["id"], template_video_url, audio_url)
+    logger.info(
+        "Dynamic avatar task queued task_id=%s template=%s has_audio_url=%s",
+        task["id"],
+        payload.avatar_template_id,
+        bool(audio_url),
+    )
+    background_tasks.add_task(_process_avatar_task, task["id"], user["id"], template_video_url, audio_url)
+    return {
+        "success": True,
+        "status": "queued",
+        "task_id": task["id"],
+        "task": _serialize_avatar_task(task),
+        "audio_url": audio_url,
+        "avatar_template_id": payload.avatar_template_id or "test_musetalk_001",
     }
 
 
@@ -289,6 +356,24 @@ def _create_avatar_task(supabase: Client, user_id: str, video_url: str, audio_ur
     if not response.data:
         raise HTTPException(status_code=500, detail="Failed to create avatar task")
     return response.data[0]
+
+
+def _dynamic_template_video_url(template_id: str | None) -> str:
+    selected_template_id = template_id or "test_musetalk_001"
+    if selected_template_id != "test_musetalk_001":
+        raise HTTPException(status_code=400, detail=f"Unsupported MuseTalk template: {selected_template_id}")
+    video_url = settings.muse_talk_default_template_video_url.strip()
+    if not video_url:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "success": False,
+                "error": "missing_template_video",
+                "message": "缺少 MUSE_TALK_DEFAULT_TEMPLATE_VIDEO_URL",
+                "todo": "Set MUSE_TALK_DEFAULT_TEMPLATE_VIDEO_URL to a public MP4 person-video template URL for test_musetalk_001.",
+            },
+        )
+    return video_url
 
 
 def _update_avatar_task(supabase: Client, task_id: str, values: dict) -> dict:

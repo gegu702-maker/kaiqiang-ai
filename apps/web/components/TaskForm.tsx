@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useActionState, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useActionState, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Check, Download, ImagePlus, Loader2, Mail, Mic2, Package, ScrollText, Target, Video } from "lucide-react";
 
@@ -11,6 +11,7 @@ import { VoiceUpload } from "@/components/VoiceUpload";
 import { Card } from "@/components/ui/card";
 import { trackEvent } from "@/lib/analytics";
 import { avatarTemplates } from "@/lib/avatarTemplates";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { VoiceClone } from "@/lib/types";
 
@@ -53,8 +54,8 @@ const copy = {
     avatarTemplate: "数字人模板",
     avatarTemplateHint: "普通会员可选择固定模板，Pro 后续开放自定义形象。",
     recommended: "推荐场景",
-    videoTitle: "静态头像口播视频",
-    videoDescription: "把当前文案合成为 1080x1920 竖屏 MP4。",
+    videoTitle: "头像口播视频",
+    videoDescription: "静态视频快速生成；动态数字人使用 MuseTalk，生成耗时较长，请保持页面打开。",
     videoGenerate: "生成视频",
     videoGenerating: "视频生成中",
     videoProcessing: "processing",
@@ -64,7 +65,7 @@ const copy = {
     videoMode: "视频模式",
     staticMode: "静态视频",
     dynamicMode: "动态数字人",
-    livePortraitUnavailable: "动态数字人暂未开通，请配置 Replicate API。",
+    livePortraitUnavailable: "动态数字人使用 MuseTalk，生成耗时较长，请保持页面打开。",
     voiceTypes: {
       BV001_streaming: "女声（BV001_streaming）",
       BV002_streaming: "男声（BV002_streaming）",
@@ -126,8 +127,8 @@ const copy = {
     avatarTemplate: "Avatar Template",
     avatarTemplateHint: "Members can use fixed templates. Custom avatars will come with Pro.",
     recommended: "Recommended",
-    videoTitle: "Static Avatar Video",
-    videoDescription: "Render the current script into a 1080x1920 MP4.",
+    videoTitle: "Avatar Video",
+    videoDescription: "Static video renders quickly. Dynamic avatar uses MuseTalk and may take longer; keep this page open.",
     videoGenerate: "Generate Video",
     videoGenerating: "Generating Video",
     videoProcessing: "processing",
@@ -137,7 +138,7 @@ const copy = {
     videoMode: "Video Mode",
     staticMode: "Static Video",
     dynamicMode: "Dynamic Avatar",
-    livePortraitUnavailable: "Dynamic avatar is not enabled. Configure the Replicate API first.",
+    livePortraitUnavailable: "Dynamic avatar uses MuseTalk and may take longer. Keep this page open.",
     voiceTypes: {
       BV001_streaming: "Female (BV001_streaming)",
       BV002_streaming: "Male (BV002_streaming)",
@@ -182,8 +183,22 @@ type AvatarVideoTestResponse = TTSTestResponse & {
   video_url?: string;
   dynamic_avatar_video_url?: string;
   final_video_url?: string;
+  result_video_url?: string;
+  result_url?: string;
+  task_id?: string;
+  status?: string;
+  task?: AvatarTaskResponse;
   avatar_template_id?: string;
   avatar_template_name?: string;
+};
+
+type AvatarTaskResponse = {
+  id?: string;
+  status?: "queued" | "running" | "completed" | "failed";
+  progress_stage?: string;
+  result_url?: string;
+  result_video_url?: string;
+  error_message?: string;
 };
 
 type TaskFormProps = {
@@ -196,9 +211,10 @@ type TaskFormProps = {
   initialScriptText?: string;
 };
 
-export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], livePortraitEnabled = false, initialScriptText = "" }: TaskFormProps) {
+export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], initialScriptText = "" }: TaskFormProps) {
   const { locale } = useLanguage();
   const current = copy[locale];
+  const supabase = useMemo(() => createClient(), []);
   const displayedRemainingQuota = userEmail && remainingQuota === undefined ? 3 : remainingQuota;
   const [state, action] = useActionState(submitTaskAction, initialState);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -221,7 +237,8 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [videoError, setVideoError] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const [videoProgress, setVideoProgress] = useState(0);
-  const [videoMode, setVideoMode] = useState<"static" | "liveportrait">("static");
+  const [videoMode, setVideoMode] = useState<"static" | "musetalk">("static");
+  const [videoProgressStage, setVideoProgressStage] = useState("");
 
   useEffect(() => {
     if (initialScriptText) setTtsText(initialScriptText);
@@ -383,14 +400,9 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       progressTimer = window.setInterval(() => {
         setVideoProgress((currentProgress) => Math.min(currentProgress + 9, 82));
       }, 2500);
-      const response = await fetch(videoMode === "liveportrait" ? "/api/debug/liveportrait-test" : "/api/avatar/static-video", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice_type: ttsVoiceType, avatar_template_id: avatarTemplateId }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
-      const resolvedVideoUrl = payload.final_video_url || payload.video_url || payload.dynamic_avatar_video_url;
-      if (!response.ok || !payload.success || !resolvedVideoUrl) {
+      const payload = videoMode === "musetalk" ? await generateDynamicAvatarVideo(text) : await generateStaticAvatarVideo(text);
+      const resolvedVideoUrl = payload.final_video_url || payload.video_url || payload.dynamic_avatar_video_url || payload.result_video_url || payload.result_url;
+      if (!payload.success || !resolvedVideoUrl) {
         throw new Error(readApiError(payload) || current.videoFailed);
       }
       setVideoUrl(resolvedVideoUrl);
@@ -405,6 +417,94 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
     } finally {
       if (progressTimer) window.clearInterval(progressTimer);
     }
+  }
+
+  async function generateStaticAvatarVideo(text: string) {
+    setVideoProgressStage("");
+    const response = await fetch("/api/avatar/static-video", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice_type: ttsVoiceType, avatar_template_id: avatarTemplateId }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
+    if (!response.ok) {
+      throw new Error(readApiError(payload) || current.videoFailed);
+    }
+    return payload;
+  }
+
+  async function generateDynamicAvatarVideo(text: string) {
+    setVideoProgressStage("queued");
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error(current.loginHint);
+    }
+
+    const response = await fetch("/api/avatar/dynamic-video", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        script_text: text,
+        voice_type: ttsVoiceType,
+        avatar_template_id: "test_musetalk_001",
+        audio_url: ttsAudioUrl || undefined,
+      }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
+    if (!response.ok || !payload.success) {
+      throw new Error(readApiError(payload) || current.videoFailed);
+    }
+    const taskId = payload.task_id || payload.task?.id;
+    const immediateResult = payload.result_video_url || payload.result_url || payload.video_url || payload.task?.result_video_url || payload.task?.result_url;
+    if (immediateResult) return { ...payload, video_url: immediateResult };
+    if (!taskId) {
+      throw new Error(current.videoFailed);
+    }
+    const resultUrl = await pollDynamicAvatarTask(taskId, session.access_token);
+    return { ...payload, success: true, video_url: resultUrl };
+  }
+
+  async function pollDynamicAvatarTask(taskId: string, token: string) {
+    const deadline = Date.now() + 25 * 60 * 1000;
+    while (Date.now() < deadline) {
+      const response = await fetch(`/api/avatar/tasks/${encodeURIComponent(taskId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const task = (await response.json().catch(() => ({}))) as AvatarTaskResponse & { detail?: unknown; message?: string; error?: string };
+      if (!response.ok) {
+        throw new Error(readApiError(task) || current.videoFailed);
+      }
+      if (task.progress_stage) {
+        setVideoProgressStage(task.progress_stage);
+        setVideoProgress(stageProgress(task.progress_stage));
+      }
+      const resultUrl = task.result_video_url || task.result_url;
+      if (task.status === "completed" && resultUrl) {
+        return resultUrl;
+      }
+      if (task.status === "failed") {
+        throw new Error(task.error_message || current.videoFailed);
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 5000));
+    }
+    throw new Error(locale === "zh" ? "MuseTalk 生成超时" : "MuseTalk generation timed out");
+  }
+
+  function stageProgress(stage: string) {
+    return {
+      queued: 24,
+      gpu_starting: 38,
+      model_loading: 52,
+      video_generating: 76,
+      completed: 100,
+      failed: 0,
+    }[stage] ?? 60;
   }
 
   async function downloadAvatarVideo() {
@@ -578,24 +678,23 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
                 <input type="radio" name="video_motion_mode" value="static" checked={videoMode === "static"} onChange={() => setVideoMode("static")} />
                 {current.staticMode}
               </label>
-              <label className={cn("flex h-11 items-center gap-3 rounded-md border px-3 text-sm", livePortraitEnabled ? "cursor-pointer" : "cursor-not-allowed opacity-60", videoMode === "liveportrait" ? "border-cyan/30 bg-cyan/10 text-slate-100" : "border-white/10 bg-white/5 text-slate-300")}>
+              <label className={cn("flex h-11 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm", videoMode === "musetalk" ? "border-cyan/30 bg-cyan/10 text-slate-100" : "border-white/10 bg-white/5 text-slate-300")}>
                 <input
                   type="radio"
                   name="video_motion_mode"
-                  value="liveportrait"
-                  checked={videoMode === "liveportrait"}
-                  disabled={!livePortraitEnabled}
-                  onChange={() => setVideoMode("liveportrait")}
+                  value="musetalk"
+                  checked={videoMode === "musetalk"}
+                  onChange={() => setVideoMode("musetalk")}
                 />
                 {current.dynamicMode}
               </label>
             </div>
-            {!livePortraitEnabled ? <p className="text-xs text-slate-500">{current.livePortraitUnavailable}</p> : null}
+            {videoMode === "musetalk" ? <p className="text-xs text-slate-500">{current.livePortraitUnavailable}</p> : null}
           </fieldset>
           {videoStatus === "generating" ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>{current.videoProcessing}</span>
+                <span>{videoProgressStage || current.videoProcessing}</span>
                 <span>{videoProgress}%</span>
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
@@ -838,12 +937,14 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   );
 }
 
-function readApiError(payload: TTSTestResponse): string {
-  if (payload.message) return payload.message;
-  if (payload.error) return payload.error;
-  if (typeof payload.detail === "string") return payload.detail;
-  if (payload.detail && typeof payload.detail === "object") {
-    const detail = payload.detail as { message?: unknown; error?: unknown; detail?: unknown };
+function readApiError(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const value = payload as { message?: unknown; error?: unknown; detail?: unknown };
+  if (typeof value.message === "string") return value.message;
+  if (typeof value.error === "string") return value.error;
+  if (typeof value.detail === "string") return value.detail;
+  if (value.detail && typeof value.detail === "object") {
+    const detail = value.detail as { message?: unknown; error?: unknown; detail?: unknown };
     return String(detail.message ?? detail.error ?? detail.detail ?? "");
   }
   return "";
