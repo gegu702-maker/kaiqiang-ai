@@ -42,7 +42,7 @@ const workflowStatuses = ["done", "done", "done", "done", "active", "next", "nex
 
 export function HomeVideoAgentPreview() {
   const { locale } = useLanguage();
-  const current = copy[locale];
+  const current = copy[locale === "zh" ? "zh" : "en"];
   const [activeScene, setActiveScene] = useState(0);
 
   useEffect(() => {

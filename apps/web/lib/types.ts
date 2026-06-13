@@ -59,7 +59,7 @@ export type VideoTask = {
   voice_url: string;
   voice_clone_id: string | null;
   use_cloned_voice: boolean;
-  tts_language: "zh" | "en";
+  tts_language: "zh" | "en" | "ja" | "ko" | "es" | "fr" | "ru";
   tts_voice_name: string;
   admin_notes: string;
   status: TaskStatus;
@@ -171,12 +171,13 @@ export type Subscription = {
   id: string;
   user_id: string;
   plan: PlanCode;
-  status: "active" | "trialing" | "past_due" | "canceled";
+  status: "active" | "trialing" | "past_due" | "canceled" | "unpaid" | "incomplete" | "incomplete_expired";
   provider: PaymentProvider;
   current_period_start: string | null;
   current_period_end: string | null;
   cancel_at_period_end?: boolean;
   provider_subscription_id?: string;
+  provider_price_id?: string;
   created_at: string;
 };
 
@@ -219,7 +220,7 @@ export type AdminStats = {
 export type CheckoutResponse = {
   order: Order;
   checkout_url: string | null;
-  provider_status: "created" | "not_configured" | "manual_review" | "pending";
+  provider_status: "created" | "updated" | "not_configured" | "manual_review" | "pending";
   payment_status: OrderStatus;
   message: string;
 };
@@ -233,4 +234,37 @@ export type VoiceClone = {
   sample_audio_url: string;
   status: "uploaded" | "pending" | "ready" | "completed" | "failed" | "deleted";
   created_at: string;
+};
+
+export type ViralIndustry = "ecommerce" | "knowledge" | "training" | "local" | "personal_brand" | "global";
+
+export type ViralRewrite = {
+  title: string;
+  script: string;
+};
+
+export type ViralAnalyzeResult = {
+  topic: string;
+  hook: string;
+  selling_points: string[];
+  structure: string[];
+  template: string;
+  rewrites: ViralRewrite[];
+  quota?: {
+    plan: PlanCode;
+    used: number;
+    monthly_limit: number | null;
+  };
+};
+
+export type VideoLinkResolveResult = {
+  ok: boolean;
+  platform: "douyin" | "unknown" | string;
+  title: string;
+  description: string;
+  duration: number;
+  thumbnail: string;
+  webpage_url: string;
+  downloadable: boolean;
+  fallback_reason: string;
 };

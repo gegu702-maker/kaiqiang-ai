@@ -9,9 +9,12 @@ import type {
   Subscription,
   UsageLog,
   UsageSummary,
+  ViralAnalyzeResult,
+  VideoLinkResolveResult,
   VideoTask,
   VoiceClone,
 } from "@/lib/types";
+import type { Locale } from "@/components/LanguageProvider";
 
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -151,6 +154,15 @@ export async function getUserOrders(accessToken?: string): Promise<Order[]> {
   return parseResponse<Order[]>(response);
 }
 
+export async function getUserPayments(accessToken?: string): Promise<Payment[]> {
+  if (!accessToken) return [];
+  const response = await fetch(`${API_URL}/api/billing/payments`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<Payment[]>(response);
+}
+
 export async function getUserUsageLogs(accessToken?: string): Promise<UsageLog[]> {
   if (!accessToken) return [];
   const response = await fetch(`${API_URL}/api/billing/usage-logs`, {
@@ -167,6 +179,38 @@ export async function getVoiceClones(accessToken?: string): Promise<VoiceClone[]
     cache: "no-store",
   });
   return parseResponse<VoiceClone[]>(response);
+}
+
+export async function analyzeViralScript(
+  payload: {
+    source_url?: string;
+    raw_script?: string;
+    industry: string;
+    language: Locale;
+  },
+  accessToken?: string,
+): Promise<ViralAnalyzeResult> {
+  const response = await fetch(`${API_URL}/api/viral/analyze`, {
+    method: "POST",
+    headers: accessToken
+      ? { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }
+      : { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return parseResponse<ViralAnalyzeResult>(response, { url: `${API_URL}/api/viral/analyze`, method: "POST" });
+}
+
+export async function resolveVideoLink(sourceUrl: string, accessToken?: string): Promise<VideoLinkResolveResult> {
+  const response = await fetch(`${API_URL}/api/viral/link/resolve`, {
+    method: "POST",
+    headers: accessToken
+      ? { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }
+      : { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_url: sourceUrl }),
+    cache: "no-store",
+  });
+  return parseResponse<VideoLinkResolveResult>(response, { url: `${API_URL}/api/viral/link/resolve`, method: "POST" });
 }
 
 export async function uploadVoiceClone(formData: FormData, accessToken?: string): Promise<VoiceClone> {
@@ -220,6 +264,24 @@ export async function getAdminOrders(): Promise<Order[]> {
     cache: "no-store",
   });
   return parseResponse<Order[]>(response);
+}
+
+export async function getUserSubscriptions(accessToken?: string): Promise<Subscription[]> {
+  if (!accessToken) return [];
+  const response = await fetch(`${API_URL}/api/billing/subscriptions`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<Subscription[]>(response);
+}
+
+export async function cancelUserSubscription(accessToken?: string): Promise<{ ok: boolean }> {
+  const response = await fetch(`${API_URL}/api/billing/subscription/cancel`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<{ ok: boolean }>(response);
 }
 
 export async function getAdminSubscriptions(): Promise<Subscription[]> {

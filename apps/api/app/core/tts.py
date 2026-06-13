@@ -19,8 +19,34 @@ MINIMAX_TTS_VOICES: dict[str, TTSVoiceConfig] = {
         voice_name="minimax_en_female",
         display_name="MiniMax English Female",
     ),
+    # TODO: Replace fallback voice_name values with provider-confirmed multilingual voices.
+    "ja": TTSVoiceConfig(
+        language="ja",
+        voice_name="minimax_en_female",
+        display_name="MiniMax Japanese fallback",
+    ),
+    "ko": TTSVoiceConfig(
+        language="ko",
+        voice_name="minimax_en_female",
+        display_name="MiniMax Korean fallback",
+    ),
+    "es": TTSVoiceConfig(
+        language="es",
+        voice_name="minimax_en_female",
+        display_name="MiniMax Spanish fallback",
+    ),
+    "fr": TTSVoiceConfig(
+        language="fr",
+        voice_name="minimax_en_female",
+        display_name="MiniMax French fallback",
+    ),
+    "ru": TTSVoiceConfig(
+        language="ru",
+        voice_name="minimax_en_female",
+        display_name="MiniMax Russian fallback",
+    ),
 }
 
 
 def get_tts_voice(language: str) -> TTSVoiceConfig:
-    return MINIMAX_TTS_VOICES[language]
+    return MINIMAX_TTS_VOICES.get(language, MINIMAX_TTS_VOICES["en"])

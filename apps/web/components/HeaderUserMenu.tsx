@@ -18,7 +18,7 @@ const copy = {
 
 export function HeaderUserMenu({ email }: { email: string }) {
   const { locale } = useLanguage();
-  const current = copy[locale];
+  const current = copy[locale === "zh" ? "zh" : "en"];
 
   return (
     <Link className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-white/10" href="/account">
@@ -31,5 +31,5 @@ export function HeaderUserMenu({ email }: { email: string }) {
 
 export function HeaderLogoutLabel() {
   const { locale } = useLanguage();
-  return <>{copy[locale].logout}</>;
+  return <>{copy[locale === "zh" ? "zh" : "en"].logout}</>;
 }

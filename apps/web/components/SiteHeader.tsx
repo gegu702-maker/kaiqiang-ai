@@ -7,40 +7,16 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
-import { useLanguage } from "@/components/LanguageProvider";
-
-const navCopy = {
-  zh: {
-    home: "首页",
-    pricing: "定价",
-    templates: "模板",
-    avatarStudio: "数字人工作台",
-    contact: "联系",
-    menu: "菜单",
-  },
-  en: {
-    home: "Home",
-    pricing: "Pricing",
-    templates: "Templates",
-    avatarStudio: "Avatar Studio",
-    contact: "Contact",
-    menu: "Menu",
-  },
-};
+import { SUPPORTED_LOCALES, useLanguage, type Locale } from "@/components/LanguageProvider";
+import { mainNavigationItems, navigationCopy } from "@/lib/i18n/navigation";
 
 export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
   const { locale, setLocale } = useLanguage();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const copy = navCopy[locale];
+  const copy = navigationCopy[locale];
   const isLanding = pathname === "/";
-  const navItems = [
-    { href: "/", label: copy.home },
-    { href: "/pricing", label: copy.pricing },
-    { href: "/studio/templates", label: copy.templates },
-    { href: "/studio/avatar", label: copy.avatarStudio },
-    { href: "/#contact", label: copy.contact },
-  ];
+  const navItems = mainNavigationItems.map((item) => ({ href: item.href, label: copy[item.key] }));
   const desktopLinkClass = isLanding
     ? "rounded-full px-4 py-2 transition hover:bg-white hover:text-slate-950 hover:shadow-sm"
     : "rounded-md px-3 py-2 hover:bg-white/10";
@@ -64,22 +40,25 @@ export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
         </div>
 
         <div className={isLanding ? "flex min-w-0 items-center justify-end gap-2 text-sm font-medium text-slate-700 sm:gap-3 [&_a]:rounded-full [&_a]:px-3 [&_a]:py-2 [&_a]:text-slate-700 [&_a]:transition [&_a:hover]:bg-slate-100 [&_a:hover]:text-slate-950 [&_button]:rounded-full [&_button]:px-3 [&_button]:py-2 [&_button]:text-slate-700 [&_button]:transition [&_button:hover]:bg-slate-100 [&_button:hover]:text-slate-950" : "flex items-center gap-1 text-sm text-slate-300 sm:gap-2"}>
-          <div className={isLanding ? "flex rounded-full border border-slate-200/70 bg-white/70 p-0.5 text-xs" : "flex rounded-md border border-white/10 bg-white/[0.03] p-1 text-xs"}>
-            <button
-              type="button"
-              onClick={() => setLocale("zh")}
-              className={locale === "zh" ? "rounded-full bg-slate-900 px-3 py-1.5 text-white shadow-sm" : isLanding ? "px-3 py-1.5 text-slate-500 hover:text-slate-950" : "px-2 py-1 text-slate-400 hover:text-white"}
+          <label className={isLanding ? "relative" : "relative"}>
+            <span className="sr-only">{copy.language}</span>
+            <select
+              value={locale}
+              onChange={(event) => setLocale(event.target.value as Locale)}
+              aria-label={copy.language}
+              className={
+                isLanding
+                  ? "h-9 rounded-full border border-slate-200/70 bg-white/80 px-3 text-xs font-semibold text-slate-700 outline-none transition hover:bg-white focus:ring-2 focus:ring-slate-300"
+                  : "h-9 rounded-md border border-white/10 bg-white/[0.04] px-2 text-xs font-semibold text-slate-200 outline-none transition hover:bg-white/10 focus:ring-2 focus:ring-cyan/40"
+              }
             >
-              中文
-            </button>
-            <button
-              type="button"
-              onClick={() => setLocale("en")}
-              className={locale === "en" ? "rounded-full bg-slate-900 px-3 py-1.5 text-white shadow-sm" : isLanding ? "px-3 py-1.5 text-slate-500 hover:text-slate-950" : "px-2 py-1 text-slate-400 hover:text-white"}
-            >
-              EN
-            </button>
-          </div>
+              {SUPPORTED_LOCALES.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="hidden sm:block">{authSlot}</div>
           <button
             type="button"

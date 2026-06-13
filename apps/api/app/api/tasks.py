@@ -77,7 +77,7 @@ async def create_video_task(
             raise HTTPException(status_code=400, detail="Invalid avatar_id")
 
         if language not in ALLOWED_LANGUAGES:
-            raise HTTPException(status_code=400, detail="Language must be zh or en")
+            raise HTTPException(status_code=400, detail="Language must be one of zh, en, ja, ko, es, fr, ru")
         if video_style not in ALLOWED_VIDEO_STYLES:
             raise HTTPException(status_code=400, detail="Invalid video_style")
 

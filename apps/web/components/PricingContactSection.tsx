@@ -18,7 +18,7 @@ const copy = {
 
 export function PricingContactSection() {
   const { locale } = useLanguage();
-  const current = copy[locale];
+  const current = copy[locale === "zh" ? "zh" : "en"];
 
   return (
     <section className="mt-6 rounded-lg border border-white/10 bg-panel/70 p-5 shadow-glow">

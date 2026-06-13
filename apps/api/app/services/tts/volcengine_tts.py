@@ -9,6 +9,23 @@ from fastapi import HTTPException
 from app.core.config import settings
 
 
+# TODO: Replace fallback voice_type values with provider-confirmed multilingual voices.
+VOLCENGINE_DEFAULT_VOICE_TYPES = {
+    "zh": lambda: settings.volcengine_tts_voice_type,
+    "en": lambda: settings.volcengine_tts_voice_type,
+    "ja": lambda: settings.volcengine_tts_voice_type,
+    "ko": lambda: settings.volcengine_tts_voice_type,
+    "es": lambda: settings.volcengine_tts_voice_type,
+    "fr": lambda: settings.volcengine_tts_voice_type,
+    "ru": lambda: settings.volcengine_tts_voice_type,
+}
+
+
+def get_default_volcengine_voice_type(locale: str) -> str:
+    resolver = VOLCENGINE_DEFAULT_VOICE_TYPES.get(locale, VOLCENGINE_DEFAULT_VOICE_TYPES["en"])
+    return resolver().strip()
+
+
 class VolcengineTTSProvider:
     def __init__(
         self,
@@ -35,7 +52,7 @@ class VolcengineTTSProvider:
         pitch_ratio: float = 1.0,
     ) -> dict:
         clean_text = text.strip()
-        selected_voice = (voice_type or settings.volcengine_tts_voice_type).strip()
+        selected_voice = (voice_type or get_default_volcengine_voice_type("en")).strip()
         self._validate(selected_voice)
 
         payload = {

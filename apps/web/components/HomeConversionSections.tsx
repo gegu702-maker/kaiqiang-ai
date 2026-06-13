@@ -5,7 +5,7 @@ import { useActionState } from "react";
 import { BriefcaseBusiness, CheckCircle2, ChevronDown, Clapperboard, Mail, Megaphone, PlayCircle, ShoppingBag, Sparkles, UsersRound } from "lucide-react";
 
 import { joinWaitlistAction } from "@/app/actions/waitlist";
-import { useLanguage } from "@/components/LanguageProvider";
+import { useLanguage, type Locale } from "@/components/LanguageProvider";
 import { customerCases, getFeaturedCases, type CaseLocale, type CustomerCase } from "@/lib/cases";
 
 const initialWaitlistState = { ok: false, message: "" };
@@ -20,8 +20,8 @@ const copy = {
     previewSoon: "真实视频",
     examplesEyebrow: "案例展示",
     examplesTitle: "生产环境生成的真实案例视频",
-    trustedTitle: "面向未来创作者",
-    trustedBody: "为创作者、营销团队和企业提供真实数字人口播能力。",
+    trustedTitle: "面向未来内容团队",
+    trustedBody: "为内容团队、营销团队和企业提供真实数字人口播能力。",
     waitlistEyebrow: "抢先体验",
     waitlistTitle: "加入等待名单",
     waitlistBody: "告诉我们你的使用场景，优先获取新模板、案例和商业化功能。",
@@ -50,8 +50,8 @@ const copy = {
     previewSoon: "Real video",
     examplesEyebrow: "Examples",
     examplesTitle: "Real production-generated customer examples",
-    trustedTitle: "Trusted By Future Creators",
-    trustedBody: "Built for creators, marketers, and businesses.",
+    trustedTitle: "Trusted By Future Content Teams",
+    trustedBody: "Built for content teams, marketers, and businesses.",
     waitlistEyebrow: "Get Early Access",
     waitlistTitle: "Join the waitlist",
     waitlistBody: "Share your use case to get early access to new templates, demos, and commercial features.",
@@ -71,6 +71,126 @@ const copy = {
       ["Can I use the videos commercially?", "Commercial validation is supported. Make sure you have proper rights for uploaded footage, likeness, and audio."],
     ],
   },
+  ja: {
+    demoEyebrow: "デモ",
+    demoTitle: "台本を入力して、\nAI アバター動画を生成。",
+    before: "リアルデモ",
+    after: "商品紹介",
+    placeholder: "事例生成中",
+    previewSoon: "動画",
+    examplesEyebrow: "事例",
+    examplesTitle: "本番環境で生成された事例動画",
+    trustedTitle: "これからのコンテンツチームへ",
+    trustedBody: "制作チーム、マーケター、企業向けにデジタルヒューマン生成を提供します。",
+    waitlistEyebrow: "先行体験",
+    waitlistTitle: "ウェイトリストに参加",
+    waitlistBody: "利用シーンを共有すると、新テンプレートや商用機能を優先的に案内します。",
+    email: "メール",
+    industry: "業界",
+    useCase: "利用シーン",
+    industryPlaceholder: "例: EC / 教育 / SaaS",
+    useCasePlaceholder: "例: 商品紹介、講座動画、企業研修",
+    submit: "参加する",
+    faqEyebrow: "FAQ",
+    faqTitle: "よくある質問",
+    faq: [["どう生成しますか？", "人物動画と音声をアップロードすると、リップシンク動画を生成します。"], ["対応形式は？", "動画は mp4 / mov / webm、音声は wav / mp3 / m4a などに対応します。"], ["無料枠は？", "Free は月3回の生成枠です。"], ["生成時間は？", "通常は数分です。素材時間や GPU 状況で変わります。"], ["商用利用できますか？", "可能です。素材、肖像、音声の権利を確認してください。"]],
+  },
+  ko: {
+    demoEyebrow: "데모",
+    demoTitle: "대본을 입력하면\nAI 디지털 휴먼 영상 생성.",
+    before: "실제 데모",
+    after: "제품 소개",
+    placeholder: "사례 생성 중",
+    previewSoon: "영상",
+    examplesEyebrow: "사례",
+    examplesTitle: "프로덕션에서 생성한 실제 사례 영상",
+    trustedTitle: "미래 콘텐츠 팀을 위한 플랫폼",
+    trustedBody: "콘텐츠 팀, 마케팅 팀, 기업에 디지털 휴먼 기능을 제공합니다.",
+    waitlistEyebrow: "얼리 액세스",
+    waitlistTitle: "대기 명단 참여",
+    waitlistBody: "사용 시나리오를 알려주시면 새 템플릿과 기능을 우선 안내합니다.",
+    email: "이메일",
+    industry: "업종",
+    useCase: "사용 사례",
+    industryPlaceholder: "예: 이커머스 / 교육 / SaaS",
+    useCasePlaceholder: "예: 제품 소개, 강의 영상, 기업 교육",
+    submit: "대기 명단 참여",
+    faqEyebrow: "FAQ",
+    faqTitle: "자주 묻는 질문",
+    faq: [["어떻게 생성하나요?", "인물 영상과 음성을 업로드하면 립싱크 디지털 휴먼 영상을 생성합니다."], ["지원 형식은?", "영상은 mp4 / mov / webm, 음성은 wav / mp3 / m4a 등을 지원합니다."], ["무료 한도는?", "Free 플랜은 월 3회 생성입니다."], ["얼마나 걸리나요?", "보통 몇 분 내 완료되며 소재 길이와 GPU 상태에 따라 달라집니다."], ["상업적으로 쓸 수 있나요?", "가능합니다. 업로드 소재와 초상권, 음성 권리를 확인하세요."]],
+  },
+  es: {
+    demoEyebrow: "Demo",
+    demoTitle: "Introduce un guion,\ngenera un avatar IA real.",
+    before: "Demo real",
+    after: "Demo de producto",
+    placeholder: "Caso generandose",
+    previewSoon: "Video",
+    examplesEyebrow: "Ejemplos",
+    examplesTitle: "Casos reales generados en produccion",
+    trustedTitle: "Para equipos de contenido",
+    trustedBody: "Capacidades de avatar IA para equipos de contenido, marketing y empresas.",
+    waitlistEyebrow: "Acceso anticipado",
+    waitlistTitle: "Unete a la lista",
+    waitlistBody: "Comparte tu caso de uso para recibir nuevas plantillas y funciones antes.",
+    email: "Email",
+    industry: "Industria",
+    useCase: "Caso de uso",
+    industryPlaceholder: "Industria, p. ej. ecommerce / educacion / SaaS",
+    useCasePlaceholder: "P. ej. demos de producto, cursos, formacion",
+    submit: "Unirme",
+    faqEyebrow: "FAQ",
+    faqTitle: "Preguntas frecuentes",
+    faq: [["Como genero un video?", "Sube video humano y audio. El sistema genera un avatar con lip-sync."], ["Formatos soportados?", "Video mp4 / mov / webm; audio wav / mp3 / m4a."], ["Creditos gratis?", "Free incluye 3 generaciones al mes."], ["Cuanto tarda?", "Normalmente unos minutos, segun duracion y cola GPU."], ["Uso comercial?", "Si, si tienes derechos sobre imagen, audio y materiales."]],
+  },
+  fr: {
+    demoEyebrow: "Demo",
+    demoTitle: "Saisissez un script,\ngenerez un avatar IA reel.",
+    before: "Demo reelle",
+    after: "Demo produit",
+    placeholder: "Cas en generation",
+    previewSoon: "Video",
+    examplesEyebrow: "Exemples",
+    examplesTitle: "Cas reels generes en production",
+    trustedTitle: "Pour les equipes contenu",
+    trustedBody: "Des capacites digital human pour contenu, marketing et entreprises.",
+    waitlistEyebrow: "Acces anticipe",
+    waitlistTitle: "Rejoindre la liste",
+    waitlistBody: "Partagez votre cas d'usage pour recevoir les nouveaux modeles et fonctions en priorite.",
+    email: "Email",
+    industry: "Secteur",
+    useCase: "Cas d'usage",
+    industryPlaceholder: "Secteur, ex. e-commerce / education / SaaS",
+    useCasePlaceholder: "Ex. demo produit, cours, formation",
+    submit: "Rejoindre",
+    faqEyebrow: "FAQ",
+    faqTitle: "Questions frequentes",
+    faq: [["Comment generer une video ?", "Importez une video humaine et un audio. Le systeme genere un avatar avec lip-sync."], ["Quels formats ?", "Video mp4 / mov / webm, audio wav / mp3 / m4a."], ["Credits gratuits ?", "Free inclut 3 generations par mois."], ["Combien de temps ?", "Quelques minutes en general, selon la duree et la file GPU."], ["Usage commercial ?", "Oui, si vous avez les droits sur image, audio et medias."]],
+  },
+  ru: {
+    demoEyebrow: "Демо",
+    demoTitle: "Введите сценарий,\nсоздайте AI-аватар видео.",
+    before: "Реальное демо",
+    after: "Демо продукта",
+    placeholder: "Кейс генерируется",
+    previewSoon: "Видео",
+    examplesEyebrow: "Примеры",
+    examplesTitle: "Реальные видео из production-процесса",
+    trustedTitle: "Для команд контента",
+    trustedBody: "Digital human возможности для контента, маркетинга и бизнеса.",
+    waitlistEyebrow: "Ранний доступ",
+    waitlistTitle: "Присоединиться к списку",
+    waitlistBody: "Опишите ваш сценарий, чтобы первыми получить новые шаблоны и функции.",
+    email: "Email",
+    industry: "Индустрия",
+    useCase: "Сценарий",
+    industryPlaceholder: "Напр. e-commerce / education / SaaS",
+    useCasePlaceholder: "Напр. демо продукта, курсы, обучение",
+    submit: "Присоединиться",
+    faqEyebrow: "FAQ",
+    faqTitle: "Частые вопросы",
+    faq: [["Как создать видео?", "Загрузите видео человека и аудио, система создаст lip-sync аватар."], ["Какие форматы?", "Видео mp4 / mov / webm, аудио wav / mp3 / m4a."], ["Бесплатный лимит?", "Free включает 3 генерации в месяц."], ["Сколько времени?", "Обычно несколько минут, зависит от длины и очереди GPU."], ["Коммерческое использование?", "Да, если у вас есть права на материалы, образ и аудио."]],
+  },
 };
 
 const exampleIcons = [Megaphone, Clapperboard, ShoppingBag, BriefcaseBusiness];
@@ -83,7 +203,7 @@ export function HomeConversionSections() {
     <>
       <HeroDemoShowcase current={current} />
       <CustomerExamples current={current} />
-      <TrustedByFutureCreators current={current} />
+      <TrustedByFutureTeams current={current} />
       <WaitlistForm current={current} locale={locale} />
       <HomeFAQ current={current} />
     </>
@@ -92,6 +212,7 @@ export function HomeConversionSections() {
 
 function HeroDemoShowcase({ current }: { current: (typeof copy)["zh"] }) {
   const { locale } = useLanguage();
+  const caseLocale: CaseLocale = locale === "zh" ? "zh" : "en";
   const featuredCases = getFeaturedCases();
   const beforeCase = featuredCases[0] ?? customerCases[0];
   const afterCase = featuredCases[1] ?? customerCases[1] ?? beforeCase;
@@ -104,8 +225,8 @@ function HeroDemoShowcase({ current }: { current: (typeof copy)["zh"] }) {
           <h2 className="mt-4 whitespace-pre-line text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.demoTitle}</h2>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
-          <DemoVideo label={current.before} item={beforeCase} locale={locale} placeholder={current.placeholder} />
-          <DemoVideo label={current.after} item={afterCase} locale={locale} placeholder={current.placeholder} />
+          <DemoVideo label={current.before} item={beforeCase} locale={caseLocale} placeholder={current.placeholder} />
+          <DemoVideo label={current.after} item={afterCase} locale={caseLocale} placeholder={current.placeholder} />
         </div>
       </div>
     </section>
@@ -132,6 +253,7 @@ function DemoVideo({ label, item, locale, placeholder }: { label: string; item: 
 
 function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
   const { locale } = useLanguage();
+  const caseLocale: CaseLocale = locale === "zh" ? "zh" : "en";
 
   return (
     <section id="examples" className="border-y border-slate-200/70 bg-white/68 px-6 py-16 sm:px-10 lg:py-20">
@@ -143,8 +265,8 @@ function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
         <div className="mt-9 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {customerCases.map((item, index) => {
             const Icon = exampleIcons[index];
-            const title = item.title[locale];
-            const desc = item.description[locale];
+            const title = item.title[caseLocale];
+            const desc = item.description[caseLocale];
             return (
               <article key={title} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_14px_38px_rgba(15,23,42,0.05)]">
                 <div className="relative aspect-video bg-slate-100">
@@ -181,7 +303,7 @@ function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
   );
 }
 
-function TrustedByFutureCreators({ current }: { current: (typeof copy)["zh"] }) {
+function TrustedByFutureTeams({ current }: { current: (typeof copy)["zh"] }) {
   return (
     <section className="mx-auto max-w-[1280px] px-6 py-14 sm:px-10">
       <div className="grid gap-5 rounded-lg border border-slate-200 bg-slate-950 p-6 text-white shadow-[0_16px_44px_rgba(15,23,42,0.13)] sm:p-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">
@@ -197,7 +319,7 @@ function TrustedByFutureCreators({ current }: { current: (typeof copy)["zh"] }) 
   );
 }
 
-function WaitlistForm({ current, locale }: { current: (typeof copy)["zh"]; locale: "zh" | "en" }) {
+function WaitlistForm({ current, locale }: { current: (typeof copy)["zh"]; locale: Locale }) {
   const [state, action] = useActionState(joinWaitlistAction, initialWaitlistState);
 
   return (

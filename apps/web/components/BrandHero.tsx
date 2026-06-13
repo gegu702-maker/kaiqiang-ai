@@ -20,7 +20,7 @@ const copy = {
 
 export function BrandHero() {
   const { locale } = useLanguage();
-  const current = copy[locale];
+  const current = copy[locale === "zh" ? "zh" : "en"];
 
   return (
     <section className="space-y-5">

@@ -31,7 +31,7 @@ const copy = {
 
 export function VoiceUpload() {
   const { locale } = useLanguage();
-  const current = copy[locale];
+  const current = copy[locale === "zh" ? "zh" : "en"];
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
   const [progress, setProgress] = useState(0);

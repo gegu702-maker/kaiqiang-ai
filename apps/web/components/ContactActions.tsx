@@ -28,7 +28,7 @@ const copy = {
 
 export function ContactActions({ tone = "light", compact = false, embedded = false }: { tone?: Tone; compact?: boolean; embedded?: boolean }) {
   const { locale } = useLanguage();
-  const current = copy[locale];
+  const current = copy[locale === "zh" ? "zh" : "en"];
   const [copied, setCopied] = useState<"phone" | "email" | null>(null);
   const isDark = tone === "dark";
 
