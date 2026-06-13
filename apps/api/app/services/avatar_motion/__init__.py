@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from app.core.config import settings
 from app.services.avatar_motion.base import AvatarMotionProvider
 from app.services.avatar_motion.liveportrait_provider import LivePortraitProvider
+from app.services.avatar_motion.musetalk_provider import MuseTalkProvider
 from app.services.avatar_motion.replicate_liveportrait_provider import ReplicateLivePortraitProvider
 
 
@@ -14,6 +15,8 @@ def get_avatar_motion_provider() -> AvatarMotionProvider | None:
         return None
     if provider == "liveportrait":
         return LivePortraitProvider()
+    if provider == "musetalk":
+        return MuseTalkProvider()
     if provider == "replicate":
         return ReplicateLivePortraitProvider()
     raise HTTPException(status_code=400, detail=f"Unsupported AVATAR_MOTION_PROVIDER: {settings.avatar_motion_provider}")
