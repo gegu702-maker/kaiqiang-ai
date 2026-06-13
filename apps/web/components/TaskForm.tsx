@@ -17,15 +17,19 @@ import type { VoiceClone } from "@/lib/types";
 const initialState = { ok: false, message: "" };
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const displayProviderName = (provider: string) => {
+  const normalized = provider.toLowerCase();
+  return provider && !["volcengine", "musetalk", "static", "replicate"].includes(normalized) ? provider : "kaiqiang";
+};
 const copy = {
   zh: {
     imageType: "图片仅支持 jpg、png、webp。",
     imageSize: "图片最大支持 10MB。",
     email: "邮箱",
-    productName: "产品名称",
-    productPlaceholder: "智能补光化妆镜",
-    highlights: "产品卖点",
-    highlightsPlaceholder: "例如：便携、防水、续航长、适合户外、质感高级、价格有优势...",
+    productName: "项目名称",
+    productPlaceholder: "例如：夏季防晒新品 / 老板 IP 口播",
+    highlights: "口播要点",
+    highlightsPlaceholder: "例如：目标痛点、核心卖点、使用场景、行动号召...",
     audience: "目标人群",
     audiencePlaceholder: "例如：露营爱好者、宝妈、通勤上班族",
     style: "视频风格",
@@ -38,7 +42,7 @@ const copy = {
     chooseFile: "选择文件",
     noFile: "未选择任何文件",
     clonedVoice: "使用我的克隆声音",
-    voiceType: "火山引擎音色",
+    voiceType: "语音音色",
     ttsTitle: "语音试听",
     ttsDescription: "输入口播文案，先生成一段可播放的 MP3。",
     ttsText: "口播文案",
@@ -48,35 +52,36 @@ const copy = {
     ttsSuccess: "语音已生成",
     ttsFailed: "TTS 失败",
     ttsNetworkError: "网络错误，请稍后重试。",
-    ttsProviderError: "provider 错误，请检查 Volcengine 配置。",
+    ttsProviderError: "语音服务暂时不可用，请稍后重试。",
     ttsDownload: "下载 MP3",
     avatarTemplate: "数字人模板",
-    avatarTemplateHint: "普通会员可选择固定模板，Pro 后续开放自定义形象。",
+    avatarTemplateHint: "选择本次出镜的商务数字人。",
     recommended: "推荐场景",
-    videoTitle: "静态头像口播视频",
-    videoDescription: "把当前文案合成为 1080x1920 竖屏 MP4。",
-    videoGenerate: "生成视频",
-    videoGenerating: "视频生成中",
-    videoProcessing: "processing",
+    videoTitle: "生成数字人口播视频",
+    videoDescription: "动态数字人已启用，将按所选模板生成竖屏口播视频。",
+    videoGenerate: "生成数字人口播视频",
+    videoGenerating: "数字人生成中",
+    videoProcessing: "生成进度",
     videoSuccess: "视频已生成",
     videoFailed: "视频生成失败",
     videoDownload: "下载 MP4",
-    videoMode: "视频模式",
-    staticMode: "静态视频",
-    dynamicMode: "动态数字人",
-    livePortraitUnavailable: "动态数字人暂未开通，请配置 Replicate API。",
+    dynamicReady: "动态数字人已启用",
+    advancedSettings: "高级设置",
+    advancedSettingsHint: "补充项目资料、素材和参考音频，用于生成完整方案。",
+    expand: "展开",
+    collapse: "收起",
     voiceTypes: {
       BV001_streaming: "女声（BV001_streaming）",
       BV002_streaming: "男声（BV002_streaming）",
     },
-    cloneUpsell: "升级到 Pro 解锁声音克隆，后续视频可直接使用你的专属 voice_id。",
+    cloneUpsell: "升级到 Pro 解锁声音克隆，后续视频可直接使用你的专属声音。",
     loginHint: "可以先填写和上传素材，点击生成时再登录，登录后回到工作台。",
     draftRestored: "已恢复上次填写的工作台草稿。",
     businessQuota: "Business 套餐：自定义额度",
     quotaLoadFailed: "额度加载失败，请刷新后重试。",
     remaining: (quota: number) => `本月剩余 ${quota} 次生成`,
     loggedOutQuota: "登录后可生成，每月免费 3 次。",
-    submit: "生成带货视频方案",
+    submit: "生成数字人口播方案",
     loginSubmit: "登录并生成",
     pending: "正在生成",
     loginPending: "正在跳转登录",
@@ -95,10 +100,10 @@ const copy = {
     imageType: "Images support jpg, png, and webp only.",
     imageSize: "Images can be up to 10MB.",
     email: "Email",
-    productName: "Product Name",
-    productPlaceholder: "Smart fill-light makeup mirror",
-    highlights: "Product Highlights",
-    highlightsPlaceholder: "e.g. portable, waterproof, long battery life, outdoor-friendly, premium texture, price advantage...",
+    productName: "Project Name",
+    productPlaceholder: "e.g. summer sunscreen launch / founder IP script",
+    highlights: "Talking Points",
+    highlightsPlaceholder: "e.g. audience pain point, core value, usage scenario, call to action...",
     audience: "Target Audience",
     audiencePlaceholder: "e.g. campers, moms, commuters",
     style: "Video Style",
@@ -111,7 +116,7 @@ const copy = {
     chooseFile: "Choose File",
     noFile: "No file selected",
     clonedVoice: "Use my cloned voice",
-    voiceType: "Volcengine Voice",
+    voiceType: "Voice",
     ttsTitle: "Voice Preview",
     ttsDescription: "Generate a playable MP3 from your talking script.",
     ttsText: "Script",
@@ -121,23 +126,24 @@ const copy = {
     ttsSuccess: "Voice generated",
     ttsFailed: "TTS failed",
     ttsNetworkError: "Network error. Please try again.",
-    ttsProviderError: "Provider error. Please check Volcengine settings.",
+    ttsProviderError: "Voice service is temporarily unavailable. Please try again later.",
     ttsDownload: "Download MP3",
     avatarTemplate: "Avatar Template",
-    avatarTemplateHint: "Members can use fixed templates. Custom avatars will come with Pro.",
+    avatarTemplateHint: "Choose the business avatar for this talking video.",
     recommended: "Recommended",
-    videoTitle: "Static Avatar Video",
-    videoDescription: "Render the current script into a 1080x1920 MP4.",
-    videoGenerate: "Generate Video",
-    videoGenerating: "Generating Video",
-    videoProcessing: "processing",
+    videoTitle: "Generate Talking Avatar Video",
+    videoDescription: "Dynamic avatar is enabled and will render a vertical talking video with the selected template.",
+    videoGenerate: "Generate Talking Avatar Video",
+    videoGenerating: "Generating Avatar Video",
+    videoProcessing: "Progress",
     videoSuccess: "Video generated",
     videoFailed: "Video generation failed",
     videoDownload: "Download MP4",
-    videoMode: "Video Mode",
-    staticMode: "Static Video",
-    dynamicMode: "Dynamic Avatar",
-    livePortraitUnavailable: "Dynamic avatar is not enabled. Configure the Replicate API first.",
+    dynamicReady: "Dynamic avatar is enabled",
+    advancedSettings: "Advanced Settings",
+    advancedSettingsHint: "Add project details, assets, and reference audio for the full generation brief.",
+    expand: "Expand",
+    collapse: "Collapse",
     voiceTypes: {
       BV001_streaming: "Female (BV001_streaming)",
       BV002_streaming: "Male (BV002_streaming)",
@@ -149,7 +155,7 @@ const copy = {
     quotaLoadFailed: "Quota failed to load. Please refresh and try again.",
     remaining: (quota: number) => `${quota} generations left this month`,
     loggedOutQuota: "Sign in to generate. Free plan includes 3 generations per month.",
-    submit: "Generate Now",
+    submit: "Generate Avatar Video Plan",
     loginSubmit: "Sign in and Generate",
     pending: "Generating",
     loginPending: "Redirecting to login",
@@ -192,10 +198,10 @@ type TaskFormProps = {
   quotaLoadFailed?: boolean;
   voiceCloneEnabled?: boolean;
   voiceClones?: VoiceClone[];
-  livePortraitEnabled?: boolean;
+  initialScriptText?: string;
 };
 
-export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], livePortraitEnabled = false }: TaskFormProps) {
+export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], initialScriptText = "" }: TaskFormProps) {
   const { locale } = useLanguage();
   const current = copy[locale];
   const displayedRemainingQuota = userEmail && remainingQuota === undefined ? 3 : remainingQuota;
@@ -220,7 +226,12 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [videoError, setVideoError] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const [videoProgress, setVideoProgress] = useState(0);
-  const [videoMode, setVideoMode] = useState<"static" | "liveportrait">("static");
+
+  useEffect(() => {
+    if (initialScriptText.trim()) {
+      setTtsText(initialScriptText);
+    }
+  }, [initialScriptText]);
 
   useEffect(() => {
     const form = document.getElementById("task-submit-form") as HTMLFormElement | null;
@@ -334,7 +345,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
         throw new Error(detail || (isProviderError ? current.ttsProviderError : current.ttsFailed));
       }
       setTtsAudioUrl(payload.audio_url);
-      setTtsProvider(payload.provider || "volcengine");
+      setTtsProvider(payload.provider || "kaiqiang");
       setTtsStatus("success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
@@ -378,7 +389,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       progressTimer = window.setInterval(() => {
         setVideoProgress((currentProgress) => Math.min(currentProgress + 9, 82));
       }, 2500);
-      const response = await fetch(videoMode === "liveportrait" ? "/api/avatar/dynamic-video" : "/api/debug/avatar-video-test", {
+      const response = await fetch("/api/avatar/dynamic-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, voice_type: ttsVoiceType, avatar_template_id: avatarTemplateId }),
@@ -393,7 +404,6 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       }
       setVideoUrl(resolvedVideoUrl);
       if (payload.audio_url) setTtsAudioUrl(payload.audio_url);
-      if (payload.provider) setTtsProvider(payload.provider);
       setVideoProgress(100);
       setVideoStatus("success");
     } catch (error) {
@@ -515,6 +525,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
               <Mic2 size={15} /> {current.voiceType}
             </span>
             <select
+              name="voice_type"
               value={ttsVoiceType}
               onChange={(event) => setTtsVoiceType(event.target.value)}
               className="h-11 w-full rounded-md border border-white/10 bg-white/5 px-3 outline-none ring-cyan/40 focus:ring-2"
@@ -546,7 +557,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
             <audio className="w-full" src={ttsAudioUrl} controls preload="metadata" />
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-slate-500">
-                {ttsProvider || "volcengine"} · {ttsVoiceType}
+                {displayProviderName(ttsProvider)} · {ttsVoiceType}
               </p>
               <button
                 type="button"
@@ -569,27 +580,9 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
             </div>
             {videoStatus === "success" ? <span className="rounded-md border border-lime/30 bg-lime/10 px-2.5 py-1 text-xs text-lime">{current.videoSuccess}</span> : null}
           </div>
-          <fieldset className="space-y-2">
-            <legend className="text-sm text-slate-300">{current.videoMode}</legend>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <label className={cn("flex h-11 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm", videoMode === "static" ? "border-cyan/30 bg-cyan/10 text-slate-100" : "border-white/10 bg-white/5 text-slate-300")}>
-                <input type="radio" name="video_motion_mode" value="static" checked={videoMode === "static"} onChange={() => setVideoMode("static")} />
-                {current.staticMode}
-              </label>
-              <label className={cn("flex h-11 items-center gap-3 rounded-md border px-3 text-sm", livePortraitEnabled ? "cursor-pointer" : "cursor-not-allowed opacity-60", videoMode === "liveportrait" ? "border-cyan/30 bg-cyan/10 text-slate-100" : "border-white/10 bg-white/5 text-slate-300")}>
-                <input
-                  type="radio"
-                  name="video_motion_mode"
-                  value="liveportrait"
-                  checked={videoMode === "liveportrait"}
-                  disabled={!livePortraitEnabled}
-                  onChange={() => setVideoMode("liveportrait")}
-                />
-                {current.dynamicMode}
-              </label>
-            </div>
-            {!livePortraitEnabled ? <p className="text-xs text-slate-500">{current.livePortraitUnavailable}</p> : null}
-          </fieldset>
+          <div className="rounded-md border border-lime/20 bg-lime/[0.06] px-3 py-2 text-sm text-lime">
+            {current.dynamicReady}
+          </div>
           {videoStatus === "generating" ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-400">
@@ -630,8 +623,18 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
           ) : null}
         </div>
       </Card>
-      <Card className="space-y-4 p-4">
-      <div className="grid gap-4 sm:grid-cols-2">
+      <Card className="p-4">
+        <details className="group space-y-4">
+          <summary className="flex cursor-pointer list-none items-start justify-between gap-4 rounded-md border border-white/10 bg-white/[0.03] px-3 py-3">
+            <span>
+              <span className="block text-base font-semibold text-white">{current.advancedSettings}</span>
+              <span className="mt-1 block text-sm text-slate-400">{current.advancedSettingsHint}</span>
+            </span>
+            <span className="mt-1 text-sm font-semibold text-cyan group-open:hidden">{current.expand}</span>
+            <span className="mt-1 hidden text-sm font-semibold text-cyan group-open:block">{current.collapse}</span>
+          </summary>
+          <div className="space-y-4 pt-4">
+            <div className="grid gap-4 sm:grid-cols-2">
         <label className="space-y-2">
           <span className="flex items-center gap-2 text-sm text-slate-300">
             <Mail size={15} /> {current.email}
@@ -656,9 +659,9 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
             className="h-11 w-full rounded-md border border-white/10 bg-white/5 px-3 outline-none ring-cyan/40 placeholder:text-slate-500 focus:ring-2"
           />
         </label>
-      </div>
+            </div>
 
-      <label className="space-y-2">
+            <label className="space-y-2">
         <span className="flex items-center gap-2 text-sm text-slate-300">
           <ScrollText size={15} /> {current.highlights}
         </span>
@@ -669,10 +672,10 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
           placeholder={current.highlightsPlaceholder}
           className="w-full resize-none rounded-md border border-white/10 bg-white/5 px-3 py-3 leading-6 outline-none ring-cyan/40 placeholder:text-slate-500 focus:ring-2"
         />
-      </label>
+            </label>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="space-y-2">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="space-y-2">
           <span className="flex items-center gap-2 text-sm text-slate-300">
             <Target size={15} /> {current.audience}
           </span>
@@ -682,8 +685,8 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
             placeholder={current.audiencePlaceholder}
             className="h-11 w-full rounded-md border border-white/10 bg-white/5 px-3 outline-none ring-cyan/40 placeholder:text-slate-500 focus:ring-2"
           />
-        </label>
-        <label className="space-y-2">
+              </label>
+              <label className="space-y-2">
           <span className="flex items-center gap-2 text-sm text-slate-300">
             <Video size={15} /> {current.style}
           </span>
@@ -699,34 +702,13 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
               </option>
             ))}
           </select>
-        </label>
-      </div>
+              </label>
+            </div>
 
-      <fieldset className="space-y-2">
-        <legend className="text-sm text-slate-300">{current.useDigitalHuman}</legend>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex h-11 cursor-pointer items-center gap-3 rounded-md border border-cyan/30 bg-cyan/10 px-3 text-sm text-slate-100">
-            <input type="radio" name="use_digital_human" value="true" checked={useDigitalHuman} onChange={() => setUseDigitalHuman(true)} />
-            {current.yesDigitalHuman}
-          </label>
-          <label className="flex h-11 cursor-pointer items-center gap-3 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-slate-300">
-            <input
-              type="radio"
-              name="use_digital_human"
-              value="false"
-              checked={!useDigitalHuman}
-              onChange={() => {
-                setUseDigitalHuman(false);
-                setPersonalImageError("");
-              }}
-            />
-            {current.noDigitalHuman}
-          </label>
-        </div>
-      </fieldset>
+            <input type="hidden" name="use_digital_human" value="true" />
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="space-y-2">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="space-y-2">
           <span className="flex items-center gap-2 text-sm text-slate-300">
             <ImagePlus size={15} /> {current.productImage}
           </span>
@@ -748,10 +730,10 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
             <span className="truncate px-3 text-slate-300">{imageName || current.noFile}</span>
           </button>
           {imageError ? <span className="block text-xs text-rose-200">{imageError}</span> : null}
-        </label>
-      </div>
+              </label>
+            </div>
 
-      <label className={useDigitalHuman ? "space-y-2" : "space-y-2 opacity-75"}>
+            <label className={useDigitalHuman ? "space-y-2" : "space-y-2 opacity-75"}>
         <span className="flex items-center gap-2 text-sm text-slate-300">
           <ImagePlus size={15} /> {current.personalImage} {!useDigitalHuman ? <span className="text-xs text-slate-500">({current.optional})</span> : null}
         </span>
@@ -773,64 +755,49 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
           <span className="truncate px-3 text-slate-300">{personalImageName || current.noFile}</span>
         </button>
         {personalImageError ? <span className="block text-xs text-rose-200">{personalImageError}</span> : null}
-      </label>
+            </label>
 
-      <input type="hidden" name="avatar_id" value={avatarTemplateId} />
-      <label className="space-y-2">
-        <span className="flex items-center gap-2 text-sm text-slate-300">
-          <Mic2 size={15} /> {current.voiceType}
-        </span>
-        <select
-          name="voice_type"
-          value={ttsVoiceType}
-          onChange={(event) => setTtsVoiceType(event.target.value)}
-          className="h-11 w-full rounded-md border border-white/10 bg-white/5 px-3 outline-none ring-cyan/40 focus:ring-2"
-        >
-          {Object.entries(current.voiceTypes).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      {voiceCloneEnabled && voiceClones.length > 0 ? (
-        <div className="rounded-md border border-cyan/20 bg-cyan/[0.06] p-3">
-          <label className="flex items-center gap-2 text-sm text-slate-200">
-            <input type="checkbox" name="use_cloned_voice" value="true" />
-            {current.clonedVoice}
-          </label>
-          <select name="voice_clone_id" className="mt-3 h-10 w-full rounded-md border border-white/10 bg-ink/70 px-3 text-sm">
-            {voiceClones.map((clone) => (
-              <option key={clone.id} value={clone.id}>
-                {clone.name} · {clone.voice_id || clone.status}
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : (
-        <p className="rounded-md border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-500">
-          {current.cloneUpsell}
-        </p>
-      )}
-      <VoiceUpload />
+            <input type="hidden" name="avatar_id" value={avatarTemplateId} />
+            {voiceCloneEnabled && voiceClones.length > 0 ? (
+              <div className="rounded-md border border-cyan/20 bg-cyan/[0.06] p-3">
+                <label className="flex items-center gap-2 text-sm text-slate-200">
+                  <input type="checkbox" name="use_cloned_voice" value="true" />
+                  {current.clonedVoice}
+                </label>
+                <select name="voice_clone_id" className="mt-3 h-10 w-full rounded-md border border-white/10 bg-ink/70 px-3 text-sm">
+                  {voiceClones.map((clone) => (
+                    <option key={clone.id} value={clone.id}>
+                      {clone.name} · {clone.voice_id || clone.status}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <p className="rounded-md border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-500">
+                {current.cloneUpsell}
+              </p>
+            )}
+            <VoiceUpload />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <p className={state.ok ? "text-sm text-lime" : "text-sm text-rose-200"}>{state.message}</p>
-          {!userEmail ? <p className="text-xs text-cyan">{current.loginHint}</p> : null}
-          {draftRestored ? <p className="text-xs text-lime">{current.draftRestored}</p> : null}
-          <p className="text-xs text-slate-500">
-            {quotaLoadFailed
-              ? current.quotaLoadFailed
-              : userEmail
-              ? displayedRemainingQuota === null
-                ? current.businessQuota
-                : current.remaining(Math.max(displayedRemainingQuota ?? 3, 0))
-              : current.loggedOutQuota}
-          </p>
-        </div>
-        <SubmitButton label={userEmail ? current.submit : current.loginSubmit} pendingLabel={userEmail ? current.pending : current.loginPending} />
-      </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-1">
+                <p className={state.ok ? "text-sm text-lime" : "text-sm text-rose-200"}>{state.message}</p>
+                {!userEmail ? <p className="text-xs text-cyan">{current.loginHint}</p> : null}
+                {draftRestored ? <p className="text-xs text-lime">{current.draftRestored}</p> : null}
+                <p className="text-xs text-slate-500">
+                  {quotaLoadFailed
+                    ? current.quotaLoadFailed
+                    : userEmail
+                      ? displayedRemainingQuota === null
+                        ? current.businessQuota
+                        : current.remaining(Math.max(displayedRemainingQuota ?? 3, 0))
+                      : current.loggedOutQuota}
+                </p>
+              </div>
+              <SubmitButton label={userEmail ? current.submit : current.loginSubmit} pendingLabel={userEmail ? current.pending : current.loginPending} />
+            </div>
+          </div>
+        </details>
       </Card>
     </form>
   );
