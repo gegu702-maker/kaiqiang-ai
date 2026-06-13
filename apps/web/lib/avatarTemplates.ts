@@ -3,6 +3,7 @@ export type AvatarTemplate = {
   name: string;
   description: string;
   avatar_image: string;
+  preview_video_url?: string;
   voice_type: "BV001_streaming" | "BV002_streaming";
   gender: "female" | "male";
   style: "business" | "tech";
@@ -15,6 +16,8 @@ const allAvatarTemplates: AvatarTemplate[] = [
     name: "商务女主播",
     description: "适合知识口播、课程介绍、商业内容",
     avatar_image: "/avatars/business_female_01.png",
+    preview_video_url:
+      "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/template-videos/business_female_01.mp4",
     voice_type: "BV001_streaming",
     gender: "female",
     style: "business",
@@ -25,6 +28,8 @@ const allAvatarTemplates: AvatarTemplate[] = [
     name: "商务男主播",
     description: "适合老板IP、财经、商业观点",
     avatar_image: "/avatars/business_male_01.png",
+    preview_video_url:
+      "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/template-videos/business_male_01.mp4",
     voice_type: "BV002_streaming",
     gender: "male",
     style: "business",

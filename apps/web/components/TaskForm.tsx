@@ -796,7 +796,21 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
                     )}
                   >
                     <div className="relative mb-3 aspect-square overflow-hidden rounded-md border border-white/10 bg-black/20">
-                      <Image src={template.avatar_image} alt={template.name} fill className="object-cover" />
+                      {template.preview_video_url ? (
+                        <video
+                          aria-label={template.name}
+                          autoPlay
+                          className="h-full w-full object-cover"
+                          loop
+                          muted
+                          playsInline
+                          poster={template.avatar_image}
+                          preload="metadata"
+                          src={template.preview_video_url}
+                        />
+                      ) : (
+                        <Image src={template.avatar_image} alt={template.name} fill className="object-cover" />
+                      )}
                     </div>
                     <div className="space-y-1">
                       <p className="font-semibold text-white">{template.name}</p>
