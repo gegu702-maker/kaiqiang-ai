@@ -24,7 +24,6 @@ def liveportrait_configured() -> bool:
         [
             settings.liveportrait_api_base_url.strip(),
             settings.liveportrait_api_key.strip(),
-            settings.liveportrait_default_driving_video_url.strip(),
         ]
     )
 
@@ -34,6 +33,5 @@ def replicate_configured() -> bool:
         [
             settings.replicate_api_token.strip(),
             settings.replicate_liveportrait_model.strip(),
-            settings.liveportrait_default_driving_video_url.strip(),
         ]
     )

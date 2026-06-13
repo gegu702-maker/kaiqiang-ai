@@ -19,8 +19,8 @@ class LivePortraitProvider(AvatarMotionProvider):
         driving_video_url: Optional[str],
         task_id: str,
     ) -> str:
-        self._validate()
         selected_driving_video_url = driving_video_url or settings.liveportrait_default_driving_video_url.strip()
+        self._validate(require_default_driving_video=not selected_driving_video_url)
         payload = {
             "source_image_url": source_image_url,
             "audio_url": audio_url,
@@ -91,12 +91,12 @@ class LivePortraitProvider(AvatarMotionProvider):
             },
         )
 
-    def _validate(self) -> None:
+    def _validate(self, *, require_default_driving_video: bool = True) -> None:
         if not settings.liveportrait_api_base_url.strip():
             raise HTTPException(status_code=400, detail="LIVEPORTRAIT_API_BASE_URL missing")
         if not settings.liveportrait_api_key.strip():
             raise HTTPException(status_code=400, detail="LIVEPORTRAIT_API_KEY missing")
-        if not settings.liveportrait_default_driving_video_url.strip():
+        if require_default_driving_video and not settings.liveportrait_default_driving_video_url.strip():
             raise HTTPException(status_code=400, detail="LIVEPORTRAIT_DEFAULT_DRIVING_VIDEO_URL missing")
 
     def _parse_json(self, response: httpx.Response) -> dict[str, Any]:

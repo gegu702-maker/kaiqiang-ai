@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const response = await fetch(`${API_URL}/api/debug/liveportrait-test`, {
+    const response = await fetch(`${API_URL}/api/avatar/dynamic-video`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
           ? (data as { detail?: unknown }).detail
           : data;
       const { detail, extra } = normalizeErrorDetail(rawDetail);
-      return NextResponse.json({ detail: detail || "动态数字人生成失败，请检查 LivePortrait API 配置。", ...extra }, { status: response.status });
+      return NextResponse.json({ detail: detail || "动态数字人生成失败，请检查动态数字人配置。", ...extra }, { status: response.status });
     }
     return NextResponse.json(data);
   } catch (error) {

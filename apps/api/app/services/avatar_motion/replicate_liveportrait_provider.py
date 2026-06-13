@@ -21,8 +21,8 @@ class ReplicateLivePortraitProvider(AvatarMotionProvider):
         driving_video_url: Optional[str],
         task_id: str,
     ) -> str:
-        self._validate(source_image_url)
         selected_driving_video_url = (driving_video_url or settings.liveportrait_default_driving_video_url).strip()
+        self._validate(source_image_url, require_default_driving_video=not selected_driving_video_url)
         if not selected_driving_video_url:
             raise HTTPException(status_code=400, detail="LIVEPORTRAIT_DEFAULT_DRIVING_VIDEO_URL missing")
 
@@ -133,13 +133,15 @@ class ReplicateLivePortraitProvider(AvatarMotionProvider):
                 return str(candidate)
         raise HTTPException(status_code=502, detail="Replicate output video missing")
 
-    def _validate(self, source_image_url: str) -> None:
+    def _validate(self, source_image_url: str, *, require_default_driving_video: bool = True) -> None:
         if not settings.replicate_api_token.strip():
             raise HTTPException(status_code=400, detail="REPLICATE_API_TOKEN missing")
         if not settings.replicate_liveportrait_model.strip():
             raise HTTPException(status_code=400, detail="REPLICATE_LIVEPORTRAIT_MODEL missing")
         if not source_image_url.strip():
             raise HTTPException(status_code=400, detail="source_image_url missing")
+        if require_default_driving_video and not settings.liveportrait_default_driving_video_url.strip():
+            raise HTTPException(status_code=400, detail="LIVEPORTRAIT_DEFAULT_DRIVING_VIDEO_URL missing")
 
     def _parse_json(self, response: httpx.Response) -> dict[str, Any]:
         try:

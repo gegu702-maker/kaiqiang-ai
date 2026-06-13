@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.services.avatar_motion import get_avatar_motion_provider, liveportrait_configured, replicate_configured
 from app.services.avatar_templates import avatar_template_public_url, get_avatar_template
+from app.services.avatar_template_videos import get_dynamic_template_video_url
 from app.services.static_avatar_video import package_dynamic_avatar_video, render_static_avatar_video
 from app.services.storage import upload_public_bytes
 from app.services.tts import synthesize_speech_to_storage
@@ -325,9 +326,26 @@ def _normalize_musetalk_result_url(output_url: str, base_url: str) -> str:
 
 @router.post("/api/debug/liveportrait-test")
 async def debug_liveportrait_test(payload: LivePortraitTestRequest) -> dict:
+    return await _generate_liveportrait_video(payload, allow_static_fallback=True)
+
+
+@router.post("/api/avatar/dynamic-video")
+async def dynamic_avatar_video(payload: LivePortraitTestRequest) -> dict:
+    return await _generate_liveportrait_video(payload, allow_static_fallback=False)
+
+
+async def _generate_liveportrait_video(payload: LivePortraitTestRequest, *, allow_static_fallback: bool) -> dict:
+    requested_template_id = (payload.avatar_template_id or "").strip()
     template = get_avatar_template(payload.avatar_template_id)
     supabase = get_supabase()
     selected_voice_type = payload.voice_type or template.default_voice_type
+    provider = get_avatar_motion_provider()
+    template_driving_video_url = None
+    if provider is not None:
+        template_driving_video_url = payload.driving_video_url or get_dynamic_template_video_url(template.id if requested_template_id else None)
+    elif not allow_static_fallback:
+        get_dynamic_template_video_url(template.id if requested_template_id else None)
+        raise HTTPException(status_code=400, detail="动态数字人服务暂未启用，请稍后重试。")
     tts_result = await synthesize_speech_to_storage(
         supabase,
         text=payload.text,
@@ -338,7 +356,6 @@ async def debug_liveportrait_test(payload: LivePortraitTestRequest) -> dict:
         pitch_ratio=payload.pitch_ratio,
     )
     source_image_url = avatar_template_public_url(template)
-    provider = get_avatar_motion_provider()
     if provider is None:
         dynamic_avatar_video_url = await render_static_avatar_video(
             supabase,
@@ -352,7 +369,7 @@ async def debug_liveportrait_test(payload: LivePortraitTestRequest) -> dict:
         dynamic_avatar_video_url = await provider.generate_avatar_motion(
             source_image_url=source_image_url,
             audio_url=tts_result["audio_url"],
-            driving_video_url=payload.driving_video_url,
+            driving_video_url=template_driving_video_url,
             task_id=f"debug-liveportrait-{template.id}",
         )
         final_video_url = await package_dynamic_avatar_video(

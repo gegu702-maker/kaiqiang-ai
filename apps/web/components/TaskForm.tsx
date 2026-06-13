@@ -182,6 +182,8 @@ type AvatarVideoTestResponse = TTSTestResponse & {
   final_video_url?: string;
   avatar_template_id?: string;
   avatar_template_name?: string;
+  error?: string;
+  missing_template_video?: boolean;
 };
 
 type TaskFormProps = {
@@ -376,7 +378,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       progressTimer = window.setInterval(() => {
         setVideoProgress((currentProgress) => Math.min(currentProgress + 9, 82));
       }, 2500);
-      const response = await fetch(videoMode === "liveportrait" ? "/api/debug/liveportrait-test" : "/api/debug/avatar-video-test", {
+      const response = await fetch(videoMode === "liveportrait" ? "/api/avatar/dynamic-video" : "/api/debug/avatar-video-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, voice_type: ttsVoiceType, avatar_template_id: avatarTemplateId }),
@@ -384,6 +386,9 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
       const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
       const resolvedVideoUrl = payload.final_video_url || payload.video_url || payload.dynamic_avatar_video_url;
       if (!response.ok || !payload.success || !resolvedVideoUrl) {
+        if (payload.error === "missing_template_video" || payload.missing_template_video) {
+          throw new Error("当前数字人模板暂未配置动态视频素材，请选择其他模板。");
+        }
         throw new Error(payload.detail || current.videoFailed);
       }
       setVideoUrl(resolvedVideoUrl);
