@@ -1,11 +1,11 @@
 "use client";
 
-import { Menu, X } from "lucide-react";
+import { Check, ChevronDown, Languages, Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SUPPORTED_LOCALES, useLanguage, type Locale } from "@/components/LanguageProvider";
 import { mainNavigationItems, navigationCopy } from "@/lib/i18n/navigation";
@@ -40,25 +40,11 @@ export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
         </div>
 
         <div className={isLanding ? "flex min-w-0 items-center justify-end gap-2 text-sm font-medium text-slate-700 sm:gap-3 [&_a]:rounded-full [&_a]:px-3 [&_a]:py-2 [&_a]:text-slate-700 [&_a]:transition [&_a:hover]:bg-slate-100 [&_a:hover]:text-slate-950 [&_button]:rounded-full [&_button]:px-3 [&_button]:py-2 [&_button]:text-slate-700 [&_button]:transition [&_button:hover]:bg-slate-100 [&_button:hover]:text-slate-950" : "flex items-center gap-1 text-sm text-slate-300 sm:gap-2"}>
-          <label className={isLanding ? "relative" : "relative"}>
-            <span className="sr-only">{copy.language}</span>
-            <select
-              value={locale}
-              onChange={(event) => setLocale(event.target.value as Locale)}
-              aria-label={copy.language}
-              className={
-                isLanding
-                  ? "h-9 rounded-full border border-slate-200/70 bg-white/80 px-3 text-xs font-semibold text-slate-700 outline-none transition hover:bg-white focus:ring-2 focus:ring-slate-300"
-                  : "h-9 rounded-md border border-white/10 bg-white/[0.04] px-2 text-xs font-semibold text-slate-200 outline-none transition hover:bg-white/10 focus:ring-2 focus:ring-cyan/40"
-              }
-            >
-              {SUPPORTED_LOCALES.map((item) => (
-                <option key={item.code} value={item.code}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <LanguageDropdown
+            ariaLabel={copy.language}
+            locale={locale}
+            onLocaleChange={setLocale}
+          />
           <div className="hidden sm:block">{authSlot}</div>
           <button
             type="button"
@@ -89,5 +75,92 @@ export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
         ) : null}
       </nav>
     </header>
+  );
+}
+
+function LanguageDropdown({
+  ariaLabel,
+  locale,
+  onLocaleChange,
+}: {
+  ariaLabel: string;
+  locale: Locale;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const activeLocale = SUPPORTED_LOCALES.find((item) => item.code === locale) ?? SUPPORTED_LOCALES[0];
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (!dropdownRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, []);
+
+  return (
+    <div ref={dropdownRef} className="relative shrink-0">
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((value) => !value)}
+        className="!inline-flex h-10 min-w-[118px] !items-center !justify-between gap-2 !rounded-full border border-cyan/35 bg-ink/92 px-3 !py-0 text-xs font-semibold !text-white shadow-[0_0_24px_rgba(49,215,255,0.16)] outline-none transition hover:border-cyan/70 hover:bg-slate-950 focus-visible:ring-2 focus-visible:ring-cyan/60 sm:min-w-[132px]"
+      >
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <Languages size={15} className="shrink-0 text-cyan" />
+          <span className="truncate">{activeLocale.nativeName}</span>
+        </span>
+        <ChevronDown size={15} className={open ? "shrink-0 text-cyan transition rotate-180" : "shrink-0 text-cyan transition"} />
+      </button>
+
+      {open ? (
+        <div
+          className="absolute right-0 top-[calc(100%+10px)] z-50 w-44 overflow-hidden rounded-lg border border-cyan/30 bg-[#07111d]/98 p-1.5 text-sm text-slate-100 shadow-[0_18px_50px_rgba(0,0,0,0.45),0_0_32px_rgba(49,215,255,0.15)] backdrop-blur-xl"
+          role="listbox"
+          aria-label={ariaLabel}
+        >
+          {SUPPORTED_LOCALES.map((item) => {
+            const selected = item.code === locale;
+            return (
+              <button
+                key={item.code}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onLocaleChange(item.code);
+                  setOpen(false);
+                }}
+                className={[
+                  "!flex h-10 w-full !items-center !justify-between rounded-md px-3 !py-0 text-left text-sm font-semibold outline-none transition",
+                  selected
+                    ? "bg-cyan/18 !text-cyan shadow-[inset_0_0_0_1px_rgba(49,215,255,0.28)]"
+                    : "!text-slate-200 hover:bg-white/[0.08] hover:!text-white focus-visible:bg-white/[0.08] focus-visible:!text-white",
+                ].join(" ")}
+              >
+                <span>{item.nativeName}</span>
+                {selected ? <Check size={15} /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
