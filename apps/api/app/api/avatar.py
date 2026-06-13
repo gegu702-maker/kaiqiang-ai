@@ -455,9 +455,11 @@ def _optional_authenticated_user(supabase: Client, credentials: HTTPAuthorizatio
 
 def _avatar_task_mode(task: dict) -> str:
     result_url = str(task.get("result_url") or task.get("result_video_url") or "")
-    audio_url = str(task.get("audio_url") or "")
     video_url = str(task.get("video_url") or "")
-    if "/debug/static-avatar/" in result_url or "/avatar/static-video/" in audio_url or "/avatar/static-video/" in video_url:
+    video_url_lower = video_url.lower()
+    if "/debug/static-avatar/" in result_url:
+        return "static"
+    if "/avatars/" in video_url_lower or video_url_lower.endswith((".png", ".jpg", ".jpeg", ".webp")):
         return "static"
     return "dynamic"
 
