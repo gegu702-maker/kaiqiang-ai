@@ -9,7 +9,7 @@ export type AvatarTemplate = {
   vip_only: boolean;
 };
 
-export const avatarTemplates: AvatarTemplate[] = [
+const allAvatarTemplates: AvatarTemplate[] = [
   {
     id: "business_female_01",
     name: "商务女主播",
@@ -42,8 +42,12 @@ export const avatarTemplates: AvatarTemplate[] = [
   },
 ];
 
+export const avatarTemplates: AvatarTemplate[] = allAvatarTemplates.filter((template) =>
+  ["business_female_01", "business_male_01"].includes(template.id),
+);
+
 export function getAvatarTemplate(id: string | null | undefined) {
-  return avatarTemplates.find((template) => template.id === id) ?? avatarTemplates[0];
+  return allAvatarTemplates.find((template) => template.id === id) ?? avatarTemplates[0];
 }
 
 export type AvatarStudioTemplate = {
