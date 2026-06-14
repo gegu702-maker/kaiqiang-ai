@@ -43,7 +43,32 @@ async def generate_avatar_video_with_musetalk(
 
             output_url = _normalize_musetalk_result_url(_extract_video_url(data), base_url)
             logger.info("MuseTalk output task_id=%s output_url=%s", task_id, output_url)
-            video_response = await client.get(output_url)
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as error:
+        raise HTTPException(status_code=504, detail="MuseTalk generation timeout") from error
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"MuseTalk service request failed: {error}") from error
+
+    return await finalize_avatar_video_from_result_url(
+        supabase,
+        task_id=task_id,
+        result_video_url=output_url,
+        subtitle_text=subtitle_text,
+    )
+
+
+async def finalize_avatar_video_from_result_url(
+    supabase: Client,
+    *,
+    task_id: str,
+    result_video_url: str,
+    subtitle_text: str | None = None,
+) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=settings.musetalk_timeout_seconds, follow_redirects=True) as client:
+            logger.info("MuseTalk output download started task_id=%s output_url=%s", task_id, result_video_url)
+            video_response = await client.get(result_video_url)
             if not video_response.is_success:
                 raise HTTPException(status_code=502, detail=f"MuseTalk output download failed: {video_response.status_code}")
             if not _looks_like_mp4(video_response.content):
@@ -61,9 +86,9 @@ async def generate_avatar_video_with_musetalk(
     except HTTPException:
         raise
     except httpx.TimeoutException as error:
-        raise HTTPException(status_code=504, detail="MuseTalk generation timeout") from error
+        raise HTTPException(status_code=504, detail="MuseTalk output download timeout") from error
     except httpx.HTTPError as error:
-        raise HTTPException(status_code=502, detail=f"MuseTalk service request failed: {error}") from error
+        raise HTTPException(status_code=502, detail=f"MuseTalk output download failed: {error}") from error
 
     final_video_bytes = video_response.content
     if (subtitle_text or "").strip():

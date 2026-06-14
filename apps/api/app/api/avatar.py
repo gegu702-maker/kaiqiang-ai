@@ -4,6 +4,7 @@ import logging
 import traceback
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from supabase import Client
@@ -15,7 +16,7 @@ from app.services.billing import assert_generation_quota, log_generation_usage
 from app.services.autodl_client import ensure_gpu_ready
 from app.services.avatar_template_videos import get_dynamic_template_video_url
 from app.services.avatar_templates import get_avatar_template
-from app.services.musetalk_client import check_musetalk_health, generate_avatar_video_with_musetalk
+from app.services.musetalk_client import check_musetalk_health, finalize_avatar_video_from_result_url, generate_avatar_video_with_musetalk
 from app.services.storage import upload_public_file
 from app.services.tts import synthesize_speech_to_storage
 
@@ -48,6 +49,10 @@ class TemplateAvatarGenerateRequest(BaseModel):
     speed_ratio: float = 1.0
     volume_ratio: float = 1.0
     pitch_ratio: float = 1.0
+
+
+class RecoverAvatarTaskRequest(BaseModel):
+    subtitle_text: str | None = None
 
 
 @router.get("/health")
@@ -230,16 +235,7 @@ async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio
             task_id=task_id,
             subtitle_text=subtitle_text,
         )
-        _update_avatar_task(
-            supabase,
-            task_id,
-            {
-                "status": "completed",
-                "progress_stage": "completed",
-                "result_url": result_url,
-                "last_gpu_used_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+        _complete_avatar_task(supabase, task_id, result_url)
         logger.info("Avatar result uploaded task_id=%s result_video_url=%s", task_id, result_url)
         log_generation_usage(supabase, user_id=user_id, avatar_task_id=task_id)
         logger.info("Avatar MuseTalk task completed task_id=%s result_url=%s", task_id, result_url)
@@ -266,6 +262,55 @@ def list_avatar_tasks(
         .execute()
     )
     return [_serialize_avatar_task(item) for item in response.data or []]
+
+
+@router.post("/tasks/{task_id}/recover")
+async def recover_avatar_task(
+    task_id: str,
+    payload: RecoverAvatarTaskRequest | None = None,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    user = get_authenticated_user(supabase, token)
+    response = supabase.table("avatar_tasks").select("*").eq("id", task_id).eq("user_id", user["id"]).maybe_single().execute()
+    task = response.data
+    if not task:
+        raise HTTPException(status_code=404, detail="Avatar task not found")
+    if task.get("status") != "running" or task.get("progress_stage") != "video_generating":
+        raise HTTPException(status_code=409, detail="Avatar task is not recoverable")
+
+    result_video_url = _musetalk_result_url_for_task(task_id)
+    await _ensure_musetalk_result_video_exists(task_id, result_video_url)
+
+    try:
+        subtitle_text = (payload.subtitle_text if payload else None) or None
+        logger.info("Avatar task recovery started task_id=%s result_video_url=%s", task_id, result_video_url)
+        result_url = await finalize_avatar_video_from_result_url(
+            supabase,
+            task_id=task_id,
+            result_video_url=result_video_url,
+            subtitle_text=subtitle_text,
+        )
+        completed_task = _complete_avatar_task(supabase, task_id, result_url)
+        log_generation_usage(supabase, user_id=user["id"], avatar_task_id=task_id)
+        logger.info("Avatar task recovery completed task_id=%s result_url=%s", task_id, result_url)
+        return {
+            "success": True,
+            "status": "completed",
+            "task": _serialize_avatar_task(completed_task),
+            "task_id": task_id,
+            "result_url": result_url,
+            "recovered_from": result_video_url,
+            "subtitle_applied": bool((subtitle_text or "").strip()),
+        }
+    except HTTPException as error:
+        logger.exception("Avatar task recovery failed task_id=%s detail=%s", task_id, error.detail)
+        _safe_fail_task(supabase, task_id, f"avatar recovery failed: {error.detail}")
+        raise
+    except Exception as error:
+        logger.exception("Avatar task recovery failed task_id=%s", task_id)
+        _safe_fail_task(supabase, task_id, f"avatar recovery failed: {error}")
+        raise HTTPException(status_code=500, detail=f"avatar recovery failed: {error}") from error
 
 
 @router.get("/tasks/{task_id}")
@@ -308,6 +353,20 @@ def _update_avatar_task(supabase: Client, task_id: str, values: dict) -> dict:
     return response.data[0]
 
 
+def _complete_avatar_task(supabase: Client, task_id: str, result_url: str) -> dict:
+    return _update_avatar_task(
+        supabase,
+        task_id,
+        {
+            "status": "completed",
+            "progress_stage": "completed",
+            "result_url": result_url,
+            "error_message": None,
+            "last_gpu_used_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
 def _safe_fail_task(supabase: Client, task_id: str, message: str) -> None:
     try:
         supabase.table("avatar_tasks").update({"status": "failed", "progress_stage": "failed", "error_message": message[:2000]}).eq("id", task_id).execute()
@@ -322,3 +381,38 @@ def _serialize_avatar_task(task: dict) -> dict:
         "result_url": result_url,
         "result_video_url": result_url,
     }
+
+
+def _musetalk_result_url_for_task(task_id: str) -> str:
+    base_url = settings.musetalk_api_base_url.strip().rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=503, detail="MUSE_TALK_API_BASE_URL missing")
+    return f"{base_url}/results/{task_id}.mp4"
+
+
+async def _ensure_musetalk_result_video_exists(task_id: str, result_video_url: str) -> None:
+    headers = {}
+    if settings.musetalk_api_key.strip():
+        headers["Authorization"] = f"Bearer {settings.musetalk_api_key.strip()}"
+
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            response = await client.head(result_video_url, headers=headers)
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"MuseTalk result check failed: {error}") from error
+
+    if response.status_code == 404:
+        raise HTTPException(status_code=404, detail="MuseTalk result video not found")
+    if not response.is_success:
+        raise HTTPException(status_code=409, detail=f"MuseTalk result video is not ready: {response.status_code}")
+
+    content_type = (response.headers.get("content-type") or "").lower()
+    if content_type and "video/mp4" not in content_type and "application/octet-stream" not in content_type:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "MuseTalk result URL is not an MP4 video",
+                "content_type": content_type,
+                "task_id": task_id,
+            },
+        )
