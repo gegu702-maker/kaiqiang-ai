@@ -131,7 +131,7 @@ function LanguageDropdown({
 
       {open ? (
         <div
-          className="absolute right-0 top-[calc(100%+10px)] z-50 w-44 overflow-hidden rounded-lg border border-cyan/30 bg-[#07111d]/98 p-1.5 text-sm text-slate-100 shadow-[0_18px_50px_rgba(0,0,0,0.45),0_0_32px_rgba(49,215,255,0.15)] backdrop-blur-xl"
+          className="absolute right-0 top-[calc(100%+10px)] z-50 w-44 overflow-hidden rounded-lg border border-[rgba(0,212,255,.35)] bg-[#07111d] p-1.5 text-sm !text-white shadow-[0_18px_50px_rgba(0,0,0,0.45),0_0_32px_rgba(49,215,255,0.15)] backdrop-blur-xl"
           role="listbox"
           aria-label={ariaLabel}
         >
@@ -150,8 +150,8 @@ function LanguageDropdown({
                 className={[
                   "!flex h-10 w-full !items-center !justify-between rounded-md px-3 !py-0 text-left text-sm font-semibold outline-none transition",
                   selected
-                    ? "bg-cyan/18 !text-cyan shadow-[inset_0_0_0_1px_rgba(49,215,255,0.28)]"
-                    : "!text-slate-200 hover:bg-white/[0.08] hover:!text-white focus-visible:bg-white/[0.08] focus-visible:!text-white",
+                    ? "bg-white/[0.08] !text-[#00d4ff] shadow-[inset_0_0_0_1px_rgba(0,212,255,.35)]"
+                    : "!text-white hover:bg-white/[0.08] hover:!text-white focus-visible:bg-white/[0.08] focus-visible:!text-white",
                 ].join(" ")}
               >
                 <span>{item.nativeName}</span>
