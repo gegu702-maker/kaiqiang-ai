@@ -6,25 +6,14 @@ import { useMemo, useState } from "react";
 
 import { TaskForm } from "@/components/TaskForm";
 import { useLanguage } from "@/components/LanguageProvider";
+import { runViralPipeline } from "@/lib/api";
 import { studioCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
-import type { ViralAnalyzeResult, ViralRewrite, VoiceClone } from "@/lib/types";
+import type { ViralPipelineResult, ViralRewrite, VideoLinkResolveResult, VoiceClone } from "@/lib/types";
 
 type StepState = "idle" | "running" | "done";
 type AnalysisStatus = "idle" | "resolving" | "needs_script" | "ready" | "error";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-type VideoLinkResolveResult = {
-  ok: boolean;
-  platform: string;
-  title: string;
-  duration: number;
-  thumbnail: string;
-  webpage_url: string;
-  downloadable: boolean;
-  fallback_reason: string;
-};
+type StudioAnalysis = NonNullable<ViralPipelineResult["analysis"]>;
 
 type StudioWorkspaceProps = {
   userEmail?: string | null;
@@ -49,8 +38,9 @@ export function StudioWorkspace({
   const [copied, setCopied] = useState<string | null>(null);
   const [resolveResult, setResolveResult] = useState<VideoLinkResolveResult | null>(null);
   const [hasStarted, setHasStarted] = useState(false);
-  const [currentAnalysis, setCurrentAnalysis] = useState<ViralAnalyzeResult | null>(null);
+  const [currentAnalysis, setCurrentAnalysis] = useState<StudioAnalysis | null>(null);
   const [rewriteVersions, setRewriteVersions] = useState<ViralRewrite[]>([]);
+  const [transcript, setTranscript] = useState("");
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>("idle");
   const [analysisError, setAnalysisError] = useState("");
   const [notice, setNotice] = useState("");
@@ -78,6 +68,7 @@ export function StudioWorkspace({
     setResolveResult(null);
     setCurrentAnalysis(null);
     setRewriteVersions([]);
+    setTranscript("");
     setAnalysisError("");
     setAnalysisStatus("resolving");
     setActiveStep(0);
@@ -94,14 +85,27 @@ export function StudioWorkspace({
       return;
     }
     try {
-      const response = await fetch(`${API_URL}/api/viral/link/resolve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ source_url: sourceUrl }),
+      const result = await runViralPipeline(
+        {
+          source_url: sourceUrl,
+          industry: "personal_brand",
+          language: locale,
+        },
+        session.access_token,
+      );
+      const metadata = result.metadata ?? {};
+      setResolveResult({
+        ok: result.ok,
+        platform: metadata.platform || "douyin",
+        title: metadata.title || "",
+        description: metadata.description || "",
+        duration: metadata.duration || 0,
+        thumbnail: metadata.thumbnail || "",
+        webpage_url: metadata.webpage_url || sourceUrl,
+        downloadable: Boolean(metadata.downloadable),
+        fallback_reason: result.fallback_reason || "",
       });
-      if (!response.ok) throw new Error(await readApiError(response, t.fallback));
-      const result = (await response.json()) as VideoLinkResolveResult;
-      setResolveResult(result);
+      setTranscript(result.transcript || "");
       setActiveStep(3);
       if (!result.ok) {
         const message = result.fallback_reason || t.fallback;
@@ -110,8 +114,15 @@ export function StudioWorkspace({
         setNotice(message);
         return;
       }
-      setAnalysisStatus("needs_script");
-      setNotice(t.linkResolvedNeedsScript);
+      setCurrentAnalysis(result.analysis);
+      setRewriteVersions(result.rewrites || []);
+      if (result.analysis) {
+        setAnalysisStatus("ready");
+        setNotice("");
+      } else {
+        setAnalysisStatus("needs_script");
+        setNotice(t.linkResolvedNeedsScript);
+      }
     } catch (error) {
       setActiveStep(3);
       setAnalysisStatus("error");
@@ -188,6 +199,13 @@ export function StudioWorkspace({
             </section>
           ) : null}
 
+          {transcript ? (
+            <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+              <h2 className="text-lg font-semibold text-white">{t.transcript}</h2>
+              <p className="mt-4 whitespace-pre-wrap rounded-md border border-white/10 bg-white/[0.035] p-4 text-sm leading-7 text-slate-300">{transcript}</p>
+            </section>
+          ) : null}
+
           <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
               <FileText className="text-cyan" size={20} />
@@ -195,9 +213,10 @@ export function StudioWorkspace({
             </h2>
             {currentAnalysis ? (
               <div className="mt-4 grid gap-3 text-sm leading-6 text-slate-300 sm:grid-cols-2">
+                <InfoRow label={t.topic} value={currentAnalysis.topic || "-"} />
                 <InfoRow label={t.hook} value={currentAnalysis.hook || "-"} />
-                <InfoRow label={t.selling} value={currentAnalysis.selling_points.join(" / ") || "-"} />
-                <InfoRow label={t.structure} value={currentAnalysis.structure.join(" → ") || "-"} />
+                <InfoRow label={t.selling} value={(currentAnalysis.selling_points || []).join(" / ") || "-"} />
+                <InfoRow label={t.structure} value={(currentAnalysis.structure || []).join(" → ") || "-"} />
                 <InfoRow label={t.template} value={currentAnalysis.template || "-"} />
               </div>
             ) : hasStarted ? (
@@ -312,18 +331,6 @@ export function StudioWorkspace({
       </section>
     </main>
   );
-}
-
-async function readApiError(response: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await response.json()) as { detail?: unknown; error?: unknown; message?: unknown };
-    const detail = payload.detail ?? payload.error ?? payload.message;
-    if (typeof detail === "string" && detail.trim()) return detail;
-    if (detail) return JSON.stringify(detail);
-  } catch {
-    // Use the fallback below when the response is not JSON.
-  }
-  return fallback;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
