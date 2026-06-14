@@ -8,9 +8,10 @@ import { TaskForm } from "@/components/TaskForm";
 import { useLanguage } from "@/components/LanguageProvider";
 import { studioCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
-import type { VoiceClone } from "@/lib/types";
+import type { ViralAnalyzeResult, ViralRewrite, VoiceClone } from "@/lib/types";
 
 type StepState = "idle" | "running" | "done";
+type AnalysisStatus = "idle" | "resolving" | "needs_script" | "ready" | "error";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -47,9 +48,20 @@ export function StudioWorkspace({
   const [activeStep, setActiveStep] = useState(-1);
   const [copied, setCopied] = useState<string | null>(null);
   const [resolveResult, setResolveResult] = useState<VideoLinkResolveResult | null>(null);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [currentAnalysis, setCurrentAnalysis] = useState<ViralAnalyzeResult | null>(null);
+  const [rewriteVersions, setRewriteVersions] = useState<ViralRewrite[]>([]);
+  const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>("idle");
+  const [analysisError, setAnalysisError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedScript, setSelectedScript] = useState("");
   const isRunning = activeStep >= 0 && activeStep < 3;
+  const canShowDemo =
+    !sourceUrl.trim() &&
+    !hasStarted &&
+    !resolveResult &&
+    !currentAnalysis &&
+    rewriteVersions.length === 0;
   const steps = useMemo(
     () =>
       t.steps.map((label, index): { label: string; state: StepState } => ({
@@ -61,8 +73,13 @@ export function StudioWorkspace({
 
   async function startWorkflow() {
     if (!sourceUrl.trim()) return;
+    setHasStarted(true);
     setNotice("");
     setResolveResult(null);
+    setCurrentAnalysis(null);
+    setRewriteVersions([]);
+    setAnalysisError("");
+    setAnalysisStatus("resolving");
     setActiveStep(0);
     window.setTimeout(() => setActiveStep(1), 360);
     window.setTimeout(() => setActiveStep(2), 720);
@@ -71,6 +88,8 @@ export function StudioWorkspace({
     } = await supabase.auth.getSession();
     if (!session?.access_token) {
       setActiveStep(3);
+      setAnalysisStatus("error");
+      setAnalysisError(t.login);
       setNotice(t.login);
       return;
     }
@@ -80,16 +99,25 @@ export function StudioWorkspace({
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ source_url: sourceUrl }),
       });
-      if (!response.ok) throw new Error(t.fallback);
+      if (!response.ok) throw new Error(await readApiError(response, t.fallback));
       const result = (await response.json()) as VideoLinkResolveResult;
       setResolveResult(result);
       setActiveStep(3);
       if (!result.ok) {
-        setNotice(result.fallback_reason || t.fallback);
+        const message = result.fallback_reason || t.fallback;
+        setAnalysisStatus("error");
+        setAnalysisError(message);
+        setNotice(message);
+        return;
       }
+      setAnalysisStatus("needs_script");
+      setNotice(t.linkResolvedNeedsScript);
     } catch (error) {
       setActiveStep(3);
-      setNotice(error instanceof Error ? error.message : t.fallback);
+      setAnalysisStatus("error");
+      const message = error instanceof Error ? error.message : t.fallback;
+      setAnalysisError(message);
+      setNotice(message);
     }
   }
 
@@ -165,14 +193,27 @@ export function StudioWorkspace({
               <FileText className="text-cyan" size={20} />
               {t.topic}
             </h2>
-            <div className="mt-4 grid gap-3 text-sm leading-6 text-slate-300 sm:grid-cols-2">
-              <InfoRow label={t.hook} value={t.sampleAnalysis.hook} />
-              <InfoRow label={t.pain} value={t.sampleAnalysis.pain} />
-              <InfoRow label={t.selling} value={t.sampleAnalysis.selling} />
-              <InfoRow label={t.cta} value={t.sampleAnalysis.cta} />
-              <InfoRow label={t.structure} value={t.sampleAnalysis.structure} />
-              <InfoRow label={t.template} value={t.sampleAnalysis.template} />
-            </div>
+            {currentAnalysis ? (
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-slate-300 sm:grid-cols-2">
+                <InfoRow label={t.hook} value={currentAnalysis.hook || "-"} />
+                <InfoRow label={t.selling} value={currentAnalysis.selling_points.join(" / ") || "-"} />
+                <InfoRow label={t.structure} value={currentAnalysis.structure.join(" → ") || "-"} />
+                <InfoRow label={t.template} value={currentAnalysis.template || "-"} />
+              </div>
+            ) : hasStarted ? (
+              <EmptyState message={analysisStatus === "error" ? analysisError || t.analysisUnavailable : t.linkResolvedNeedsScript} />
+            ) : canShowDemo ? (
+              <div className="mt-4 grid gap-3 text-sm leading-6 text-slate-300 sm:grid-cols-2">
+                <InfoRow label={t.hook} value={t.sampleAnalysis.hook} />
+                <InfoRow label={t.pain} value={t.sampleAnalysis.pain} />
+                <InfoRow label={t.selling} value={t.sampleAnalysis.selling} />
+                <InfoRow label={t.cta} value={t.sampleAnalysis.cta} />
+                <InfoRow label={t.structure} value={t.sampleAnalysis.structure} />
+                <InfoRow label={t.template} value={t.sampleAnalysis.template} />
+              </div>
+            ) : (
+              <EmptyState message={t.analysisUnavailable} />
+            )}
             <Link className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-cyan hover:text-cyan/80" href="/studio/viral-analyzer">
               {t.advancedAnalyzer}
               <ExternalLink size={15} />
@@ -182,7 +223,12 @@ export function StudioWorkspace({
           <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
             <h2 className="text-lg font-semibold text-white">{t.rewrites}</h2>
             <div className="mt-4 grid gap-3">
-              {t.rewriteSamples.map(([title, script]) => (
+              {(rewriteVersions.length > 0
+                ? rewriteVersions.map(({ title, script }) => [title, script] as const)
+                : canShowDemo
+                  ? t.rewriteSamples
+                  : []
+              ).map(([title, script]) => (
                 <article key={title} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <h3 className="font-semibold text-cyan">{title}</h3>
@@ -214,6 +260,7 @@ export function StudioWorkspace({
                   <p className="mt-3 text-sm leading-7 text-slate-300">{script}</p>
                 </article>
               ))}
+              {rewriteVersions.length === 0 && !canShowDemo ? <EmptyState message={hasStarted ? t.rewritesUnavailable : t.empty} /> : null}
             </div>
           </section>
         </section>
@@ -267,6 +314,18 @@ export function StudioWorkspace({
   );
 }
 
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const payload = (await response.json()) as { detail?: unknown; error?: unknown; message?: unknown };
+    const detail = payload.detail ?? payload.error ?? payload.message;
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (detail) return JSON.stringify(detail);
+  } catch {
+    // Use the fallback below when the response is not JSON.
+  }
+  return fallback;
+}
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-white/10 bg-white/[0.035] p-3">
@@ -274,4 +333,8 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-slate-200">{value}</p>
     </div>
   );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return <p className="mt-4 rounded-md border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-slate-400">{message}</p>;
 }
