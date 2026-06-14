@@ -243,7 +243,13 @@ async def _musetalk_health_ok() -> bool:
             if not response.is_success:
                 return False
             data = _parse_json(response)
-            return str(data.get("status", "")).lower() in {"ok", "ready", "healthy"}
+            status = str(data.get("status", "")).strip().lower()
+            if status:
+                return status in {"ok", "ready", "healthy", "success"}
+            body = response.text.strip().lower()
+            if body:
+                return body in {"ok", "ready", "healthy", "success"}
+            return True
     except httpx.HTTPError:
         return False
 

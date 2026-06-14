@@ -86,7 +86,12 @@ async def check_musetalk_health() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
             response = await client.get(f"{base_url}/health", headers=headers)
             data = _parse_json(response)
-            return data if isinstance(data, dict) else {"status": "unknown"}
+            if data:
+                return data
+            if response.is_success:
+                body = response.text.strip()
+                return {"status": body or "ok"}
+            return {"status": "error", "status_code": response.status_code, "message": response.text[:300]}
     except Exception as error:
         return {"status": "error", "message": str(error)}
 
