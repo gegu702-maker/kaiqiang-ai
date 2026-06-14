@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useActionState, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useActionState, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Check, Download, ImagePlus, Loader2, Mail, Mic2, Package, ScrollText, Target, Video } from "lucide-react";
 
@@ -11,10 +11,12 @@ import { VoiceUpload } from "@/components/VoiceUpload";
 import { Card } from "@/components/ui/card";
 import { trackEvent } from "@/lib/analytics";
 import { avatarTemplates } from "@/lib/avatarTemplates";
+import { createClient } from "@/lib/supabase/client";
 import { getDefaultVoiceTypeForLocale } from "@/lib/tts";
 import { cn } from "@/lib/utils";
 import type { VoiceClone } from "@/lib/types";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const initialState = { ok: false, message: "" };
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -502,10 +504,24 @@ type AvatarVideoTestResponse = TTSTestResponse & {
   video_url?: string;
   dynamic_avatar_video_url?: string;
   final_video_url?: string;
+  result_url?: string;
+  result_video_url?: string;
+  task_id?: string;
+  task?: AvatarTask;
   avatar_template_id?: string;
   avatar_template_name?: string;
   error?: string;
+  message?: string;
   missing_template_video?: boolean;
+};
+
+type AvatarTask = {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  progress_stage?: string;
+  result_url?: string;
+  result_video_url?: string;
+  error_message?: string;
 };
 
 type TaskFormProps = {
@@ -517,9 +533,48 @@ type TaskFormProps = {
   initialScriptText?: string;
 };
 
+function stringifyErrorDetail(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function extractErrorMessage(payload: unknown): string {
+  if (typeof payload !== "object" || payload === null) return stringifyErrorDetail(payload);
+  const data = payload as { detail?: unknown; message?: unknown; error?: unknown; missing_template_video?: unknown };
+  const detail = data.detail;
+  if (typeof detail === "object" && detail !== null) {
+    const nested = detail as { message?: unknown; error?: unknown; detail?: unknown };
+    return stringifyErrorDetail(nested.message ?? nested.error ?? nested.detail ?? detail);
+  }
+  return stringifyErrorDetail(data.message ?? data.error ?? detail);
+}
+
+function progressForAvatarStage(stage: string | undefined) {
+  return (
+    {
+      queued: 24,
+      waiting_gpu: 32,
+      autodl_starting: 42,
+      musetalk_loading: 54,
+      gpu_starting: 48,
+      model_loading: 58,
+      video_generating: 76,
+      uploading_result: 90,
+      completed: 100,
+      failed: 0,
+    }[stage || ""] ?? 68
+  );
+}
+
 export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, voiceCloneEnabled = false, voiceClones = [], initialScriptText = "" }: TaskFormProps) {
   const { locale } = useLanguage();
   const current = copy[locale];
+  const supabase = useMemo(() => createClient(), []);
   const displayedRemainingQuota = userEmail && remainingQuota === undefined ? 3 : remainingQuota;
   const [state, action] = useActionState(submitTaskAction, initialState);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -702,24 +757,52 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
 
     let progressTimer: number | undefined;
     try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error(current.loginHint);
+      }
       progressTimer = window.setInterval(() => {
-        setVideoProgress((currentProgress) => Math.min(currentProgress + 9, 82));
+        setVideoProgress((currentProgress) => Math.min(currentProgress + 7, 88));
       }, 2500);
-      const response = await fetch("/api/avatar/dynamic-video", {
+      const response = await fetch(`${API_URL}/api/avatar/template-generate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice_type: ttsVoiceType, avatar_template_id: avatarTemplateId }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          script_text: text,
+          audio_url: ttsAudioUrl || undefined,
+          voice_type: ttsVoiceType,
+          avatar_template_id: avatarTemplateId,
+        }),
+        cache: "no-store",
       });
       const payload = (await response.json().catch(() => ({}))) as AvatarVideoTestResponse;
-      const resolvedVideoUrl = payload.final_video_url || payload.video_url || payload.dynamic_avatar_video_url;
-      if (!response.ok || !payload.success || !resolvedVideoUrl) {
+      if (!response.ok || !payload.success) {
         if (payload.error === "missing_template_video" || payload.missing_template_video) {
           throw new Error("当前数字人模板暂未配置动态视频素材，请选择其他模板。");
         }
-        throw new Error(payload.detail || current.videoFailed);
+        throw new Error(extractErrorMessage(payload) || current.videoFailed);
       }
+      if (payload.audio_url) {
+        setTtsAudioUrl(payload.audio_url);
+        setTtsStatus("success");
+      }
+      const immediateVideoUrl = payload.final_video_url || payload.video_url || payload.dynamic_avatar_video_url || payload.result_video_url || payload.result_url;
+      if (immediateVideoUrl) {
+        setVideoUrl(immediateVideoUrl);
+        setVideoProgress(100);
+        setVideoStatus("success");
+        return;
+      }
+      const taskId = payload.task_id || payload.task?.id;
+      if (!taskId) throw new Error(current.videoFailed);
+      setVideoProgress(progressForAvatarStage(payload.task?.progress_stage || "queued"));
+      const resolvedVideoUrl = await pollAvatarTask(taskId, session.access_token);
       setVideoUrl(resolvedVideoUrl);
-      if (payload.audio_url) setTtsAudioUrl(payload.audio_url);
       setVideoProgress(100);
       setVideoStatus("success");
     } catch (error) {
@@ -729,6 +812,30 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
     } finally {
       if (progressTimer) window.clearInterval(progressTimer);
     }
+  }
+
+  async function pollAvatarTask(taskId: string, token: string) {
+    const deadline = Date.now() + 25 * 60 * 1000;
+    while (Date.now() < deadline) {
+      const response = await fetch(`${API_URL}/api/avatar/tasks/${taskId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const task = (await response.json().catch(() => ({}))) as AvatarTask & { detail?: unknown; message?: string };
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(task) || current.videoFailed);
+      }
+      setVideoProgress(progressForAvatarStage(task.progress_stage || task.status));
+      const resultUrl = task.result_video_url || task.result_url;
+      if (task.status === "completed" && resultUrl) {
+        return resultUrl;
+      }
+      if (task.status === "failed") {
+        throw new Error(task.error_message || current.videoFailed);
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 5000));
+    }
+    throw new Error(current.videoFailed);
   }
 
   async function downloadAvatarVideo() {
