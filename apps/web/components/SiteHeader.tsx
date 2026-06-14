@@ -120,7 +120,7 @@ function LanguageDropdown({
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={() => setOpen((value) => !value)}
-        className="!inline-flex h-10 min-w-[118px] !items-center !justify-between gap-2 !rounded-full border border-cyan/35 bg-ink/92 px-3 !py-0 text-xs font-semibold !text-white shadow-[0_0_24px_rgba(49,215,255,0.16)] outline-none transition hover:border-cyan/70 hover:bg-slate-950 focus-visible:ring-2 focus-visible:ring-cyan/60 sm:min-w-[132px]"
+        className="!inline-flex h-10 min-w-[118px] !items-center !justify-between gap-2 !rounded-full border border-cyan-400/40 bg-[#07111d]/90 px-3 !py-0 text-xs font-semibold !text-white shadow-[0_0_24px_rgba(49,215,255,0.16)] outline-none transition hover:border-cyan-300/70 hover:bg-[#07111d] hover:!text-white focus-visible:ring-2 focus-visible:ring-cyan-300/60 sm:min-w-[132px]"
       >
         <span className="inline-flex min-w-0 items-center gap-2">
           <Languages size={15} className="shrink-0 text-cyan" />
@@ -131,7 +131,7 @@ function LanguageDropdown({
 
       {open ? (
         <div
-          className="absolute right-0 top-[calc(100%+10px)] z-50 w-44 overflow-hidden rounded-lg border border-[rgba(0,212,255,.35)] bg-[#07111d] p-1.5 text-sm !text-white shadow-[0_18px_50px_rgba(0,0,0,0.45),0_0_32px_rgba(49,215,255,0.15)] backdrop-blur-xl"
+          className="absolute right-0 top-[calc(100%+10px)] z-50 w-44 overflow-hidden rounded-lg border border-cyan-400/40 bg-[#07111d] p-1.5 text-sm !text-white shadow-[0_18px_50px_rgba(0,0,0,0.45),0_0_32px_rgba(49,215,255,0.15)] backdrop-blur-xl"
           role="listbox"
           aria-label={ariaLabel}
         >
@@ -150,8 +150,8 @@ function LanguageDropdown({
                 className={[
                   "!flex h-10 w-full !items-center !justify-between rounded-md px-3 !py-0 text-left text-sm font-semibold outline-none transition",
                   selected
-                    ? "bg-white/[0.08] !text-[#00d4ff] shadow-[inset_0_0_0_1px_rgba(0,212,255,.35)]"
-                    : "!text-white hover:bg-white/[0.08] hover:!text-white focus-visible:bg-white/[0.08] focus-visible:!text-white",
+                    ? "border border-cyan-400/40 bg-cyan-400/15 !text-cyan-300"
+                    : "border border-transparent !text-white hover:bg-cyan-400/10 hover:!text-cyan-100 focus-visible:bg-cyan-400/10 focus-visible:!text-cyan-100",
                 ].join(" ")}
               >
                 <span>{item.nativeName}</span>
