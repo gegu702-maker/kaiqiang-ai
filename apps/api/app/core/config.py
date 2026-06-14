@@ -126,6 +126,10 @@ class Settings(BaseSettings):
         return origins
 
     @property
+    def allowed_origin_regex(self) -> str:
+        return r"^https://kaiqiang-[a-z0-9-]+-kaiqiang-ai-s-projects\.vercel\.app$"
+
+    @property
     def musetalk_api_base_url(self) -> str:
         return self.muse_talk_api_base_url
 
