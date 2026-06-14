@@ -112,7 +112,7 @@ async def generate_template_avatar_video(
         template_video_url,
         audio_url,
     )
-    background_tasks.add_task(_process_avatar_task, task["id"], user["id"], template_video_url, audio_url)
+    background_tasks.add_task(_process_avatar_task, task["id"], user["id"], template_video_url, audio_url, text)
     return {
         "success": True,
         "status": "queued",
@@ -184,7 +184,7 @@ async def generate_avatar_video(
             )
         task = _create_avatar_task(supabase, user["id"], video_url, audio_url)
         logger.info("Avatar task queued task_id=%s user_id=%s", task["id"], user["id"])
-        background_tasks.add_task(_process_avatar_task, task["id"], user["id"], video_url, audio_url)
+        background_tasks.add_task(_process_avatar_task, task["id"], user["id"], video_url, audio_url, text)
         return {
             "success": True,
             "status": "queued",
@@ -209,7 +209,7 @@ async def generate_avatar_video(
         ) from error
 
 
-async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio_url: str) -> None:
+async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio_url: str, subtitle_text: str | None = None) -> None:
     supabase = get_supabase()
 
     def update_stage(stage: str) -> None:
@@ -228,6 +228,7 @@ async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio
             video_url=video_url,
             audio_url=audio_url,
             task_id=task_id,
+            subtitle_text=subtitle_text,
         )
         _update_avatar_task(
             supabase,
