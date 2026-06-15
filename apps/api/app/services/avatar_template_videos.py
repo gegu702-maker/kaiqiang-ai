@@ -48,27 +48,27 @@ def get_dynamic_template_video_url(avatar_template_id: str | None) -> str:
 
 
 def _parse_template_video_urls() -> dict[str, str]:
-    template_urls = dict(DEFAULT_TEMPLATE_VIDEO_URLS)
+    template_urls: dict[str, str] = {}
     raw = settings.musetalk_template_video_urls.strip()
-    if not raw:
-        return template_urls
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "invalid_template_video_urls",
-                "message": "MUSE_TALK_TEMPLATE_VIDEO_URLS must be valid JSON.",
-            },
-        ) from error
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "invalid_template_video_urls",
-                "message": "MUSE_TALK_TEMPLATE_VIDEO_URLS must be a JSON object.",
-            },
-        )
-    template_urls.update({str(key): str(value) for key, value in payload.items() if isinstance(value, str) and value.strip()})
+    if raw:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "invalid_template_video_urls",
+                    "message": "MUSE_TALK_TEMPLATE_VIDEO_URLS must be valid JSON.",
+                },
+            ) from error
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "invalid_template_video_urls",
+                    "message": "MUSE_TALK_TEMPLATE_VIDEO_URLS must be a JSON object.",
+                },
+            )
+        template_urls.update({str(key): str(value) for key, value in payload.items() if isinstance(value, str) and value.strip()})
+    template_urls.update(DEFAULT_TEMPLATE_VIDEO_URLS)
     return template_urls
