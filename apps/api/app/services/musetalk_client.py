@@ -9,7 +9,6 @@ from fastapi import HTTPException
 from supabase import Client
 
 from app.core.config import settings
-from app.services.avatar_subtitles import burn_subtitles_into_video_bytes
 from app.services.storage import upload_public_bytes
 
 logger = logging.getLogger(__name__)
@@ -28,6 +27,8 @@ async def generate_avatar_video_with_musetalk(
         raise HTTPException(status_code=503, detail="MUSE_TALK_API_BASE_URL missing")
 
     payload = {"video_url": video_url, "audio_url": audio_url, "task_id": task_id}
+    if (subtitle_text or "").strip():
+        payload["subtitle_text"] = (subtitle_text or "").strip()
     headers = {"Content-Type": "application/json"}
     if settings.musetalk_api_key.strip():
         headers["Authorization"] = f"Bearer {settings.musetalk_api_key.strip()}"
@@ -90,21 +91,15 @@ async def finalize_avatar_video_from_result_url(
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail=f"MuseTalk output download failed: {error}") from error
 
-    final_video_bytes = video_response.content
-    if (subtitle_text or "").strip():
-        logger.info("MuseTalk subtitle burn started task_id=%s subtitle_length=%s", task_id, len(subtitle_text or ""))
-        final_video_bytes = burn_subtitles_into_video_bytes(video_response.content, subtitle_text or "")
-        logger.info("MuseTalk subtitle burn completed task_id=%s bytes=%s", task_id, len(final_video_bytes))
-
     result_url = upload_public_bytes(
         supabase,
         settings.supabase_video_bucket,
-        final_video_bytes,
+        video_response.content,
         f"avatar-results/{task_id}",
         ".mp4",
         "video/mp4",
     )
-    logger.info("MuseTalk upload completed task_id=%s result_url=%s bytes=%s", task_id, result_url, len(final_video_bytes))
+    logger.info("MuseTalk upload completed task_id=%s result_url=%s bytes=%s", task_id, result_url, len(video_response.content))
     return result_url
 
 
