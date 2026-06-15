@@ -921,10 +921,15 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
                     </div>
                     <div className="space-y-1">
                       <p className="font-semibold text-white">{template.name}</p>
+                      <p className="text-xs font-medium text-cyan">{template.englishName}</p>
                       <p className="text-xs leading-5 text-slate-400">{template.description}</p>
-                      <p className="text-xs text-slate-500">
-                        {current.recommended} · {template.style} · {template.voice_type}
-                      </p>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {template.useCases.map((useCase) => (
+                          <span key={useCase} className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-xs text-slate-300">
+                            {useCase}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                     {isSelected ? (
                       <span className="absolute right-3 top-3 grid size-6 place-items-center rounded-full bg-cyan text-ink">

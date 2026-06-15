@@ -1,7 +1,9 @@
 export type AvatarTemplate = {
   id: string;
   name: string;
+  englishName: string;
   description: string;
+  useCases: string[];
   avatar_image: string;
   preview_video_url?: string;
   voice_type: "BV001_streaming" | "BV002_streaming";
@@ -14,10 +16,12 @@ const allAvatarTemplates: AvatarTemplate[] = [
   {
     id: "business_female_01",
     name: "商务女主播",
-    description: "适合知识口播、课程介绍、商业内容",
+    englishName: "Professional Female Presenter",
+    description: "适用于产品介绍、知识分享、企业宣传、企业培训",
+    useCases: ["产品介绍", "知识分享", "企业宣传", "企业培训"],
     avatar_image: "/avatars/business_female_01.png",
     preview_video_url:
-      "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/template-videos/business_female_01.mp4",
+      "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatars/business_female_01_v2.mp4?",
     voice_type: "BV001_streaming",
     gender: "female",
     style: "business",
@@ -26,10 +30,12 @@ const allAvatarTemplates: AvatarTemplate[] = [
   {
     id: "business_male_01",
     name: "商务男主播",
-    description: "适合老板IP、财经、商业观点",
+    englishName: "Professional Male Presenter",
+    description: "适用于企业宣传、产品演示、课程培训、商业讲解",
+    useCases: ["企业宣传", "产品演示", "课程培训", "商业讲解"],
     avatar_image: "/avatars/business_male_01.png",
     preview_video_url:
-      "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/template-videos/business_male_01.mp4",
+      "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatars/business_male_01_v3.mp4?",
     voice_type: "BV002_streaming",
     gender: "male",
     style: "business",
@@ -38,7 +44,9 @@ const allAvatarTemplates: AvatarTemplate[] = [
   {
     id: "ai_female_01",
     name: "AI女主播",
+    englishName: "AI Female Presenter",
     description: "适合AI资讯、科技口播、产品介绍",
+    useCases: ["AI资讯", "科技口播", "产品介绍"],
     avatar_image: "/avatars/ai_female_01.png",
     voice_type: "BV001_streaming",
     gender: "female",
