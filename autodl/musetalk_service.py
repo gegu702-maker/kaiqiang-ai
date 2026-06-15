@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import re
@@ -23,6 +24,7 @@ OUTPUT_ROOT = Path(os.getenv("MUSETALK_OUTPUT_ROOT", "/root/autodl-tmp/results")
 INPUT_ROOT = Path(os.getenv("MUSETALK_INPUT_ROOT", "/root/autodl-tmp/avatar_inputs"))
 API_KEY = os.getenv("MUSETALK_API_KEY", "")
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
+logger = logging.getLogger("kaiqiang_musetalk_service")
 SUBTITLE_FONT_CANDIDATES = [
     "Noto Sans CJK SC",
     "Noto Sans CJK",
@@ -34,6 +36,8 @@ SUBTITLE_FONT_CANDIDATES = [
     "Microsoft YaHei",
     "Arial Unicode MS",
 ]
+NON_CJK_FONT_FAMILIES = {"arial", "dejavu sans", "liberation sans", "sans", "sans-serif"}
+CJK_FONT_FAMILY_MARKERS = ("cjk", "source han", "wenquanyi", "microsoft yahei", "arial unicode")
 
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 INPUT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -393,25 +397,44 @@ def _safe_float(value: Any) -> float:
 
 def _font_name() -> str:
     for candidate in SUBTITLE_FONT_CANDIDATES:
-        matched = _fc_match_family(candidate)
-        if matched and matched.lower() not in {"dejavu sans", "arial", "sans"}:
-            return matched
-    return "Noto Sans CJK SC"
+        matched = _fc_match_font(candidate)
+        if matched:
+            logger.info("selected subtitle font family=%s file=%s", matched["family"], matched["file"])
+            return matched["family"]
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            "CJK subtitle font missing: install fontconfig and a CJK font such as "
+            "fonts-noto-cjk, then run fc-cache -f -v"
+        ),
+    )
 
 
-def _fc_match_family(font_name: str) -> str:
+def _fc_match_font(font_name: str) -> dict[str, str] | None:
     try:
         result = subprocess.run(
-            ["fc-match", "-f", "%{family[0]}", font_name],
+            ["fc-match", "-f", "%{family[0]}|%{file}", font_name],
             capture_output=True,
             text=True,
             check=False,
         )
     except FileNotFoundError:
-        return ""
+        raise HTTPException(status_code=500, detail="fontconfig missing: fc-match command not found")
     if result.returncode != 0:
-        return ""
-    return (result.stdout or "").strip()
+        return None
+    family, separator, file_path = (result.stdout or "").strip().partition("|")
+    family = family.strip()
+    file_path = file_path.strip()
+    if not separator or not family or not file_path:
+        return None
+    family_key = family.lower()
+    if family_key in NON_CJK_FONT_FAMILIES:
+        return None
+    if not any(marker in family_key for marker in CJK_FONT_FAMILY_MARKERS):
+        return None
+    if not Path(file_path).is_file():
+        return None
+    return {"family": family, "file": file_path}
 
 
 def _ass_time(seconds: float) -> str:
