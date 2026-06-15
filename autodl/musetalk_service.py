@@ -23,6 +23,17 @@ OUTPUT_ROOT = Path(os.getenv("MUSETALK_OUTPUT_ROOT", "/root/autodl-tmp/results")
 INPUT_ROOT = Path(os.getenv("MUSETALK_INPUT_ROOT", "/root/autodl-tmp/avatar_inputs"))
 API_KEY = os.getenv("MUSETALK_API_KEY", "")
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
+SUBTITLE_FONT_CANDIDATES = [
+    "Noto Sans CJK SC",
+    "Noto Sans CJK",
+    "Noto Sans CJK JP",
+    "Noto Sans CJK KR",
+    "Source Han Sans SC",
+    "Source Han Sans CN",
+    "WenQuanYi Micro Hei",
+    "Microsoft YaHei",
+    "Arial Unicode MS",
+]
 
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 INPUT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -381,7 +392,26 @@ def _safe_float(value: Any) -> float:
 
 
 def _font_name() -> str:
+    for candidate in SUBTITLE_FONT_CANDIDATES:
+        matched = _fc_match_family(candidate)
+        if matched and matched.lower() not in {"dejavu sans", "arial", "sans"}:
+            return matched
     return "Noto Sans CJK SC"
+
+
+def _fc_match_family(font_name: str) -> str:
+    try:
+        result = subprocess.run(
+            ["fc-match", "-f", "%{family[0]}", font_name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or "").strip()
 
 
 def _ass_time(seconds: float) -> str:
