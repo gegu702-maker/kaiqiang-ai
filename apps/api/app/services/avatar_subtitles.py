@@ -42,7 +42,7 @@ def burn_subtitles_into_video_bytes(video_bytes: bytes, subtitle_text: str) -> b
                 "-i",
                 str(input_path),
                 "-vf",
-                f"subtitles={_ffmpeg_filter_path(subtitle_path)}",
+                f"{_subtitle_backdrop_filter()},subtitles={_ffmpeg_filter_path(subtitle_path)}",
                 "-map",
                 "0:v:0",
                 "-map",
@@ -56,17 +56,21 @@ def burn_subtitles_into_video_bytes(video_bytes: bytes, subtitle_text: str) -> b
                 "-pix_fmt",
                 "yuv420p",
                 "-c:a",
-                "copy",
+                "aac",
+                "-b:a",
+                "128k",
                 "-movflags",
                 "+faststart",
                 str(output_path),
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if result.returncode != 0:
-                raise RuntimeError(result.stderr[-1600:] or "ffmpeg exited with non-zero status")
+                raise RuntimeError(_format_ffmpeg_error(result))
+            if not output_path.exists():
+                raise RuntimeError(_format_ffmpeg_error(result, "ffmpeg output file was not created"))
             output_bytes = output_path.read_bytes()
             if len(output_bytes) < 1024 or b"ftyp" not in output_bytes[:32]:
-                raise RuntimeError("ffmpeg output is not a valid MP4 file")
+                raise RuntimeError(_format_ffmpeg_error(result, "ffmpeg output is not a valid MP4 file"))
             return output_bytes
     except HTTPException:
         raise
@@ -103,9 +107,9 @@ def _probe_video(path: Path) -> dict[str, Any]:
 
 
 def _build_ass(text: str, duration: float, width: int, height: int) -> str:
-    font_size = _font_size(height)
-    margin_v = max(60, int(height * 0.115))
-    outline = max(2, int(font_size * 0.075))
+    font_size = _font_size(width, height)
+    margin_v = max(48, int(height * 0.09))
+    outline = max(2, min(3, round(font_size * 0.075)))
     cues = _build_cues(text, duration)
     events = "\n".join(
         f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{_escape_ass_text(lines)}"
@@ -113,13 +117,15 @@ def _build_ass(text: str, duration: float, width: int, height: int) -> str:
     )
     return f"""[Script Info]
 ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
 WrapStyle: 2
 ScaledBorderAndShadow: yes
 YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{_font_name()},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H66000000,0,0,0,0,100,100,0,0,1,{outline},0,2,80,80,{margin_v},1
+Style: Default,{_font_name()},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H66000000,0,0,0,0,100,100,0,0,1,{outline},1,2,80,80,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -153,7 +159,7 @@ def _build_cues(text: str, duration: float) -> list[tuple[float, float, list[str
 
 def _split_segments(text: str) -> list[list[str]]:
     cjk = _is_cjk_heavy(text)
-    line_limit = 16 if cjk else 38
+    line_limit = 14 if cjk else 32
     sentences = _split_sentences(text)
     segments: list[list[str]] = []
     for sentence in sentences:
@@ -228,8 +234,9 @@ def _is_cjk_heavy(text: str) -> bool:
     return cjk_count / len(non_space) >= 0.35
 
 
-def _font_size(height: int) -> int:
-    return max(34, min(64, round(height * 0.029)))
+def _font_size(width: int, height: int) -> int:
+    short_side = max(1, min(width, height))
+    return max(28, min(42, round(short_side * 0.037)))
 
 
 def _safe_float(value: Any) -> float:
@@ -266,6 +273,21 @@ def _escape_ass_line(text: str) -> str:
 
 def _trim_text(text: str, limit: int) -> str:
     return text.strip()[:limit]
+
+
+def _format_ffmpeg_error(result: subprocess.CompletedProcess[str], message: str | None = None) -> str:
+    parts = [message or "ffmpeg exited with non-zero status", f"returncode={result.returncode}"]
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    if stdout:
+        parts.append(f"stdout_tail={stdout[-2000:]}")
+    if stderr:
+        parts.append(f"stderr_tail={stderr[-4000:]}")
+    return "\n".join(parts)
+
+
+def _subtitle_backdrop_filter() -> str:
+    return "drawbox=x=0:y=ih*0.76:w=iw:h=ih*0.24:color=black@0.38:t=fill"
 
 
 def _ffmpeg_filter_path(path: Path) -> str:
