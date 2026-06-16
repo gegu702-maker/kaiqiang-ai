@@ -78,6 +78,14 @@ class Settings(BaseSettings):
         "",
         validation_alias=AliasChoices("MUSE_TALK_API_BASE_URL", "MUSETALK_API_BASE_URL"),
     )
+    muse_talk_template_video_urls: str = Field(
+        "",
+        validation_alias=AliasChoices("MUSE_TALK_TEMPLATE_VIDEO_URLS", "MUSETALK_TEMPLATE_VIDEO_URLS"),
+    )
+    muse_talk_default_template_video_url: str = Field(
+        "",
+        validation_alias=AliasChoices("MUSE_TALK_DEFAULT_TEMPLATE_VIDEO_URL", "MUSETALK_DEFAULT_TEMPLATE_VIDEO_URL"),
+    )
     muse_talk_api_key: str = Field(
         "",
         validation_alias=AliasChoices("MUSE_TALK_API_KEY", "MUSETALK_API_KEY"),
@@ -128,6 +136,14 @@ class Settings(BaseSettings):
     @property
     def musetalk_api_base_url(self) -> str:
         return self.muse_talk_api_base_url
+
+    @property
+    def musetalk_template_video_urls(self) -> str:
+        return self.muse_talk_template_video_urls
+
+    @property
+    def musetalk_default_template_video_url(self) -> str:
+        return self.muse_talk_default_template_video_url
 
     @property
     def musetalk_api_key(self) -> str:

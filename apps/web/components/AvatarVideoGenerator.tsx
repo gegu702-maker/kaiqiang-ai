@@ -1,11 +1,12 @@
 "use client";
 
 import { Check, Copy, Download, Film, Loader2, UploadCloud, Video } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
-import { findAvatarStudioTemplate, sceneLabel } from "@/lib/avatarTemplates";
+import { avatarTemplates } from "@/lib/avatarTemplates";
 import { createClient } from "@/lib/supabase/client";
 import type { UsageSummary } from "@/lib/types";
 
@@ -37,15 +38,17 @@ type AvatarTask = {
 const copy = {
   zh: {
     title: "数字人口播生成器",
-    subtitle: "上传一段真人视频和一段配音，MuseTalk 会自动生成人像口播视频。",
-    video: "人物视频",
+    subtitle: "选择商务数字人模板，输入文案，MuseTalk 会自动生成口播视频。",
+    template: "数字人模板",
+    templateHint: "选择本次出镜的商务数字人。",
+    video: "自定义人物视频",
     script: "口播文案",
     audio: "口播音频",
-    videoHint: "支持 mp4 / mov / webm，建议正脸、光线清晰。",
-    scriptHint: "输入文案后系统会先生成语音；如果同时上传音频，将优先使用上传音频。",
+    videoHint: "可选。上传后将使用你的自定义视频；不上传则使用所选商务模板。",
+    scriptHint: "输入文案后系统会先生成语音，再驱动所选模板生成视频。",
     scriptPlaceholder: "输入要数字人口播的文案...",
     audioHint: "可选。支持 wav / mp3 / m4a，建议 16kHz 单声道 wav。",
-    steps: ["上传人物视频", "输入文案或上传音频", "生成并下载 MP4"],
+    steps: ["选择商务模板", "输入口播文案", "生成并下载 MP4"],
     generate: "生成口播视频",
     generating: "生成中",
     login: "请先登录后再生成。",
@@ -62,7 +65,7 @@ const copy = {
     copyLink: "复制链接",
     copied: "已复制",
     result: "生成结果",
-    empty: "请选择人物视频，并输入文案或上传音频。",
+    empty: "请选择模板并输入口播文案。",
     quotaTitle: "生成额度",
     quotaLoading: "正在读取额度",
     quotaUnlimited: "当前套餐不限额度",
@@ -83,15 +86,17 @@ const copy = {
   },
   en: {
     title: "Avatar Video Generator",
-    subtitle: "Upload a person video and a voiceover. MuseTalk will generate a talking avatar video.",
-    video: "Person Video",
+    subtitle: "Choose a business avatar template, enter a script, and MuseTalk will generate a talking video.",
+    template: "Avatar Template",
+    templateHint: "Choose the business presenter for this video.",
+    video: "Custom Person Video",
     script: "Voiceover Script",
     audio: "Voice Audio",
-    videoHint: "mp4 / mov / webm. Use a clear frontal face when possible.",
-    scriptHint: "Enter script text to synthesize speech first. If audio is uploaded too, the uploaded audio is used.",
+    videoHint: "Optional. Upload a custom video to override the selected business template.",
+    scriptHint: "Enter script text to synthesize speech and drive the selected presenter.",
     scriptPlaceholder: "Enter the script for the avatar...",
     audioHint: "Optional. wav / mp3 / m4a. 16kHz mono wav is recommended.",
-    steps: ["Upload person video", "Enter script or upload audio", "Generate and download MP4"],
+    steps: ["Choose template", "Enter script", "Generate MP4"],
     generate: "Generate Avatar Video",
     generating: "Generating",
     login: "Sign in before generating.",
@@ -108,7 +113,7 @@ const copy = {
     copyLink: "Copy link",
     copied: "Copied",
     result: "Result",
-    empty: "Choose a person video and enter a script or upload an audio file.",
+    empty: "Choose a template and enter a script.",
     quotaTitle: "Generation credits",
     quotaLoading: "Loading credits",
     quotaUnlimited: "Current plan has custom credits",
@@ -137,9 +142,11 @@ export function AvatarVideoGenerator({
   initialScriptText?: string;
 }) {
   const { locale } = useLanguage();
-  const current = copy[locale];
+  const current = copy[locale === "zh" ? "zh" : "en"];
   const supabase = useMemo(() => createClient(), []);
-  const selectedTemplate = useMemo(() => findAvatarStudioTemplate(initialTemplateId), [initialTemplateId]);
+  const initialAvatarTemplate = avatarTemplates.some((template) => template.id === initialTemplateId) ? initialTemplateId : "business_female_01";
+  const [avatarTemplateId, setAvatarTemplateId] = useState(initialAvatarTemplate);
+  const selectedTemplate = avatarTemplates.find((template) => template.id === avatarTemplateId) ?? avatarTemplates[0];
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [scriptText, setScriptText] = useState(initialScriptText);
@@ -254,7 +261,8 @@ export function AvatarVideoGenerator({
     setResultUrl("");
     setCopied(false);
     const text = scriptText.trim();
-    if (!videoFile || (!audioFile && !text)) {
+    const useCustomVideo = Boolean(videoFile);
+    if ((!useCustomVideo && !text) || (useCustomVideo && !audioFile && !text)) {
       setState("failed");
       setProgressStage("failed");
       setError(current.empty);
@@ -277,11 +285,6 @@ export function AvatarVideoGenerator({
       return;
     }
 
-    const formData = new FormData();
-    formData.set("video_file", videoFile);
-    if (audioFile) formData.set("audio_file", audioFile);
-    if (text) formData.set("script_text", text);
-
     try {
       setState("queued");
       setProgressStage("waiting_gpu");
@@ -292,11 +295,27 @@ export function AvatarVideoGenerator({
         setProgressStage((value) => (value === "waiting_gpu" ? "autodl_starting" : value));
       }, 400);
       stageTimers.current.push(runningTimer);
-      const response = await fetch(`${API_URL}/api/avatar/generate`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        body: formData,
-      });
+      const response = useCustomVideo
+        ? await fetch(`${API_URL}/api/avatar/generate`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${session.access_token}` },
+            body: (() => {
+              const formData = new FormData();
+              formData.set("video_file", videoFile as File);
+              if (audioFile) formData.set("audio_file", audioFile);
+              if (text) formData.set("script_text", text);
+              return formData;
+            })(),
+          })
+        : await fetch(`${API_URL}/api/avatar/template-generate`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              avatar_template_id: avatarTemplateId,
+              script_text: text,
+              voice_type: selectedTemplate.voice_type,
+            }),
+          });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         const detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail ?? payload);
@@ -408,15 +427,59 @@ export function AvatarVideoGenerator({
             ) : null}
           </div>
         </div>
-        {selectedTemplate ? (
-          <div className="rounded-md border border-blue-200 bg-blue-50 p-4">
-            <p className="text-sm font-semibold text-blue-950">{current.selectedTemplate}</p>
-            <p className="mt-1 text-sm text-blue-800">
-              {selectedTemplate.name[locale]} · {sceneLabel(selectedTemplate.scene, locale)} · {selectedTemplate.language.toUpperCase()}
-            </p>
-            {!selectedTemplate.videoUrl ? <p className="mt-2 text-sm text-amber-700">{current.templateComingSoon}</p> : null}
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold text-slate-900">{current.template}</h2>
+            <p className="mt-1 text-sm text-slate-500">{current.templateHint}</p>
           </div>
-        ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {avatarTemplates.map((template) => {
+              const isSelected = avatarTemplateId === template.id;
+              return (
+                <label key={template.id} className="cursor-pointer">
+                  <input
+                    type="radio"
+                    name="avatar_template_id"
+                    value={template.id}
+                    checked={isSelected}
+                    onChange={() => setAvatarTemplateId(template.id)}
+                    className="sr-only"
+                  />
+                  <div className={`h-full overflow-hidden rounded-md border transition ${isSelected ? "border-blue-500 bg-blue-50" : "border-slate-200 bg-white hover:border-blue-200"}`}>
+                    <div className="aspect-video overflow-hidden bg-slate-100">
+                      {template.preview_video_url ? (
+                        <video className="h-full w-full object-cover" src={template.preview_video_url} poster={template.avatar_image} muted loop playsInline autoPlay preload="metadata" />
+                      ) : (
+                        <Image className="object-cover" src={template.avatar_image} alt={template.name} fill sizes="(max-width: 640px) 100vw, 320px" />
+                      )}
+                    </div>
+                    <div className="space-y-2 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-slate-950">{template.name}</p>
+                          <p className="text-sm font-medium text-blue-700">{template.englishName}</p>
+                        </div>
+                        {isSelected ? (
+                          <span className="grid size-6 shrink-0 place-items-center rounded-full bg-blue-600 text-white">
+                            <Check size={14} />
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-sm leading-6 text-slate-600">{template.description}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {template.useCases.map((useCase) => (
+                          <span key={useCase} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
+                            {useCase}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
         <div className="grid gap-4">
           <FilePicker
             title={current.video}

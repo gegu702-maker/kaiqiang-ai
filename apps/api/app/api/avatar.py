@@ -5,6 +5,7 @@ import traceback
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 from supabase import Client
 
 from app.core.auth import get_authenticated_user, get_bearer_token
@@ -12,6 +13,8 @@ from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.services.billing import assert_generation_quota, log_generation_usage
 from app.services.autodl_client import ensure_gpu_ready
+from app.services.avatar_template_videos import get_dynamic_template_video_url
+from app.services.avatar_templates import get_avatar_template
 from app.services.musetalk_client import check_musetalk_health, generate_avatar_video_with_musetalk
 from app.services.storage import upload_public_file
 from app.services.tts import synthesize_speech_to_storage
@@ -36,11 +39,88 @@ AUDIO_TYPES = {
 }
 
 
+class TemplateAvatarGenerateRequest(BaseModel):
+    script_text: str | None = None
+    text: str | None = None
+    audio_url: str | None = None
+    voice_type: str | None = None
+    avatar_template_id: str = Field(..., min_length=1)
+    speed_ratio: float = 1.0
+    volume_ratio: float = 1.0
+    pitch_ratio: float = 1.0
+
+
 @router.get("/health")
 async def avatar_health() -> dict:
     return {
         "status": "ok",
         "musetalk": await check_musetalk_health(),
+    }
+
+
+@router.post("/template-generate")
+async def generate_template_avatar_video(
+    payload: TemplateAvatarGenerateRequest,
+    background_tasks: BackgroundTasks,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    user = get_authenticated_user(supabase, token)
+    text = (payload.script_text or payload.text or "").strip()
+    audio_url = (payload.audio_url or "").strip()
+    template_id = payload.avatar_template_id.strip()
+    template = get_avatar_template(template_id)
+    template_video_url = get_dynamic_template_video_url(template.id)
+    selected_voice_type = payload.voice_type or template.default_voice_type
+
+    if not audio_url and not text:
+        raise HTTPException(status_code=400, detail="请提供 audio_url，或输入文案用于生成语音。")
+
+    assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
+
+    if not audio_url:
+        try:
+            logger.info(
+                "Template avatar TTS started user_id=%s template=%s text_length=%s voice_type=%s",
+                user["id"],
+                template.id,
+                len(text),
+                selected_voice_type,
+            )
+            tts_result = await synthesize_speech_to_storage(
+                supabase,
+                text=text,
+                folder="avatar/template-generate/tts",
+                voice_type=selected_voice_type,
+                speed_ratio=payload.speed_ratio,
+                volume_ratio=payload.volume_ratio,
+                pitch_ratio=payload.pitch_ratio,
+            )
+            audio_url = tts_result["audio_url"]
+        except HTTPException:
+            raise
+        except Exception as error:
+            logger.exception("Template avatar TTS failed user_id=%s template=%s", user["id"], template.id)
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    task = _create_avatar_task(supabase, user["id"], template_video_url, audio_url)
+    logger.info(
+        "Template avatar task queued task_id=%s user_id=%s template=%s template_video_url=%s audio_url=%s",
+        task["id"],
+        user["id"],
+        template.id,
+        template_video_url,
+        audio_url,
+    )
+    background_tasks.add_task(_process_avatar_task, task["id"], user["id"], template_video_url, audio_url)
+    return {
+        "success": True,
+        "status": "queued",
+        "task": _serialize_avatar_task(task),
+        "task_id": task["id"],
+        "audio_url": audio_url,
+        "avatar_template_id": template.id,
+        "avatar_template_name": template.name,
     }
 
 

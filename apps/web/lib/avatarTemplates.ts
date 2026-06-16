@@ -1,20 +1,29 @@
 export type AvatarTemplate = {
   id: string;
   name: string;
+  englishName: string;
   description: string;
+  useCases: string[];
   avatar_image: string;
+  preview_video_url?: string;
   voice_type: "BV001_streaming" | "BV002_streaming";
   gender: "female" | "male";
   style: "business" | "tech";
   vip_only: boolean;
 };
 
-export const avatarTemplates: AvatarTemplate[] = [
+const businessFemalePreviewVideoUrl = process.env.NEXT_PUBLIC_AVATAR_TEMPLATE_VIDEO_URL_BUSINESS_FEMALE_01?.trim() || undefined;
+const businessMalePreviewVideoUrl = process.env.NEXT_PUBLIC_AVATAR_TEMPLATE_VIDEO_URL_BUSINESS_MALE_01?.trim() || undefined;
+
+const allAvatarTemplates: AvatarTemplate[] = [
   {
     id: "business_female_01",
     name: "商务女主播",
-    description: "适合知识口播、课程介绍、商业内容",
+    englishName: "Professional Female Presenter",
+    description: "适用于产品介绍、知识分享、企业宣传、企业培训",
+    useCases: ["产品介绍", "知识分享", "企业宣传", "企业培训"],
     avatar_image: "/avatars/business_female_01.png",
+    preview_video_url: businessFemalePreviewVideoUrl,
     voice_type: "BV001_streaming",
     gender: "female",
     style: "business",
@@ -23,8 +32,11 @@ export const avatarTemplates: AvatarTemplate[] = [
   {
     id: "business_male_01",
     name: "商务男主播",
-    description: "适合老板IP、财经、商业观点",
+    englishName: "Professional Male Presenter",
+    description: "适用于企业宣传、产品演示、课程培训、商业讲解",
+    useCases: ["企业宣传", "产品演示", "课程培训", "商业讲解"],
     avatar_image: "/avatars/business_male_01.png",
+    preview_video_url: businessMalePreviewVideoUrl,
     voice_type: "BV002_streaming",
     gender: "male",
     style: "business",
@@ -33,7 +45,9 @@ export const avatarTemplates: AvatarTemplate[] = [
   {
     id: "ai_female_01",
     name: "AI女主播",
+    englishName: "AI Female Presenter",
     description: "适合AI资讯、科技口播、产品介绍",
+    useCases: ["AI资讯", "科技口播", "产品介绍"],
     avatar_image: "/avatars/ai_female_01.png",
     voice_type: "BV001_streaming",
     gender: "female",
@@ -42,8 +56,12 @@ export const avatarTemplates: AvatarTemplate[] = [
   },
 ];
 
+export const avatarTemplates: AvatarTemplate[] = allAvatarTemplates.filter((template) =>
+  ["business_female_01", "business_male_01"].includes(template.id),
+);
+
 export function getAvatarTemplate(id: string | null | undefined) {
-  return avatarTemplates.find((template) => template.id === id) ?? avatarTemplates[0];
+  return allAvatarTemplates.find((template) => template.id === id) ?? avatarTemplates[0];
 }
 
 export type AvatarStudioTemplate = {
@@ -51,6 +69,11 @@ export type AvatarStudioTemplate = {
   name: {
     zh: string;
     en: string;
+    ja: string;
+    ko: string;
+    es: string;
+    fr: string;
+    ru: string;
   };
   thumbnailUrl: string;
   language: "zh" | "en" | "multi";
@@ -62,7 +85,15 @@ export type AvatarStudioTemplate = {
 export const avatarStudioTemplates: AvatarStudioTemplate[] = [
   {
     id: "product-host-zh",
-    name: { zh: "产品介绍主持人", en: "Product Host" },
+    name: {
+      zh: "产品介绍主持人",
+      en: "Product Host",
+      ja: "商品紹介ホスト",
+      ko: "제품 소개 진행자",
+      es: "Presentador de producto",
+      fr: "Presentateur produit",
+      ru: "Ведущий продукта",
+    },
     thumbnailUrl: "https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=900&q=80",
     language: "zh",
     scene: "product",
@@ -71,7 +102,15 @@ export const avatarStudioTemplates: AvatarStudioTemplate[] = [
   },
   {
     id: "sales-presenter",
-    name: { zh: "销售转化口播", en: "Sales Presenter" },
+    name: {
+      zh: "销售转化口播",
+      en: "Sales Presenter",
+      ja: "販売向けプレゼンター",
+      ko: "세일즈 발표자",
+      es: "Presentador de ventas",
+      fr: "Presentateur commercial",
+      ru: "Продавец-презентер",
+    },
     thumbnailUrl: "https://images.unsplash.com/photo-1556761175-b413da4baf72?auto=format&fit=crop&w=900&q=80",
     language: "multi",
     scene: "sales",
@@ -80,7 +119,15 @@ export const avatarStudioTemplates: AvatarStudioTemplate[] = [
   },
   {
     id: "tutorial-coach",
-    name: { zh: "教程讲解模板", en: "Tutorial Coach" },
+    name: {
+      zh: "教程讲解模板",
+      en: "Tutorial Coach",
+      ja: "チュートリアル講師",
+      ko: "튜토리얼 코치",
+      es: "Guia tutorial",
+      fr: "Coach tutoriel",
+      ru: "Наставник для уроков",
+    },
     thumbnailUrl: "https://images.unsplash.com/photo-1543269865-cbf427effbad?auto=format&fit=crop&w=900&q=80",
     language: "multi",
     scene: "tutorial",
@@ -94,7 +141,7 @@ export function findAvatarStudioTemplate(id?: string | null) {
   return avatarStudioTemplates.find((template) => template.id === id) ?? null;
 }
 
-export function sceneLabel(scene: AvatarStudioTemplate["scene"], locale: "zh" | "en") {
+export function sceneLabel(scene: AvatarStudioTemplate["scene"], locale: keyof AvatarStudioTemplate["name"]) {
   const labels = {
     zh: {
       product: "产品介绍",
@@ -107,6 +154,36 @@ export function sceneLabel(scene: AvatarStudioTemplate["scene"], locale: "zh" | 
       talking: "Talking",
       sales: "Sales",
       tutorial: "Tutorial",
+    },
+    ja: {
+      product: "商品紹介",
+      talking: "トーク",
+      sales: "販売",
+      tutorial: "チュートリアル",
+    },
+    ko: {
+      product: "제품 소개",
+      talking: "말하기",
+      sales: "세일즈",
+      tutorial: "튜토리얼",
+    },
+    es: {
+      product: "Producto",
+      talking: "Presentacion",
+      sales: "Ventas",
+      tutorial: "Tutorial",
+    },
+    fr: {
+      product: "Produit",
+      talking: "Presentation",
+      sales: "Vente",
+      tutorial: "Tutoriel",
+    },
+    ru: {
+      product: "Продукт",
+      talking: "Речь",
+      sales: "Продажи",
+      tutorial: "Урок",
     },
   };
   return labels[locale][scene];
