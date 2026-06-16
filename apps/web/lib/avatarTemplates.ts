@@ -12,6 +12,9 @@ export type AvatarTemplate = {
   vip_only: boolean;
 };
 
+const businessFemalePreviewVideoUrl = process.env.NEXT_PUBLIC_AVATAR_TEMPLATE_VIDEO_URL_BUSINESS_FEMALE_01?.trim() || undefined;
+const businessMalePreviewVideoUrl = process.env.NEXT_PUBLIC_AVATAR_TEMPLATE_VIDEO_URL_BUSINESS_MALE_01?.trim() || undefined;
+
 const allAvatarTemplates: AvatarTemplate[] = [
   {
     id: "business_female_01",
@@ -20,8 +23,7 @@ const allAvatarTemplates: AvatarTemplate[] = [
     description: "适用于产品介绍、知识分享、企业宣传、企业培训",
     useCases: ["产品介绍", "知识分享", "企业宣传", "企业培训"],
     avatar_image: "/avatars/business_female_01.png",
-    preview_video_url:
-      "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatars/business_female_01_v2.mp4?",
+    preview_video_url: businessFemalePreviewVideoUrl,
     voice_type: "BV001_streaming",
     gender: "female",
     style: "business",
@@ -34,8 +36,7 @@ const allAvatarTemplates: AvatarTemplate[] = [
     description: "适用于企业宣传、产品演示、课程培训、商业讲解",
     useCases: ["企业宣传", "产品演示", "课程培训", "商业讲解"],
     avatar_image: "/avatars/business_male_01.png",
-    preview_video_url:
-      "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatars/business_male_01_v3.mp4?",
+    preview_video_url: businessMalePreviewVideoUrl,
     voice_type: "BV002_streaming",
     gender: "male",
     style: "business",

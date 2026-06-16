@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from fastapi import HTTPException
 
 from app.core.config import settings
 
 MISSING_TEMPLATE_VIDEO_MESSAGE = "当前数字人模板暂未配置动态视频素材，请选择其他模板。"
-DEFAULT_TEMPLATE_VIDEO_URLS = {
-    "business_female_01": "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatars/business_female_01_v2.mp4?",
-    "business_male_01": "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatars/business_male_01_v3.mp4?",
+TEMPLATE_VIDEO_URL_ENV_KEYS = {
+    "business_female_01": "MUSE_TALK_TEMPLATE_VIDEO_URL_BUSINESS_FEMALE_01",
+    "business_male_01": "MUSE_TALK_TEMPLATE_VIDEO_URL_BUSINESS_MALE_01",
 }
 
 
@@ -70,5 +71,8 @@ def _parse_template_video_urls() -> dict[str, str]:
                 },
             )
         template_urls.update({str(key): str(value) for key, value in payload.items() if isinstance(value, str) and value.strip()})
-    template_urls.update(DEFAULT_TEMPLATE_VIDEO_URLS)
+    for template_id, env_key in TEMPLATE_VIDEO_URL_ENV_KEYS.items():
+        video_url = os.getenv(env_key, "").strip()
+        if video_url:
+            template_urls[template_id] = video_url
     return template_urls
