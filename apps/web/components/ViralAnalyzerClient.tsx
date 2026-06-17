@@ -4,9 +4,9 @@ import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Spa
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { analyzeViralScript } from "@/lib/api";
+import { analyzeViralScript, runViralPipeline } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
-import type { ViralAnalyzeResult, ViralIndustry } from "@/lib/types";
+import type { ViralAnalyzeResult, ViralIndustry, ViralPipelineResult } from "@/lib/types";
 
 const industries: Array<{ value: ViralIndustry; zh: string; en: string }> = [
   { value: "ecommerce", zh: "电商带货", en: "E-commerce" },
@@ -33,6 +33,7 @@ const copy = {
     linkPlaceholder: "抖音 / 小红书 / 快手 / TikTok / YouTube Shorts 链接",
     scriptPlaceholder: "粘贴原视频文案，系统会学习结构并生成原创改写，不会逐字复制。",
     fallback: "如果链接无法自动解析，请粘贴视频文案或上传视频后补充文案。",
+    pipelineFallback: "自动解析失败，请粘贴视频文案继续拆解。",
     topic: "视频核心主题",
     hook: "黄金开头",
     sellingPoints: "爆点拆解",
@@ -59,6 +60,7 @@ const copy = {
     linkPlaceholder: "Douyin / RED / Kuaishou / TikTok / YouTube Shorts URL",
     scriptPlaceholder: "Paste the original script. The system learns the structure and creates original rewrites.",
     fallback: "If the link cannot be parsed, paste the video script or upload the video and add script text.",
+    pipelineFallback: "Automatic parsing failed. Paste the video script to continue analyzing.",
     topic: "Core Topic",
     hook: "Golden Hook",
     sellingPoints: "Viral Angles",
@@ -96,15 +98,30 @@ export function ViralAnalyzerClient() {
       if (!session?.access_token) {
         throw new Error("请先登录后再使用爆款拆解。");
       }
-      const payload = await analyzeViralScript(
-        {
-          source_url: sourceUrl,
-          raw_script: rawScript,
-          industry,
-          language,
-        },
-        session.access_token,
-      );
+      const trimmedSourceUrl = sourceUrl.trim();
+      const trimmedRawScript = rawScript.trim();
+      const payload =
+        trimmedSourceUrl && !trimmedRawScript
+          ? mapPipelineResult(
+              await runViralPipeline(
+                {
+                  source_url: trimmedSourceUrl,
+                  industry,
+                  language,
+                },
+                session.access_token,
+              ),
+              t.pipelineFallback,
+            )
+          : await analyzeViralScript(
+              {
+                source_url: trimmedSourceUrl,
+                raw_script: trimmedRawScript,
+                industry,
+                language,
+              },
+              session.access_token,
+            );
       setResult(payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "拆解失败，请稍后重试。");
@@ -277,6 +294,21 @@ export function ViralAnalyzerClient() {
       </div>
     </main>
   );
+}
+
+function mapPipelineResult(payload: ViralPipelineResult, fallbackMessage: string): ViralAnalyzeResult {
+  if (!payload.ok || !payload.analysis) {
+    throw new Error(fallbackMessage);
+  }
+  return {
+    project_id: payload.project_id || undefined,
+    topic: payload.analysis.topic,
+    hook: payload.analysis.hook,
+    selling_points: payload.analysis.selling_points,
+    structure: payload.analysis.structure,
+    template: payload.analysis.template,
+    rewrites: payload.rewrites,
+  };
 }
 
 function ResultCard({ title, children }: { title: string; children: string }) {
