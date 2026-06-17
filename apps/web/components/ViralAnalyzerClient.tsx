@@ -17,23 +17,25 @@ const industries: Array<{ value: ViralIndustry; zh: string; en: string }> = [
   { value: "global", zh: "出海营销", en: "Global marketing" },
 ];
 
+const LINK_PIPELINE_TIMEOUT_MS = 40000;
+
 const copy = {
   zh: {
     eyebrow: "爆款拆解",
     title: "Viral Script Analyzer",
-    subtitle: "粘贴短视频链接或原始文案，拆解爆点结构，并生成适合数字人口播的原创改写稿。",
-    url: "短视频链接",
+    subtitle: "粘贴原始文案稳定拆解；短视频链接自动解析为 Beta，适合辅助尝试。",
+    url: "短视频链接（Beta）",
     rawScript: "原始视频文案",
     upload: "上传视频文件",
-    uploadHint: "第一版不自动转写视频；上传用于记录来源，请同时粘贴文案继续拆解。",
+    uploadHint: "上传视频自动拆解为后续功能；当前公开测试请优先粘贴视频文案。",
     industry: "行业/场景",
     language: "输出语言",
     start: "开始拆解",
     analyzing: "拆解中",
     linkPlaceholder: "抖音 / 小红书 / 快手 / TikTok / YouTube Shorts 链接",
     scriptPlaceholder: "粘贴原视频文案，系统会学习结构并生成原创改写，不会逐字复制。",
-    fallback: "如果链接无法自动解析，请粘贴视频文案或上传视频后补充文案。",
-    pipelineFallback: "自动解析失败，请粘贴视频文案继续拆解。",
+    fallback: "抖音链接解析暂不稳定，请粘贴视频文案继续拆解。",
+    pipelineFallback: "抖音链接解析暂不稳定，请粘贴视频文案继续拆解。",
     topic: "视频核心主题",
     hook: "黄金开头",
     sellingPoints: "爆点拆解",
@@ -48,19 +50,19 @@ const copy = {
   en: {
     eyebrow: "Viral Analyzer",
     title: "Viral Script Analyzer",
-    subtitle: "Paste a short-video link or script, analyze the structure, and create original talking-avatar scripts.",
-    url: "Short-video link",
+    subtitle: "Paste the original script for stable analysis. Link auto-parsing is Beta and may fail.",
+    url: "Short-video link (Beta)",
     rawScript: "Original script",
     upload: "Upload video file",
-    uploadHint: "MVP does not transcribe videos yet. Upload as a source note and paste the script to analyze.",
+    uploadHint: "Video upload auto-analysis is planned. For public testing, paste the video script.",
     industry: "Industry",
     language: "Output language",
     start: "Analyze",
     analyzing: "Analyzing",
     linkPlaceholder: "Douyin / RED / Kuaishou / TikTok / YouTube Shorts URL",
     scriptPlaceholder: "Paste the original script. The system learns the structure and creates original rewrites.",
-    fallback: "If the link cannot be parsed, paste the video script or upload the video and add script text.",
-    pipelineFallback: "Automatic parsing failed. Paste the video script to continue analyzing.",
+    fallback: "Douyin link parsing is currently unstable. Paste the video script to continue analyzing.",
+    pipelineFallback: "Douyin link parsing is currently unstable. Paste the video script to continue analyzing.",
     topic: "Core Topic",
     hook: "Golden Hook",
     sellingPoints: "Viral Angles",
@@ -103,13 +105,14 @@ export function ViralAnalyzerClient() {
       const payload =
         trimmedSourceUrl && !trimmedRawScript
           ? mapPipelineResult(
-              await runViralPipeline(
+              await runPipelineWithTimeout(
                 {
                   source_url: trimmedSourceUrl,
                   industry,
                   language,
                 },
                 session.access_token,
+                t.pipelineFallback,
               ),
               t.pipelineFallback,
             )
@@ -294,6 +297,26 @@ export function ViralAnalyzerClient() {
       </div>
     </main>
   );
+}
+
+async function runPipelineWithTimeout(
+  payload: {
+    source_url: string;
+    industry: ViralIndustry;
+    language: "zh" | "en";
+  },
+  accessToken: string,
+  fallbackMessage: string,
+): Promise<ViralPipelineResult> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), LINK_PIPELINE_TIMEOUT_MS);
+  try {
+    return await runViralPipeline(payload, accessToken, { signal: controller.signal });
+  } catch {
+    throw new Error(fallbackMessage);
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 function mapPipelineResult(payload: ViralPipelineResult, fallbackMessage: string): ViralAnalyzeResult {

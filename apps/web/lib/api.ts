@@ -223,6 +223,7 @@ export async function runViralPipeline(
     language?: "zh" | "en";
   },
   accessToken?: string,
+  options?: { signal?: AbortSignal },
 ): Promise<ViralPipelineResult> {
   const response = await fetch(`${API_URL}/api/viral/pipeline/run`, {
     method: "POST",
@@ -231,6 +232,7 @@ export async function runViralPipeline(
       : { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
     cache: "no-store",
+    signal: options?.signal,
   });
   return parseResponse<ViralPipelineResult>(response, { url: `${API_URL}/api/viral/pipeline/run`, method: "POST" });
 }
