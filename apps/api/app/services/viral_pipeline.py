@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import tempfile
+import time
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from postgrest.exceptions import APIError
@@ -13,8 +16,10 @@ from supabase import Client
 from app.services.asr_service import transcribe_audio
 from app.services.llm_provider import LLMProvider
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio
-from app.services.video_link_resolver import resolve_video_link
+from app.services.video_link_resolver import extract_best_url, resolve_video_link
 from app.services.viral_analyzer import analyze_viral_script
+
+logger = logging.getLogger(__name__)
 
 
 class ViralPipelineStatus(str, Enum):
@@ -32,7 +37,16 @@ class ViralPipelineStatus(str, Enum):
 REWRITE_TITLES = ["版本A", "版本B", "版本C", "老板IP版", "知识分享版", "成交转化版", "故事版", "直播版", "极简口播版"]
 
 
-def _failed(*, status: ViralPipelineStatus, fallback_reason: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+def _failed(
+    *,
+    status: ViralPipelineStatus,
+    fallback_reason: str,
+    metadata: dict[str, Any] | None = None,
+    diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    safe_metadata = metadata or {}
+    if diagnostics:
+        safe_metadata["diagnostics"] = _public_diagnostics(diagnostics)
     return {
         "ok": False,
         "status": ViralPipelineStatus.FAILED,
@@ -42,8 +56,91 @@ def _failed(*, status: ViralPipelineStatus, fallback_reason: str, metadata: dict
         "transcript": "",
         "analysis": None,
         "rewrites": [],
-        "metadata": metadata or {},
+        "metadata": safe_metadata,
     }
+
+
+def _public_diagnostics(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in diagnostics.items() if key != "started_at"}
+
+
+def _source_summary(source_url: str) -> dict[str, Any]:
+    extracted_url = extract_best_url(source_url)
+    parsed = urlparse(extracted_url) if extracted_url else None
+    return {
+        "has_url": bool(extracted_url),
+        "domain": parsed.netloc.lower() if parsed else "",
+    }
+
+
+def _safe_error_message(message: str, *, limit: int = 220) -> str:
+    return " ".join(str(message or "").split())[:limit]
+
+
+def _step_start(
+    diagnostics: dict[str, Any],
+    *,
+    step: ViralPipelineStatus,
+    user_id: str,
+    source: dict[str, Any],
+) -> float:
+    diagnostics["steps"].append(
+        {
+            "step": step.value,
+            "status": "start",
+            "duration_ms": 0,
+            "error_code": "",
+            "error_type": "",
+            "safe_error_message": "",
+        }
+    )
+    logger.info(
+        "viral_pipeline_step step=%s status=start user_id=%s source_domain=%s source_has_url=%s",
+        step.value,
+        user_id,
+        source["domain"],
+        source["has_url"],
+    )
+    return time.perf_counter()
+
+
+def _step_finish(
+    diagnostics: dict[str, Any],
+    *,
+    step: ViralPipelineStatus,
+    status: str,
+    started_at: float,
+    user_id: str,
+    source: dict[str, Any],
+    error_code: str = "",
+    error_type: str = "",
+    safe_error_message: str = "",
+) -> None:
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    item = {
+        "step": step.value,
+        "status": status,
+        "duration_ms": duration_ms,
+        "error_code": error_code,
+        "error_type": error_type,
+        "safe_error_message": _safe_error_message(safe_error_message),
+    }
+    diagnostics["duration_ms"] = int((time.perf_counter() - diagnostics["started_at"]) * 1000)
+    diagnostics["steps"].append(item)
+    if status == "fail":
+        diagnostics["failed_at"] = step.value
+        diagnostics["error_code"] = error_code
+    logger.info(
+        "viral_pipeline_step step=%s status=%s duration_ms=%s error_code=%s error_type=%s user_id=%s source_domain=%s source_has_url=%s",
+        step.value,
+        status,
+        duration_ms,
+        error_code,
+        error_type,
+        user_id,
+        source["domain"],
+        source["has_url"],
+    )
 
 
 def _analysis_payload(analysis: dict[str, Any]) -> dict[str, Any]:
@@ -137,8 +234,18 @@ async def run_viral_pipeline(
     language: str,
 ) -> dict[str, Any]:
     work_dir = Path(tempfile.mkdtemp(prefix="viral-agent-"))
+    source = _source_summary(source_url)
+    diagnostics: dict[str, Any] = {
+        "failed_at": "",
+        "error_code": "",
+        "duration_ms": 0,
+        "source": source,
+        "steps": [],
+        "started_at": time.perf_counter(),
+    }
     try:
         status = ViralPipelineStatus.RESOLVING_LINK
+        step_started = _step_start(diagnostics, step=status, user_id=user_id, source=source)
         resolved = await resolve_video_link(source_url)
         metadata = {
             "platform": resolved.get("platform", ""),
@@ -150,9 +257,23 @@ async def run_viral_pipeline(
             "downloadable": resolved.get("downloadable", False),
         }
         if not resolved.get("ok") or not resolved.get("downloadable"):
-            return _failed(status=status, fallback_reason=resolved.get("fallback_reason") or DOWNLOAD_FALLBACK, metadata=metadata)
+            error_code = str(resolved.get("error_code") or resolved.get("errorCode") or "unknown_error")
+            _step_finish(
+                diagnostics,
+                step=status,
+                status="fail",
+                started_at=step_started,
+                user_id=user_id,
+                source=source,
+                error_code=error_code,
+                error_type="resolver_failed",
+                safe_error_message=str(resolved.get("fallback_reason") or DOWNLOAD_FALLBACK),
+            )
+            return _failed(status=status, fallback_reason=resolved.get("fallback_reason") or DOWNLOAD_FALLBACK, metadata=metadata, diagnostics=diagnostics)
+        _step_finish(diagnostics, step=status, status="success", started_at=step_started, user_id=user_id, source=source)
 
         status = ViralPipelineStatus.DOWNLOADING_VIDEO
+        step_started = _step_start(diagnostics, step=status, user_id=user_id, source=source)
         downloaded = await download_video(str(resolved.get("webpage_url") or source_url), work_dir)
         metadata.update(
             {
@@ -165,20 +286,59 @@ async def run_viral_pipeline(
             }
         )
         if not downloaded.ok or not downloaded.video_path:
-            return _failed(status=status, fallback_reason=downloaded.fallback_reason or DOWNLOAD_FALLBACK, metadata=metadata)
+            _step_finish(
+                diagnostics,
+                step=status,
+                status="fail",
+                started_at=step_started,
+                user_id=user_id,
+                source=source,
+                error_code="download_failed",
+                error_type="download_failed",
+                safe_error_message=downloaded.fallback_reason or DOWNLOAD_FALLBACK,
+            )
+            return _failed(status=status, fallback_reason=downloaded.fallback_reason or DOWNLOAD_FALLBACK, metadata=metadata, diagnostics=diagnostics)
+        _step_finish(diagnostics, step=status, status="success", started_at=step_started, user_id=user_id, source=source)
 
         status = ViralPipelineStatus.EXTRACTING_AUDIO
+        step_started = _step_start(diagnostics, step=status, user_id=user_id, source=source)
         try:
             audio_path = await extract_audio(downloaded.video_path, work_dir)
-        except RuntimeError:
-            return _failed(status=status, fallback_reason="该视频暂不支持自动解析，请上传视频继续分析。", metadata=metadata)
+        except RuntimeError as error:
+            _step_finish(
+                diagnostics,
+                step=status,
+                status="fail",
+                started_at=step_started,
+                user_id=user_id,
+                source=source,
+                error_code="ffmpeg_failed",
+                error_type=error.__class__.__name__,
+                safe_error_message=str(error),
+            )
+            return _failed(status=status, fallback_reason="该视频暂不支持自动解析，请上传视频继续分析。", metadata=metadata, diagnostics=diagnostics)
+        _step_finish(diagnostics, step=status, status="success", started_at=step_started, user_id=user_id, source=source)
 
         status = ViralPipelineStatus.TRANSCRIBING
+        step_started = _step_start(diagnostics, step=status, user_id=user_id, source=source)
         asr = await transcribe_audio(audio_path, language)
         if not asr.ok:
-            return _failed(status=status, fallback_reason=asr.fallback_reason or "该视频暂不支持自动转写，请上传视频继续分析。", metadata=metadata)
+            _step_finish(
+                diagnostics,
+                step=status,
+                status="fail",
+                started_at=step_started,
+                user_id=user_id,
+                source=source,
+                error_code="asr_failed",
+                error_type="asr_failed",
+                safe_error_message=asr.fallback_reason or "该视频暂不支持自动转写，请上传视频继续分析。",
+            )
+            return _failed(status=status, fallback_reason=asr.fallback_reason or "该视频暂不支持自动转写，请上传视频继续分析。", metadata=metadata, diagnostics=diagnostics)
+        _step_finish(diagnostics, step=status, status="success", started_at=step_started, user_id=user_id, source=source)
 
         status = ViralPipelineStatus.ANALYZING
+        step_started = _step_start(diagnostics, step=status, user_id=user_id, source=source)
         analysis = await analyze_viral_script(
             supabase,
             user_id=user_id,
@@ -188,11 +348,14 @@ async def run_viral_pipeline(
             industry=industry,
             language=language,
         )
+        _step_finish(diagnostics, step=status, status="success", started_at=step_started, user_id=user_id, source=source)
 
         status = ViralPipelineStatus.REWRITING
+        step_started = _step_start(diagnostics, step=status, user_id=user_id, source=source)
         rewrites = await _generate_nine_rewrites(transcript=asr.transcript, analysis=analysis, language=language)
         project_id = str(analysis.get("project_id") or uuid4())
         _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
+        _step_finish(diagnostics, step=status, status="success", started_at=step_started, user_id=user_id, source=source)
 
         return {
             "ok": True,
