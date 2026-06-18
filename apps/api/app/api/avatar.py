@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import logging
 import traceback
 from datetime import datetime, timezone
@@ -309,9 +310,23 @@ def _update_avatar_task(supabase: Client, task_id: str, values: dict) -> dict:
 
 def _safe_fail_task(supabase: Client, task_id: str, message: str) -> None:
     try:
-        supabase.table("avatar_tasks").update({"status": "failed", "progress_stage": "failed", "error_message": message[:2000]}).eq("id", task_id).execute()
+        supabase.table("avatar_tasks").update({"status": "failed", "progress_stage": "failed", "error_message": _compact_error_message(message)}).eq("id", task_id).execute()
     except Exception:
         logger.exception("Failed to mark avatar task failed")
+
+
+def _compact_error_message(message: str) -> str:
+    try:
+        parsed = ast.literal_eval(message)
+    except (SyntaxError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict):
+        primary = parsed.get("message_zh") or parsed.get("message") or parsed.get("code")
+        if primary:
+            code = parsed.get("code")
+            suffix = f" ({code})" if code and code not in str(primary) else ""
+            return f"{primary}{suffix}"[:500]
+    return message[:500]
 
 
 def _serialize_avatar_task(task: dict) -> dict:

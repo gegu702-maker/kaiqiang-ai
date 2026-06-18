@@ -79,6 +79,7 @@ async def check_musetalk_health() -> dict[str, Any]:
     base_url = settings.musetalk_api_base_url.strip().rstrip("/")
     if not base_url:
         return {"status": "missing_config"}
+    configured_host = urlparse(base_url).hostname or ""
     headers = {}
     if settings.musetalk_api_key.strip():
         headers["Authorization"] = f"Bearer {settings.musetalk_api_key.strip()}"
@@ -86,9 +87,42 @@ async def check_musetalk_health() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
             response = await client.get(f"{base_url}/health", headers=headers)
             data = _parse_json(response)
-            return data if isinstance(data, dict) else {"status": "unknown"}
+            content_type = response.headers.get("content-type", "")
+            if not response.is_success:
+                return {
+                    "status": "unhealthy",
+                    "status_code": response.status_code,
+                    "message": "MuseTalk health check returned a non-2xx response.",
+                    "content_type": content_type,
+                    "preview": _text_preview(response),
+                    "configured_host": configured_host,
+                }
+            if not data:
+                return {
+                    "status": "unhealthy",
+                    "status_code": response.status_code,
+                    "message": "MuseTalk health check returned non-JSON or empty response.",
+                    "content_type": content_type,
+                    "preview": _text_preview(response),
+                    "configured_host": configured_host,
+                }
+            health_status = str(data.get("status") or "").lower()
+            if health_status not in {"ok", "ready", "healthy"}:
+                return {
+                    **data,
+                    "status": health_status or "unhealthy",
+                    "status_code": response.status_code,
+                    "configured_host": configured_host,
+                }
+            return {**data, "status": "ok", "status_code": response.status_code, "configured_host": configured_host}
+    except httpx.TimeoutException:
+        return {
+            "status": "error",
+            "message": "MuseTalk health check timeout",
+            "configured_host": configured_host,
+        }
     except Exception as error:
-        return {"status": "error", "message": str(error)}
+        return {"status": "error", "message": str(error), "configured_host": configured_host}
 
 
 def _parse_json(response: httpx.Response) -> dict[str, Any]:
@@ -97,6 +131,16 @@ def _parse_json(response: httpx.Response) -> dict[str, Any]:
         return data if isinstance(data, dict) else {"data": data}
     except ValueError:
         return {}
+
+
+def _text_preview(response: httpx.Response) -> str:
+    content_type = response.headers.get("content-type", "")
+    if "text" not in content_type and "html" not in content_type and "json" not in content_type:
+        return ""
+    try:
+        return response.text[:200]
+    except UnicodeDecodeError:
+        return ""
 
 
 def _extract_video_url(data: dict[str, Any]) -> str:

@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     autodl_instance_id: str = ""
     autodl_region: str = ""
     autodl_api_base_url: str = "https://api.autodl.com"
+    autodl_auto_start_enabled: bool = False
     autodl_start_timeout_seconds: int = 900
     gpu_idle_shutdown_minutes: int = 10
 
