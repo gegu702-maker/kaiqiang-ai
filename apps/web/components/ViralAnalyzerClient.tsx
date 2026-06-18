@@ -18,6 +18,7 @@ const industries: Array<{ value: ViralIndustry; zh: string; en: string }> = [
 ];
 
 const LINK_PIPELINE_TIMEOUT_MS = 40000;
+const VISIBLE_VIDEO_URL_RE = /(?:https?:\/\/|(?:v\.)?douyin\.com|(?:www\.)?iesdouyin\.com)/i;
 
 const copy = {
   zh: {
@@ -102,8 +103,9 @@ export function ViralAnalyzerClient() {
       }
       const trimmedSourceUrl = sourceUrl.trim();
       const trimmedRawScript = rawScript.trim();
+      const shouldRunLinkPipeline = Boolean(trimmedSourceUrl && !trimmedRawScript && hasVisibleVideoUrl(trimmedSourceUrl));
       const payload =
-        trimmedSourceUrl && !trimmedRawScript
+        shouldRunLinkPipeline
           ? mapPipelineResult(
               await runPipelineWithTimeout(
                 {
@@ -119,7 +121,7 @@ export function ViralAnalyzerClient() {
           : await analyzeViralScript(
               {
                 source_url: trimmedSourceUrl,
-                raw_script: trimmedRawScript,
+                raw_script: trimmedRawScript || trimmedSourceUrl,
                 industry,
                 language,
               },
@@ -297,6 +299,10 @@ export function ViralAnalyzerClient() {
       </div>
     </main>
   );
+}
+
+function hasVisibleVideoUrl(input: string): boolean {
+  return VISIBLE_VIDEO_URL_RE.test(input);
 }
 
 async function runPipelineWithTimeout(
