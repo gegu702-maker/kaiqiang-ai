@@ -11,6 +11,37 @@ Date: 2026-06-18
 - Vercel Production commit: `c5d7863820dffeb8bfcc8bb56fb8bad80e39ae27`
 - `origin/master`: `c5d7863820dffeb8bfcc8bb56fb8bad80e39ae27`
 
+## P2.7.1 Stable Railway API Baseline
+
+- Railway API deployment: `0fb64180-2faf-4458-af20-9a6b63a5f273`
+- Railway deployed commit: `84a2023972ff73089552ccb27c812e547c9425f0`
+- Previous Railway deployment: `ecd0bc38-0d13-4569-80df-cc16c63df679` is `REMOVED`.
+- Image digest: `sha256:97876a990be67dacd207d8cf5bc1f4af5adde56ba49a80a2a3fd9ba08fd58e25`
+- Railway `/health`:
+  - `STATUS=200`
+  - `{"status":"ok"}`
+- Railway `/api/avatar/health`:
+  - `STATUS=200`
+  - `{"status":"ok","musetalk":{"status":"ok","engine":"musetalk","root":"/root/MuseTalk","status_code":200,"configured_host":"u1032685-8547-93ee30c2.nmb2.seetacloud.com"}}`
+
+P2.7.1 deployed changes:
+
+- AutoDL / MuseTalk health hardening is live on the Railway API.
+- `AUTODL_AUTO_START_ENABLED` defaults to `false`.
+- `/api/avatar/health` now returns explicit MuseTalk health details.
+- MuseTalk health `404`, HTML, or non-JSON responses should no longer be reported as `{}`.
+- No real avatar generation smoke was run for this deployment to avoid consuming Railway or GPU trial resources.
+
+P2.7.1 deployment scope:
+
+- Railway deployed: YES
+- Vercel deployed: NO
+- DB modified: NO
+- SQL executed: NO
+- P2.7 Viral Analyzer quota touched: NO
+- Subtitles touched: NO
+- Architecture or server migration: NO
+
 ## Completed In P2.7
 
 - Viral Analyzer temporary quota override is live on the Railway API.
@@ -47,6 +78,7 @@ Date: 2026-06-18
 - Avatar task `error_message` values can be too long when upstream failures are nested.
 - Generated videos currently do not include subtitles; subtitles are a P2.8 follow-up, not part of this stable baseline.
 - Railway CLI token and deployment workflow should be stabilized and documented.
+- Railway trial and payment risk remains because the current user cannot upgrade with an overseas payment card.
 
 ## Next Recommended Actions
 
@@ -54,3 +86,5 @@ Date: 2026-06-18
 - Consider `AUTODL_AUTO_START_ENABLED=false` for normal/non-pro AutoDL instances unless a supported API path is confirmed.
 - Fix `/api/avatar/health` so unhealthy MuseTalk responses are explicit.
 - Track subtitles as P2.8 and do not mix subtitle work into the current stable version.
+- Track infra payment / domestic deploy fallback as a separate P2.8 workstream.
+- Do not mix subtitle work or infrastructure migration into the current stable version.
