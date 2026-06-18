@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import tempfile
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -10,6 +12,13 @@ from supabase import Client
 
 from app.core.config import settings
 from app.services.storage import upload_public_bytes
+from app.services.subtitles import (
+    build_subtitle_segments,
+    burn_subtitles_to_video,
+    normalize_script_text,
+    probe_video_duration,
+    write_ass_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +29,7 @@ async def generate_avatar_video_with_musetalk(
     video_url: str,
     audio_url: str,
     task_id: str,
+    script_text: str | None = None,
 ) -> str:
     base_url = settings.musetalk_api_base_url.strip().rstrip("/")
     if not base_url:
@@ -63,16 +73,49 @@ async def generate_avatar_video_with_musetalk(
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail=f"MuseTalk service request failed: {error}") from error
 
+    video_content = _with_optional_subtitles(video_response.content, task_id=task_id, script_text=script_text)
+
     result_url = upload_public_bytes(
         supabase,
         settings.supabase_video_bucket,
-        video_response.content,
+        video_content,
         f"avatar-results/{task_id}",
         ".mp4",
         "video/mp4",
     )
-    logger.info("MuseTalk upload completed task_id=%s result_url=%s bytes=%s", task_id, result_url, len(video_response.content))
+    logger.info("MuseTalk upload completed task_id=%s result_url=%s bytes=%s", task_id, result_url, len(video_content))
     return result_url
+
+
+def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text: str | None) -> bytes:
+    clean_text = normalize_script_text(script_text)
+    if not settings.avatar_subtitles_enabled or not clean_text:
+        return video_content
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            input_path = tmp_path / "musetalk-output.mp4"
+            ass_path = tmp_path / "subtitle.ass"
+            output_path = tmp_path / "captioned-output.mp4"
+
+            input_path.write_bytes(video_content)
+            duration = probe_video_duration(input_path, settings.ffmpeg_path)
+            segments = build_subtitle_segments(clean_text, duration)
+            if not segments:
+                return video_content
+            write_ass_file(segments, ass_path)
+            burn_subtitles_to_video(input_path, ass_path, output_path, settings.ffmpeg_path)
+            captioned = output_path.read_bytes()
+            if not _looks_like_mp4(captioned):
+                raise HTTPException(status_code=500, detail="Captioned output is not a valid MP4 file")
+            logger.info("Avatar subtitles burned task_id=%s duration=%s segments=%s", task_id, duration, len(segments))
+            return captioned
+    except Exception as error:
+        logger.warning("Avatar subtitle burn failed; using original MP4 task_id=%s error=%s", task_id, str(error)[:500])
+        if settings.avatar_subtitle_fallback_on_error:
+            return video_content
+        raise
 
 
 async def check_musetalk_health() -> dict[str, Any]:
