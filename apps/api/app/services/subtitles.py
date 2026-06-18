@@ -150,6 +150,10 @@ def burn_subtitles_to_video(input_mp4: Path, ass_path: Path, output_mp4: Path, f
         "-y",
         "-i",
         str(input_mp4),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
         "-vf",
         f"ass={ass_path.name}",
         "-c:v",
@@ -159,7 +163,10 @@ def burn_subtitles_to_video(input_mp4: Path, ass_path: Path, output_mp4: Path, f
         "-crf",
         "23",
         "-c:a",
-        "copy",
+        "aac",
+        "-b:a",
+        "192k",
+        "-shortest",
         "-movflags",
         "+faststart",
         str(output_mp4),
@@ -175,7 +182,7 @@ def burn_subtitles_to_video(input_mp4: Path, ass_path: Path, output_mp4: Path, f
     if result.returncode != 0:
         raise HTTPException(
             status_code=500,
-            detail=f"FFmpeg subtitle burn failed: {result.stderr[-800:]}",
+            detail=f"FFmpeg subtitle burn failed: {result.stderr[-1600:]}",
         )
     if not output_mp4.exists() or output_mp4.stat().st_size < 1024:
         raise HTTPException(status_code=500, detail="FFmpeg subtitle burn produced an empty output")

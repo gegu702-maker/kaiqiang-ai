@@ -112,7 +112,7 @@ def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text:
             logger.info("Avatar subtitles burned task_id=%s duration=%s segments=%s", task_id, duration, len(segments))
             return captioned
     except Exception as error:
-        logger.warning("Avatar subtitle burn failed; using original MP4 task_id=%s error=%s", task_id, str(error)[:500])
+        logger.warning("subtitle_burn_failed_fallback_original task_id=%s error=%s", task_id, str(error)[:800])
         if settings.avatar_subtitle_fallback_on_error:
             return video_content
         raise

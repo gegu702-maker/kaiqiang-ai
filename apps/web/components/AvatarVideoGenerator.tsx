@@ -495,7 +495,7 @@ export function AvatarVideoGenerator({
             </span>
             <span className="mt-1 block text-sm text-slate-500">{current.scriptHint}</span>
             <textarea
-              className="mt-3 min-h-28 w-full resize-y rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              className="mt-3 min-h-28 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 caret-blue-600 outline-none transition placeholder:text-slate-500 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-700 dark:bg-white dark:text-slate-950 dark:placeholder:text-slate-500"
               maxLength={1200}
               placeholder={current.scriptPlaceholder}
               value={scriptText}
