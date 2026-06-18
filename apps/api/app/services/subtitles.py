@@ -19,6 +19,12 @@ class SubtitleSegment:
     lines: list[str]
 
 
+class SubtitleBurnError(RuntimeError):
+    def __init__(self, message: str, diagnostics: dict) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
 PUNCTUATION_PATTERN = re.compile(r"([^。！？!?；;，,.\n]+[。！？!?；;，,.]?)")
 
 
@@ -180,12 +186,33 @@ def burn_subtitles_to_video(input_mp4: Path, ass_path: Path, output_mp4: Path, f
         timeout=240,
     )
     if result.returncode != 0:
-        raise HTTPException(
-            status_code=500,
-            detail=f"FFmpeg subtitle burn failed: {result.stderr[-1600:]}",
+        raise SubtitleBurnError(
+            "FFmpeg subtitle burn failed",
+            _build_burn_diagnostics(
+                cmd=cmd,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                input_mp4=input_mp4,
+                ass_path=ass_path,
+                output_mp4=output_mp4,
+                ffmpeg_path=ffmpeg,
+            ),
         )
     if not output_mp4.exists() or output_mp4.stat().st_size < 1024:
-        raise HTTPException(status_code=500, detail="FFmpeg subtitle burn produced an empty output")
+        raise SubtitleBurnError(
+            "FFmpeg subtitle burn produced an empty output",
+            _build_burn_diagnostics(
+                cmd=cmd,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                input_mp4=input_mp4,
+                ass_path=ass_path,
+                output_mp4=output_mp4,
+                ffmpeg_path=ffmpeg,
+            ),
+        )
 
 
 def probe_video_duration(input_mp4: Path, ffmpeg_path: str | None = None) -> float:
@@ -233,6 +260,44 @@ def _wrap_text(text: str, max_line_chars: int) -> list[str]:
     if current:
         lines.append(current)
     return lines
+
+
+def _build_burn_diagnostics(
+    *,
+    cmd: list[str],
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    input_mp4: Path,
+    ass_path: Path,
+    output_mp4: Path,
+    ffmpeg_path: str,
+) -> dict:
+    return {
+        "returncode": returncode,
+        "command": cmd,
+        "stderr_tail": stderr[-3000:],
+        "stdout_tail": stdout[-1000:],
+        "input_mp4_path": str(input_mp4),
+        "input_mp4_exists": input_mp4.exists(),
+        "input_mp4_size": _file_size(input_mp4),
+        "ass_path": str(ass_path),
+        "ass_exists": ass_path.exists(),
+        "ass_size": _file_size(ass_path),
+        "output_mp4_path": str(output_mp4),
+        "output_mp4_exists": output_mp4.exists(),
+        "output_mp4_size": _file_size(output_mp4),
+        "ffmpeg_path": ffmpeg_path,
+        "selected_subtitle_font": settings.avatar_subtitle_font,
+        "cwd": str(ass_path.parent),
+    }
+
+
+def _file_size(path: Path) -> int | None:
+    try:
+        return path.stat().st_size if path.exists() else None
+    except OSError:
+        return None
 
 
 def _split_webvtt_script(script: str) -> list[str]:

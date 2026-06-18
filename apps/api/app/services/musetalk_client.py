@@ -13,6 +13,7 @@ from supabase import Client
 from app.core.config import settings
 from app.services.storage import upload_public_bytes
 from app.services.subtitles import (
+    SubtitleBurnError,
     build_subtitle_segments,
     burn_subtitles_to_video,
     normalize_script_text,
@@ -111,6 +112,16 @@ def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text:
                 raise HTTPException(status_code=500, detail="Captioned output is not a valid MP4 file")
             logger.info("Avatar subtitles burned task_id=%s duration=%s segments=%s", task_id, duration, len(segments))
             return captioned
+    except SubtitleBurnError as error:
+        logger.warning(
+            "subtitle_burn_failed_diagnostic task_id=%s diagnostics=%s",
+            task_id,
+            error.diagnostics,
+        )
+        logger.warning("subtitle_burn_failed_fallback_original task_id=%s error=%s", task_id, str(error)[:300])
+        if settings.avatar_subtitle_fallback_on_error:
+            return video_content
+        raise
     except Exception as error:
         logger.warning("subtitle_burn_failed_fallback_original task_id=%s error=%s", task_id, str(error)[:800])
         if settings.avatar_subtitle_fallback_on_error:
