@@ -45,44 +45,46 @@ const copy = {
     script: "口播文案",
     audio: "口播音频",
     videoHint: "可选。上传后将使用你的自定义视频；不上传则使用所选商务模板。",
-    scriptHint: "输入文案后系统会先生成语音，再驱动所选模板生成视频。",
+    scriptHint: "输入文案后，系统会生成语音、驱动数字人，并默认添加中文字幕。",
+    scriptLengthHint: "建议 15-60 秒，过长会增加生成时间。",
     scriptPlaceholder: "输入要数字人口播的文案...",
-    audioHint: "可选。支持 wav / mp3 / m4a，建议 16kHz 单声道 wav。",
+    audioHint: "上传音频后，将优先使用你的音频；未上传音频时会自动生成语音。支持 wav / mp3 / m4a。",
     steps: ["选择商务模板", "输入口播文案", "生成并下载 MP4"],
     generate: "生成口播视频",
     generating: "生成中",
-    login: "请先登录后再生成。",
-    waitingGpu: "等待 GPU",
-    autodlStarting: "AutoDL 启动中",
-    musetalkLoading: "MuseTalk 加载中",
+    login: "登录状态已失效，请重新登录后再试。",
+    waitingGpu: "检查数字人服务中",
+    autodlStarting: "启动数字人服务中",
+    musetalkLoading: "加载数字人模型中",
     videoGenerating: "视频生成中",
     uploadingResult: "上传结果中",
-    queued: "queued",
-    running: "running",
+    queued: "排队中",
+    running: "生成中",
     completed: "已完成",
-    failed: "failed",
+    failed: "失败",
     download: "下载 MP4",
     copyLink: "复制链接",
     copied: "已复制",
     result: "生成结果",
+    resultReady: "视频已生成，已自动添加中文字幕。",
+    preview: "预览",
     empty: "请选择模板并输入口播文案。",
     quotaTitle: "生成额度",
     quotaLoading: "正在读取额度",
     quotaUnlimited: "当前套餐不限额度",
     quotaSummary: (remaining: number, used: number, total: number) => `剩余 ${remaining} 次，本月已用 ${used}/${total} 次`,
     cost: "本次生成预计消耗 1 次额度",
-    quotaEmpty: "免费额度已用完，请升级套餐。",
+    quotaEmpty: "本月生成次数已用完，请升级套餐或联系管理员。",
     upgrade: "升级套餐",
     selectedTemplate: "已选择模板",
     templateComingSoon: "该模板视频即将上线，请先手动上传人物视频。",
     history: "最近任务",
     noHistory: "暂无历史任务。",
-    uploadFailedVideo: "视频上传失败",
-    uploadFailedAudio: "音频上传失败",
-    gpuFailed: "GPU 启动失败",
-    musetalkTimeout: "MuseTalk 超时",
-    autodlUnreachable: "AutoDL 不可达",
-    supabaseFailed: "Supabase 上传失败",
+    autoSubtitle: "自动字幕",
+    authExpired: "登录状态已失效，请重新登录后再试。",
+    serviceUnavailable: "数字人生成服务暂未就绪，请稍后重试或联系管理员。",
+    fileUnsupported: "文件格式暂不支持，请上传 MP4/MOV/WebM 视频或 WAV/MP3/M4A 音频。",
+    genericError: "生成失败，请稍后重试或联系管理员。",
   },
   en: {
     title: "Avatar Video Generator",
@@ -93,44 +95,46 @@ const copy = {
     script: "Voiceover Script",
     audio: "Voice Audio",
     videoHint: "Optional. Upload a custom video to override the selected business template.",
-    scriptHint: "Enter script text to synthesize speech and drive the selected presenter.",
+    scriptHint: "Enter a script to synthesize speech, drive the avatar, and add Chinese subtitles by default.",
+    scriptLengthHint: "15-60 seconds is recommended. Longer scripts increase generation time.",
     scriptPlaceholder: "Enter the script for the avatar...",
-    audioHint: "Optional. wav / mp3 / m4a. 16kHz mono wav is recommended.",
+    audioHint: "Uploaded audio takes priority. Without audio, speech is generated automatically. wav / mp3 / m4a supported.",
     steps: ["Choose template", "Enter script", "Generate MP4"],
     generate: "Generate Avatar Video",
     generating: "Generating",
-    login: "Sign in before generating.",
-    waitingGpu: "Waiting for GPU",
-    autodlStarting: "Starting AutoDL",
-    musetalkLoading: "Loading MuseTalk",
+    login: "Your login session expired. Please sign in again and retry.",
+    waitingGpu: "Checking avatar service",
+    autodlStarting: "Starting avatar service",
+    musetalkLoading: "Loading avatar model",
     videoGenerating: "Generating video",
     uploadingResult: "Uploading result",
-    queued: "queued",
-    running: "running",
-    completed: "completed",
-    failed: "failed",
+    queued: "Queued",
+    running: "Generating",
+    completed: "Completed",
+    failed: "Failed",
     download: "Download MP4",
     copyLink: "Copy link",
     copied: "Copied",
     result: "Result",
+    resultReady: "Video generated with automatic Chinese subtitles.",
+    preview: "Preview",
     empty: "Choose a template and enter a script.",
     quotaTitle: "Generation credits",
     quotaLoading: "Loading credits",
     quotaUnlimited: "Current plan has custom credits",
     quotaSummary: (remaining: number, used: number, total: number) => `${remaining} left, ${used}/${total} used this month`,
     cost: "This generation costs 1 credit",
-    quotaEmpty: "Free credits are used up. Please upgrade your plan.",
+    quotaEmpty: "Monthly generations are used up. Please upgrade your plan or contact an administrator.",
     upgrade: "Upgrade",
     selectedTemplate: "Selected template",
     templateComingSoon: "This template video is coming soon. Upload a person video for now.",
     history: "Recent tasks",
     noHistory: "No recent tasks.",
-    uploadFailedVideo: "Video upload failed",
-    uploadFailedAudio: "Audio upload failed",
-    gpuFailed: "GPU startup failed",
-    musetalkTimeout: "MuseTalk timed out",
-    autodlUnreachable: "AutoDL unreachable",
-    supabaseFailed: "Supabase upload failed",
+    autoSubtitle: "Auto subtitles",
+    authExpired: "Your login session expired. Please sign in again and retry.",
+    serviceUnavailable: "The avatar generation service is not ready yet. Please retry later or contact an administrator.",
+    fileUnsupported: "This file format is not supported. Upload MP4/MOV/WebM video or WAV/MP3/M4A audio.",
+    genericError: "Generation failed. Please retry later or contact an administrator.",
   },
 };
 
@@ -212,9 +216,9 @@ export function AvatarVideoGenerator({
         }
         await new Promise((resolve) => window.setTimeout(resolve, 5000));
       }
-      throw new Error(current.musetalkTimeout);
+      throw new Error(current.serviceUnavailable);
     },
-    [current.failed, current.musetalkTimeout],
+    [current.failed, current.serviceUnavailable],
   );
 
   useEffect(() => {
@@ -350,43 +354,24 @@ export function AvatarVideoGenerator({
 
   function classifyError(message: string) {
     const lower = message.toLowerCase();
-    if (lower.includes("video") && (lower.includes("upload") || lower.includes("上传"))) return `${current.uploadFailedVideo}: ${message}`;
-    if (lower.includes("audio") && (lower.includes("upload") || lower.includes("上传"))) return `${current.uploadFailedAudio}: ${message}`;
-    if (lower.includes("gpu") || lower.includes("power_on") || lower.includes("started but")) return `${current.gpuFailed}: ${message}`;
-    if (lower.includes("timeout") || lower.includes("timed out")) return `${current.musetalkTimeout}: ${message}`;
-    if (lower.includes("autodl") || lower.includes("connection") || lower.includes("connect")) return `${current.autodlUnreachable}: ${message}`;
-    if (lower.includes("supabase") || lower.includes("storage") || lower.includes("bucket")) return `${current.supabaseFailed}: ${message}`;
-    if (lower.includes("insufficient_credits") || lower.includes("额度已用完")) return `${current.quotaEmpty}: ${message}`;
-    return message || current.failed;
+    if (lower.includes("quota") || lower.includes("insufficient") || lower.includes("limit") || lower.includes("exceeded") || lower.includes("额度已用完")) {
+      return current.quotaEmpty;
+    }
+    if (lower.includes("login") || lower.includes("unauthorized") || lower.includes("auth") || lower.includes("token")) {
+      return current.authExpired;
+    }
+    if (lower.includes("autodl") || lower.includes("musetalk") || lower.includes("gpu") || lower.includes("health") || lower.includes("timeout") || lower.includes("timed out")) {
+      return current.serviceUnavailable;
+    }
+    if (lower.includes("unsupported") || lower.includes("file format") || lower.includes("invalid file") || lower.includes("format") || lower.includes("content type")) {
+      return current.fileUnsupported;
+    }
+    return current.genericError;
   }
 
   const isGenerating = state === "queued" || state === "running";
-  const stageText =
-    progressStage === "waiting_gpu"
-      ? current.waitingGpu
-      : progressStage === "autodl_starting" || progressStage === "gpu_starting"
-        ? current.autodlStarting
-        : progressStage === "musetalk_loading" || progressStage === "model_loading"
-          ? current.musetalkLoading
-        : progressStage === "video_generating"
-          ? current.videoGenerating
-          : progressStage === "uploading_result"
-            ? current.uploadingResult
-            : progressStage === "completed"
-              ? current.completed
-              : progressStage === "failed"
-                ? current.failed
-                : "";
-  const statusText =
-    state === "queued"
-      ? current.queued
-      : state === "running"
-        ? current.running
-        : state === "completed"
-          ? "completed"
-          : state === "failed"
-            ? "failed"
-            : "";
+  const stageText = getStageLabel(progressStage, current);
+  const statusText = getStatusLabel(state, current);
 
   return (
     <div className="mx-auto grid w-full max-w-6xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[0.92fr_1.08fr]">
@@ -494,6 +479,7 @@ export function AvatarVideoGenerator({
               {current.script}
             </span>
             <span className="mt-1 block text-sm text-slate-500">{current.scriptHint}</span>
+            <span className="mt-1 block text-xs text-slate-400">{current.scriptLengthHint}</span>
             <textarea
               className="mt-3 min-h-28 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 caret-blue-600 outline-none transition placeholder:text-slate-500 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-700 dark:bg-white dark:text-slate-950 dark:placeholder:text-slate-500"
               maxLength={1200}
@@ -543,13 +529,14 @@ export function AvatarVideoGenerator({
                 {copied ? <Check size={16} /> : <Copy size={16} />}
                 {copied ? current.copied : current.copyLink}
               </button>
-              <a className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" href={resultUrl} download>
+              <a className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" href={resultUrl} download="kaiqiang-avatar-video.mp4">
                 <Download size={16} />
                 {current.download}
               </a>
             </div>
           ) : null}
         </div>
+        {resultUrl ? <p className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{current.resultReady}</p> : null}
         <div className="grid min-h-[420px] place-items-center overflow-hidden rounded-md bg-slate-100">
           {resultUrl ? (
             <video className="h-full max-h-[680px] w-full bg-black object-contain" src={resultUrl} controls playsInline />
@@ -565,7 +552,7 @@ export function AvatarVideoGenerator({
           <div className="mt-3 space-y-3">
             {tasks.length === 0 ? <p className="text-sm text-slate-500">{current.noHistory}</p> : null}
             {tasks.map((task) => (
-              <TaskHistoryItem key={task.id} task={task} />
+              <TaskHistoryItem key={task.id} task={task} labels={current} classifyError={classifyError} />
             ))}
           </div>
         </div>
@@ -574,26 +561,39 @@ export function AvatarVideoGenerator({
   );
 }
 
-function TaskHistoryItem({ task }: { task: AvatarTask }) {
+function TaskHistoryItem({
+  task,
+  labels,
+  classifyError,
+}: {
+  task: AvatarTask;
+  labels: (typeof copy)["zh"];
+  classifyError: (message: string) => string;
+}) {
   const resultUrl = task.result_video_url || task.result_url;
   return (
     <div className="grid gap-3 rounded-md border border-slate-200 p-3 sm:grid-cols-[96px_1fr]">
-      <div className="grid aspect-video place-items-center overflow-hidden rounded bg-slate-100">
+      <div className="grid aspect-video min-h-14 place-items-center overflow-hidden rounded bg-slate-100">
         {resultUrl ? <video className="h-full w-full object-cover" src={resultUrl} muted playsInline /> : <Film size={22} className="text-slate-400" />}
       </div>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-medium text-slate-800">{task.status}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium text-slate-800">{getStatusLabel(task.status, labels)}</p>
+            {task.status === "completed" ? (
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{labels.autoSubtitle}</span>
+            ) : null}
+          </div>
           <p className="text-xs text-slate-500">{formatDate(task.created_at)}</p>
         </div>
-        {task.error_message ? <p className="mt-1 line-clamp-2 text-xs text-rose-600">{task.error_message}</p> : null}
+        {task.status === "failed" ? <p className="mt-1 line-clamp-2 text-xs text-rose-600">{classifyError(task.error_message || labels.genericError)}</p> : null}
         {resultUrl ? (
           <div className="mt-2 flex flex-wrap gap-2">
             <a className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href={resultUrl} target="_blank" rel="noreferrer">
               <Video size={13} />
-              Preview
+              {labels.preview}
             </a>
-            <a className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href={resultUrl} download>
+            <a className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href={resultUrl} download="kaiqiang-avatar-video.mp4">
               <Download size={13} />
               MP4
             </a>
@@ -607,6 +607,25 @@ function TaskHistoryItem({ task }: { task: AvatarTask }) {
 function formatDate(value?: string) {
   if (!value) return "";
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+function getStatusLabel(status: GenerateState | AvatarTask["status"], current: (typeof copy)["zh"]) {
+  if (status === "queued") return current.queued;
+  if (status === "running") return current.running;
+  if (status === "completed") return current.completed;
+  if (status === "failed") return current.failed;
+  return "";
+}
+
+function getStageLabel(stage: ProgressStage, current: (typeof copy)["zh"]) {
+  if (stage === "waiting_gpu") return current.waitingGpu;
+  if (stage === "autodl_starting" || stage === "gpu_starting") return current.autodlStarting;
+  if (stage === "musetalk_loading" || stage === "model_loading") return current.musetalkLoading;
+  if (stage === "video_generating") return current.videoGenerating;
+  if (stage === "uploading_result") return current.uploadingResult;
+  if (stage === "completed") return current.completed;
+  if (stage === "failed") return current.failed;
+  return "";
 }
 
 function FilePicker({
