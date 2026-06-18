@@ -32,6 +32,20 @@ PLAN_LIMITS: dict[str, int | None] = {
 }
 
 
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 def _count_monthly_analyses(supabase: Client, *, user_id: str) -> int:
     try:
         result = (
@@ -47,10 +61,42 @@ def _count_monthly_analyses(supabase: Client, *, user_id: str) -> int:
         return 0
 
 
+def _active_viral_extra_quota(supabase: Client, *, user_id: str) -> dict[str, Any]:
+    try:
+        result = (
+            supabase.table("viral_quota_overrides")
+            .select("extra_monthly_limit,expires_at")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except APIError:
+        return {"extra_limit": 0, "extra_expires_at": None}
+
+    if not result.data:
+        return {"extra_limit": 0, "extra_expires_at": None}
+
+    override = result.data[0]
+    expires_at = _parse_datetime(override.get("expires_at"))
+    if expires_at is not None and expires_at <= datetime.now(UTC):
+        return {"extra_limit": 0, "extra_expires_at": override.get("expires_at")}
+
+    try:
+        extra_limit = int(override.get("extra_monthly_limit") or 0)
+    except (TypeError, ValueError):
+        extra_limit = 0
+    return {"extra_limit": max(extra_limit, 0), "extra_expires_at": override.get("expires_at")}
+
+
 def _assert_viral_quota(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
     profile = ensure_profile(supabase, user_id=user_id, email=email)
     plan = profile.get("plan") or "free"
-    limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    base_limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    extra_quota = {"extra_limit": 0, "extra_expires_at": None}
+    limit = base_limit
+    if base_limit is not None:
+        extra_quota = _active_viral_extra_quota(supabase, user_id=user_id)
+        limit = base_limit + extra_quota["extra_limit"]
     used = _count_monthly_analyses(supabase, user_id=user_id)
     if limit is not None and used >= limit:
         raise HTTPException(
@@ -61,9 +107,19 @@ def _assert_viral_quota(supabase: Client, *, user_id: str, email: str) -> dict[s
                 "plan": plan,
                 "used": used,
                 "monthly_limit": limit,
+                "effective_monthly_limit": limit,
+                "base_limit": base_limit,
+                **extra_quota,
             },
         )
-    return {"plan": plan, "used": used, "monthly_limit": limit}
+    return {
+        "plan": plan,
+        "used": used,
+        "monthly_limit": limit,
+        "effective_monthly_limit": limit,
+        "base_limit": base_limit,
+        **extra_quota,
+    }
 
 
 def _list_of_strings(value: Any, fallback: list[str]) -> list[str]:
