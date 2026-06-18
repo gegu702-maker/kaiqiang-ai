@@ -120,7 +120,7 @@ export function ViralAnalyzerClient() {
             )
           : await analyzeViralScript(
               {
-                source_url: trimmedSourceUrl,
+                source_url: hasVisibleVideoUrl(trimmedSourceUrl) ? trimmedSourceUrl : "",
                 raw_script: trimmedRawScript || trimmedSourceUrl,
                 industry,
                 language,

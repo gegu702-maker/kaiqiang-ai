@@ -1,49 +1,22 @@
 "use client";
 
-import { Menu, X } from "lucide-react";
+import { Check, ChevronDown, Languages, Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { useLanguage } from "@/components/LanguageProvider";
-
-const navCopy = {
-  zh: {
-    home: "首页",
-    pricing: "定价",
-    templates: "模板",
-    viralAnalyzer: "爆款拆解",
-    avatarStudio: "数字人工作台",
-    contact: "联系",
-    menu: "菜单",
-  },
-  en: {
-    home: "Home",
-    pricing: "Pricing",
-    templates: "Templates",
-    viralAnalyzer: "Viral Analyzer",
-    avatarStudio: "Avatar Studio",
-    contact: "Contact",
-    menu: "Menu",
-  },
-};
+import { SUPPORTED_LOCALES, useLanguage, type Locale } from "@/components/LanguageProvider";
+import { mainNavigationItems, navigationCopy } from "@/lib/i18n/navigation";
 
 export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
-  const { locale, setLocale } = useLanguage();
+  const { selectedLocale, setLocale } = useLanguage();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const copy = navCopy[locale];
+  const copy = navigationCopy[selectedLocale];
   const isLanding = pathname === "/";
-  const navItems = [
-    { href: "/", label: copy.home },
-    { href: "/pricing", label: copy.pricing },
-    { href: "/studio/templates", label: copy.templates },
-    { href: "/studio/viral-analyzer", label: copy.viralAnalyzer },
-    { href: "/studio/avatar", label: copy.avatarStudio },
-    { href: "/#contact", label: copy.contact },
-  ];
+  const navItems = mainNavigationItems.map((item) => ({ href: item.href, label: copy[item.key] }));
   const desktopLinkClass = isLanding
     ? "rounded-full px-4 py-2 transition hover:bg-white hover:text-slate-950 hover:shadow-sm"
     : "rounded-md px-3 py-2 hover:bg-white/10";
@@ -67,22 +40,11 @@ export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
         </div>
 
         <div className={isLanding ? "flex min-w-0 items-center justify-end gap-2 text-sm font-medium text-slate-700 sm:gap-3 [&_a]:rounded-full [&_a]:px-3 [&_a]:py-2 [&_a]:text-slate-700 [&_a]:transition [&_a:hover]:bg-slate-100 [&_a:hover]:text-slate-950 [&_button]:rounded-full [&_button]:px-3 [&_button]:py-2 [&_button]:text-slate-700 [&_button]:transition [&_button:hover]:bg-slate-100 [&_button:hover]:text-slate-950" : "flex items-center gap-1 text-sm text-slate-300 sm:gap-2"}>
-          <div className={isLanding ? "flex rounded-full border border-slate-200/70 bg-white/70 p-0.5 text-xs" : "flex rounded-md border border-white/10 bg-white/[0.03] p-1 text-xs"}>
-            <button
-              type="button"
-              onClick={() => setLocale("zh")}
-              className={locale === "zh" ? "rounded-full bg-slate-900 px-3 py-1.5 text-white shadow-sm" : isLanding ? "px-3 py-1.5 text-slate-500 hover:text-slate-950" : "px-2 py-1 text-slate-400 hover:text-white"}
-            >
-              中文
-            </button>
-            <button
-              type="button"
-              onClick={() => setLocale("en")}
-              className={locale === "en" ? "rounded-full bg-slate-900 px-3 py-1.5 text-white shadow-sm" : isLanding ? "px-3 py-1.5 text-slate-500 hover:text-slate-950" : "px-2 py-1 text-slate-400 hover:text-white"}
-            >
-              EN
-            </button>
-          </div>
+          <LanguageDropdown
+            ariaLabel={copy.language}
+            locale={selectedLocale}
+            onLocaleChange={setLocale}
+          />
           <div className="hidden sm:block">{authSlot}</div>
           <button
             type="button"
@@ -113,5 +75,92 @@ export function SiteHeader({ authSlot }: { authSlot: ReactNode }) {
         ) : null}
       </nav>
     </header>
+  );
+}
+
+function LanguageDropdown({
+  ariaLabel,
+  locale,
+  onLocaleChange,
+}: {
+  ariaLabel: string;
+  locale: Locale;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const activeLocale = SUPPORTED_LOCALES.find((item) => item.code === locale) ?? SUPPORTED_LOCALES[0];
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (!dropdownRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, []);
+
+  return (
+    <div ref={dropdownRef} className="relative shrink-0">
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((value) => !value)}
+        className="!inline-flex h-10 min-w-[118px] !items-center !justify-between gap-2 !rounded-full border border-cyan-400/40 bg-[#07111d]/90 px-3 !py-0 text-xs font-semibold !text-white shadow-[0_0_24px_rgba(49,215,255,0.16)] outline-none transition hover:border-cyan-300/70 hover:bg-[#07111d] hover:!text-white focus-visible:ring-2 focus-visible:ring-cyan-300/60 sm:min-w-[132px]"
+      >
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <Languages size={15} className="shrink-0 text-cyan" />
+          <span className="truncate">{activeLocale.nativeName}</span>
+        </span>
+        <ChevronDown size={15} className={open ? "shrink-0 text-cyan transition rotate-180" : "shrink-0 text-cyan transition"} />
+      </button>
+
+      {open ? (
+        <div
+          className="absolute right-0 top-[calc(100%+10px)] z-50 w-44 overflow-hidden rounded-lg border border-cyan-400/40 bg-[#07111d] p-1.5 text-sm !text-white shadow-[0_18px_50px_rgba(0,0,0,0.45),0_0_32px_rgba(49,215,255,0.15)] backdrop-blur-xl"
+          role="listbox"
+          aria-label={ariaLabel}
+        >
+          {SUPPORTED_LOCALES.map((item) => {
+            const selected = item.code === locale;
+            return (
+              <button
+                key={item.code}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onLocaleChange(item.code);
+                  setOpen(false);
+                }}
+                className={[
+                  "!flex h-10 w-full !items-center !justify-between rounded-md px-3 !py-0 text-left text-sm font-semibold outline-none transition",
+                  selected
+                    ? "border border-cyan-400/40 bg-cyan-400/15 !text-cyan-300"
+                    : "border border-transparent !text-white hover:bg-cyan-400/10 hover:!text-cyan-100 focus-visible:bg-cyan-400/10 focus-visible:!text-cyan-100",
+                ].join(" ")}
+              >
+                <span>{item.nativeName}</span>
+                {selected ? <Check size={15} /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
