@@ -110,7 +110,13 @@ def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text:
             captioned = output_path.read_bytes()
             if not _looks_like_mp4(captioned):
                 raise HTTPException(status_code=500, detail="Captioned output is not a valid MP4 file")
-            logger.info("Avatar subtitles burned task_id=%s duration=%s segments=%s", task_id, duration, len(segments))
+            logger.info(
+                "subtitle_burn_success task_id=%s duration=%s segments=%s output_size=%s",
+                task_id,
+                duration,
+                len(segments),
+                len(captioned),
+            )
             return captioned
     except SubtitleBurnError as error:
         logger.warning(
