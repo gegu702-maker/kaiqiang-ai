@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, Download, Film, Loader2, UploadCloud, Video } from "lucide-react";
+import { Check, Copy, Download, Film, Loader2, Trash2, UploadCloud, Video } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -43,6 +43,7 @@ type AvatarHealthPayload = {
     status_code?: number;
   };
 };
+type DeleteTaskError = Error & { status?: number };
 
 const AVATAR_HEALTH_READY_STATUSES = new Set(["ok", "ready", "healthy", "success"]);
 
@@ -97,6 +98,13 @@ const copy = {
     templateComingSoon: "该模板视频即将上线，请先手动上传人物视频。",
     history: "最近任务",
     noHistory: "暂无历史任务。",
+    deleteTask: "删除",
+    deletingTask: "删除中",
+    deleteConfirm: "确认删除这条历史任务吗？视频文件不会立即从存储中物理删除。",
+    deleteRunning: "任务仍在生成中，暂不能删除。",
+    deleteLogin: "请先登录后再删除。",
+    deleteNotFound: "任务不存在或已删除。",
+    deleteFailed: "删除失败，请稍后重试。",
     autoSubtitle: "自动字幕",
     authExpired: "登录状态已失效，请重新登录后再试。",
     serviceUnavailable: "数字人生成服务暂未就绪，请稍后重试或联系管理员。",
@@ -153,6 +161,13 @@ const copy = {
     templateComingSoon: "This template video is coming soon. Upload a person video for now.",
     history: "Recent tasks",
     noHistory: "No recent tasks.",
+    deleteTask: "Delete",
+    deletingTask: "Deleting",
+    deleteConfirm: "Delete this history task? The video file will not be physically removed from storage immediately.",
+    deleteRunning: "This task is still generating and cannot be deleted yet.",
+    deleteLogin: "Please sign in before deleting.",
+    deleteNotFound: "This task does not exist or was already deleted.",
+    deleteFailed: "Delete failed. Please retry later.",
     autoSubtitle: "Auto subtitles",
     authExpired: "Your login session expired. Please sign in again and retry.",
     serviceUnavailable: "The avatar generation service is not ready yet. Please retry later or contact an administrator.",
@@ -418,6 +433,28 @@ export function AvatarVideoGenerator({
     return current.genericError;
   }
 
+  async function handleDeleteTask(taskId: string) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      const error = new Error(current.deleteLogin) as DeleteTaskError;
+      error.status = 401;
+      throw error;
+    }
+    const response = await fetch(`${API_URL}/api/avatar/tasks/${taskId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const error = new Error(current.deleteFailed) as DeleteTaskError;
+      error.status = response.status;
+      throw error;
+    }
+    setTasks((items) => items.filter((item) => item.id !== taskId));
+  }
+
   const isGenerating = state === "queued" || state === "running";
   const isAvatarHealthChecking = avatarHealthStatus === "checking";
   const isAvatarHealthUnavailable = avatarHealthStatus === "unavailable";
@@ -638,7 +675,7 @@ export function AvatarVideoGenerator({
           <div className="mt-3 space-y-3">
             {tasks.length === 0 ? <p className="text-sm text-slate-500">{current.noHistory}</p> : null}
             {tasks.map((task) => (
-              <TaskHistoryItem key={task.id} task={task} labels={current} classifyError={classifyError} />
+              <TaskHistoryItem key={task.id} task={task} labels={current} classifyError={classifyError} onDelete={handleDeleteTask} />
             ))}
           </div>
         </div>
@@ -651,12 +688,34 @@ function TaskHistoryItem({
   task,
   labels,
   classifyError,
+  onDelete,
 }: {
   task: AvatarTask;
   labels: (typeof copy)["zh"];
   classifyError: (message: string) => string;
+  onDelete: (taskId: string) => Promise<void>;
 }) {
   const resultUrl = task.result_video_url || task.result_url;
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  async function handleDeleteClick() {
+    setDeleteError("");
+    if (!window.confirm(labels.deleteConfirm)) return;
+    setIsDeleting(true);
+    try {
+      await onDelete(task.id);
+    } catch (error) {
+      const status = (error as DeleteTaskError).status;
+      if (status === 401) setDeleteError(labels.deleteLogin);
+      else if (status === 404) setDeleteError(labels.deleteNotFound);
+      else if (status === 409) setDeleteError(labels.deleteRunning);
+      else setDeleteError(labels.deleteFailed);
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
   return (
     <div className="grid gap-3 rounded-md border border-slate-200 p-3 sm:grid-cols-[96px_1fr]">
       <div className="grid aspect-video min-h-14 place-items-center overflow-hidden rounded bg-slate-100">
@@ -670,9 +729,21 @@ function TaskHistoryItem({
               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{labels.autoSubtitle}</span>
             ) : null}
           </div>
-          <p className="text-xs text-slate-500">{formatDate(task.created_at)}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-slate-500">{formatDate(task.created_at)}</p>
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={() => void handleDeleteClick()}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isDeleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+              {isDeleting ? labels.deletingTask : labels.deleteTask}
+            </button>
+          </div>
         </div>
         {task.status === "failed" ? <p className="mt-1 line-clamp-2 text-xs text-rose-600">{classifyError(task.error_message || labels.genericError)}</p> : null}
+        {deleteError ? <p className="mt-1 text-xs text-rose-600">{deleteError}</p> : null}
         {resultUrl ? (
           <div className="mt-2 flex flex-wrap gap-2">
             <a className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href={resultUrl} target="_blank" rel="noreferrer">
