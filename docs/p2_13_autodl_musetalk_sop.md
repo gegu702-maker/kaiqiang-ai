@@ -246,3 +246,73 @@ To roll back the watchdog:
 - Do not use `/api/debug/musetalk-test` or `/studio/avatar` generation as a health check, because those can trigger GPU work.
 - Prefer `/health` endpoints for readiness checks.
 - Any remote AutoDL installation must be confirmed manually before editing `/etc/autodl-init`.
+
+## P2.13-B Watchdog Installation Result
+
+Installation time:
+
+- `2026-06-19 19:51:03` Asia/Shanghai, based on backup path timestamp.
+
+Installed paths:
+
+- watchdog script: `/root/autodl-tmp/musetalk_watchdog.sh`
+- watchdog log: `/root/autodl-tmp/musetalk_watchdog.log`
+- watchdog boot log: `/root/autodl-tmp/musetalk_watchdog_boot.log`
+- `/etc/autodl-init` backup: `/etc/autodl-init.bak.p2_13_20260619_195103`
+
+Process state:
+
+- watchdog process: running
+
+`/etc/autodl-init` after installation:
+
+- existing startup logic was retained
+- watchdog startup line was appended
+- `start_musetalk.sh` startup logic was not removed
+- `idle_shutdown.sh` was not intentionally changed
+
+Expected watchdog startup line:
+
+```bash
+nohup bash /root/autodl-tmp/musetalk_watchdog.sh >> /root/autodl-tmp/musetalk_watchdog_boot.log 2>&1 &
+```
+
+Final health result:
+
+- AutoDL local `http://127.0.0.1:6006/health`: OK
+- SeetaCloud public `https://u1032685-8547-93ee30c2.nmb2.seetacloud.com:8443/health`: OK
+- Railway `https://api.kaiqiang.ai/api/avatar/health`: OK
+
+Safety confirmation:
+
+- `/generate` was not called
+- real GPU generation triggered: NO
+- website code modified: NO
+- DB modified: NO
+- SQL executed: NO
+- Railway deployed: NO
+- Vercel deployed: NO
+
+Watchdog limitations after installation:
+
+- It cannot automatically power on AutoDL.
+- It cannot guarantee repair of SeetaCloud public `8443` mapping issues.
+- It only guards the local AutoDL `127.0.0.1:6006` MuseTalk process.
+- P2.12 frontend health guard remains the user-facing protection against failed submissions.
+
+Rollback from installed watchdog:
+
+1. Stop the running watchdog:
+   ```bash
+   pkill -f '[m]usetalk_watchdog.sh'
+   ```
+2. Remove the watchdog startup line from `/etc/autodl-init`.
+3. Or restore the P2.13 backup:
+   ```bash
+   cp /etc/autodl-init.bak.p2_13_20260619_195103 /etc/autodl-init
+   ```
+4. Keep watchdog logs for audit unless disk cleanup is required:
+   ```bash
+   /root/autodl-tmp/musetalk_watchdog.log
+   /root/autodl-tmp/musetalk_watchdog_boot.log
+   ```
