@@ -13,6 +13,7 @@ import type { UsageSummary } from "@/lib/types";
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type GenerateState = "idle" | "queued" | "running" | "completed" | "failed";
+type AvatarHealthStatus = "checking" | "ready" | "unavailable";
 type ProgressStage =
   | "waiting_gpu"
   | "autodl_starting"
@@ -34,6 +35,16 @@ type AvatarTask = {
   error_message?: string;
   created_at?: string;
 };
+type AvatarHealthPayload = {
+  status?: string;
+  musetalk?: {
+    status?: string;
+    message?: string;
+    status_code?: number;
+  };
+};
+
+const AVATAR_HEALTH_READY_STATUSES = new Set(["ok", "ready", "healthy", "success"]);
 
 const copy = {
   zh: {
@@ -76,6 +87,12 @@ const copy = {
     cost: "本次生成预计消耗 1 次额度",
     quotaEmpty: "本月生成次数已用完，请升级套餐或联系管理员。",
     upgrade: "升级套餐",
+    healthChecking: "正在检查数字人生成服务状态...",
+    healthReady: "数字人生成服务已就绪。",
+    healthUnavailable: "数字人生成服务暂未就绪，请稍后再试或联系管理员。",
+    healthRetry: "重新检查服务状态",
+    healthCheckingButton: "检查服务中...",
+    healthUnavailableButton: "服务未就绪",
     selectedTemplate: "已选择模板",
     templateComingSoon: "该模板视频即将上线，请先手动上传人物视频。",
     history: "最近任务",
@@ -126,6 +143,12 @@ const copy = {
     cost: "This generation costs 1 credit",
     quotaEmpty: "Monthly generations are used up. Please upgrade your plan or contact an administrator.",
     upgrade: "Upgrade",
+    healthChecking: "Checking avatar generation service...",
+    healthReady: "Avatar generation service is ready.",
+    healthUnavailable: "The avatar generation service is not ready yet. Please retry later or contact an administrator.",
+    healthRetry: "Recheck service status",
+    healthCheckingButton: "Checking service...",
+    healthUnavailableButton: "Service unavailable",
     selectedTemplate: "Selected template",
     templateComingSoon: "This template video is coming soon. Upload a person video for now.",
     history: "Recent tasks",
@@ -162,8 +185,29 @@ export function AvatarVideoGenerator({
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [tasks, setTasks] = useState<AvatarTask[]>([]);
   const [copied, setCopied] = useState(false);
+  const [avatarHealthStatus, setAvatarHealthStatus] = useState<AvatarHealthStatus>("checking");
+  const [avatarHealthMessage, setAvatarHealthMessage] = useState("");
+  const [avatarHealthCheckedAt, setAvatarHealthCheckedAt] = useState<Date | null>(null);
   const progressTimer = useRef<number | null>(null);
   const stageTimers = useRef<number[]>([]);
+
+  const checkAvatarHealth = useCallback(async () => {
+    setAvatarHealthStatus("checking");
+    setAvatarHealthMessage("");
+    try {
+      const response = await fetch(`${API_URL}/api/avatar/health`, { cache: "no-store" });
+      const payload = (await response.json().catch(() => null)) as AvatarHealthPayload | null;
+      const musetalkStatus = String(payload?.musetalk?.status ?? "").trim().toLowerCase();
+      const isReady = response.ok && AVATAR_HEALTH_READY_STATUSES.has(musetalkStatus);
+      setAvatarHealthStatus(isReady ? "ready" : "unavailable");
+      setAvatarHealthMessage(isReady ? current.healthReady : current.healthUnavailable);
+    } catch {
+      setAvatarHealthStatus("unavailable");
+      setAvatarHealthMessage(current.healthUnavailable);
+    } finally {
+      setAvatarHealthCheckedAt(new Date());
+    }
+  }, [current.healthReady, current.healthUnavailable]);
 
   const refreshTasks = useCallback(async () => {
     const {
@@ -224,11 +268,12 @@ export function AvatarVideoGenerator({
   useEffect(() => {
     void refreshTasks();
     void refreshUsage();
+    void checkAvatarHealth();
     return () => {
       if (progressTimer.current) window.clearInterval(progressTimer.current);
       stageTimers.current.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [refreshTasks, refreshUsage]);
+  }, [checkAvatarHealth, refreshTasks, refreshUsage]);
 
   function startProgress() {
     setProgress(8);
@@ -264,6 +309,10 @@ export function AvatarVideoGenerator({
     setError("");
     setResultUrl("");
     setCopied(false);
+    if (avatarHealthStatus !== "ready") {
+      setError(current.healthUnavailable);
+      return;
+    }
     const text = scriptText.trim();
     const useCustomVideo = Boolean(videoFile);
     if ((!useCustomVideo && !text) || (useCustomVideo && !audioFile && !text)) {
@@ -370,6 +419,16 @@ export function AvatarVideoGenerator({
   }
 
   const isGenerating = state === "queued" || state === "running";
+  const isAvatarHealthChecking = avatarHealthStatus === "checking";
+  const isAvatarHealthUnavailable = avatarHealthStatus === "unavailable";
+  const isGenerateDisabled = isGenerating || avatarHealthStatus !== "ready";
+  const generateButtonLabel = isGenerating
+    ? current.generating
+    : isAvatarHealthChecking
+      ? current.healthCheckingButton
+      : isAvatarHealthUnavailable
+        ? current.healthUnavailableButton
+        : current.generate;
   const stageText = getStageLabel(progressStage, current);
   const statusText = getStatusLabel(state, current);
 
@@ -409,6 +468,33 @@ export function AvatarVideoGenerator({
               <Link className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500" href="/pricing">
                 {current.upgrade}
               </Link>
+            ) : null}
+          </div>
+        </div>
+        <div
+          data-checked-at={avatarHealthCheckedAt?.toISOString()}
+          className={
+            avatarHealthStatus === "ready"
+              ? "rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"
+              : avatarHealthStatus === "checking"
+                ? "rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm"
+                : "rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
+          }
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p>
+              {avatarHealthStatus === "checking"
+                ? current.healthChecking
+                : avatarHealthMessage || (avatarHealthStatus === "ready" ? current.healthReady : current.healthUnavailable)}
+            </p>
+            {avatarHealthStatus === "unavailable" ? (
+              <button
+                type="button"
+                onClick={() => void checkAvatarHealth()}
+                className="rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
+              >
+                {current.healthRetry}
+              </button>
             ) : null}
           </div>
         </div>
@@ -498,12 +584,12 @@ export function AvatarVideoGenerator({
         </div>
         <button
           type="button"
-          disabled={isGenerating}
+          disabled={isGenerateDisabled}
           onClick={handleGenerate}
           className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-300 sm:w-auto"
         >
           {isGenerating ? <Loader2 className="animate-spin" size={18} /> : <Video size={18} />}
-          {isGenerating ? current.generating : current.generate}
+          {generateButtonLabel}
         </button>
         {statusText ? (
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
