@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -24,6 +25,12 @@ from app.services.subtitles import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class AvatarVideoResult:
+    result_url: str
+    subtitle_status: str
+
+
 async def generate_avatar_video_with_musetalk(
     supabase: Client,
     *,
@@ -31,7 +38,7 @@ async def generate_avatar_video_with_musetalk(
     audio_url: str,
     task_id: str,
     script_text: str | None = None,
-) -> str:
+) -> AvatarVideoResult:
     base_url = settings.musetalk_api_base_url.strip().rstrip("/")
     if not base_url:
         raise HTTPException(status_code=503, detail="MUSE_TALK_API_BASE_URL missing")
@@ -74,7 +81,7 @@ async def generate_avatar_video_with_musetalk(
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail=f"MuseTalk service request failed: {error}") from error
 
-    video_content = _with_optional_subtitles(video_response.content, task_id=task_id, script_text=script_text)
+    video_content, subtitle_status = _with_optional_subtitles(video_response.content, task_id=task_id, script_text=script_text)
 
     result_url = upload_public_bytes(
         supabase,
@@ -84,14 +91,24 @@ async def generate_avatar_video_with_musetalk(
         ".mp4",
         "video/mp4",
     )
-    logger.info("MuseTalk upload completed task_id=%s result_url=%s bytes=%s", task_id, result_url, len(video_content))
-    return result_url
+    logger.info(
+        "MuseTalk upload completed task_id=%s result_url=%s bytes=%s subtitle_status=%s",
+        task_id,
+        result_url,
+        len(video_content),
+        subtitle_status,
+    )
+    return AvatarVideoResult(result_url=result_url, subtitle_status=subtitle_status)
 
 
-def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text: str | None) -> bytes:
+def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text: str | None) -> tuple[bytes, str]:
     clean_text = normalize_script_text(script_text)
-    if not settings.avatar_subtitles_enabled or not clean_text:
-        return video_content
+    if not settings.avatar_subtitles_enabled:
+        logger.info("subtitle_burn_disabled task_id=%s", task_id)
+        return video_content, "disabled"
+    if not clean_text:
+        logger.info("subtitle_burn_skipped_empty_script task_id=%s", task_id)
+        return video_content, "disabled"
 
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,7 +121,8 @@ def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text:
             duration = probe_video_duration(input_path, settings.ffmpeg_path)
             segments = build_subtitle_segments(clean_text, duration)
             if not segments:
-                return video_content
+                logger.info("subtitle_burn_skipped_no_segments task_id=%s", task_id)
+                return video_content, "disabled"
             write_ass_file(segments, ass_path)
             burn_subtitles_to_video(input_path, ass_path, output_path, settings.ffmpeg_path)
             captioned = output_path.read_bytes()
@@ -117,7 +135,7 @@ def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text:
                 len(segments),
                 len(captioned),
             )
-            return captioned
+            return captioned, "burned"
     except SubtitleBurnError as error:
         logger.warning(
             "subtitle_burn_failed_diagnostic task_id=%s diagnostics=%s",
@@ -126,12 +144,12 @@ def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text:
         )
         logger.warning("subtitle_burn_failed_fallback_original task_id=%s error=%s", task_id, str(error)[:300])
         if settings.avatar_subtitle_fallback_on_error:
-            return video_content
+            return video_content, "fallback_original"
         raise
     except Exception as error:
         logger.warning("subtitle_burn_failed_fallback_original task_id=%s error=%s", task_id, str(error)[:800])
         if settings.avatar_subtitle_fallback_on_error:
-            return video_content
+            return video_content, "fallback_original"
         raise
 
 

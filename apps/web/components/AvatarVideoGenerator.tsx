@@ -14,6 +14,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type GenerateState = "idle" | "queued" | "running" | "completed" | "failed";
 type AvatarHealthStatus = "checking" | "ready" | "unavailable";
+type AvatarSubtitleStatus = "burned" | "fallback_original" | "disabled" | "unknown";
 type ProgressStage =
   | "waiting_gpu"
   | "autodl_starting"
@@ -32,6 +33,7 @@ type AvatarTask = {
   audio_url?: string;
   result_url?: string;
   result_video_url?: string;
+  subtitle_status?: AvatarSubtitleStatus;
   error_message?: string;
   created_at?: string;
 };
@@ -46,6 +48,11 @@ type AvatarHealthPayload = {
 type DeleteTaskError = Error & { status?: number };
 
 const AVATAR_HEALTH_READY_STATUSES = new Set(["ok", "ready", "healthy", "success"]);
+const TTS_SPEED_OPTIONS = [
+  { value: 0.9, label: { zh: "稳定自然", en: "Stable natural" } },
+  { value: 1, label: { zh: "标准", en: "Standard" } },
+  { value: 1.1, label: { zh: "稍快", en: "Slightly faster" } },
+];
 
 const copy = {
   zh: {
@@ -58,9 +65,14 @@ const copy = {
     audio: "口播音频",
     videoHint: "可选。上传后将使用你的自定义视频；不上传则使用所选商务模板。",
     scriptHint: "输入文案后，系统会生成语音、驱动数字人，并默认添加中文字幕。",
-    scriptLengthHint: "建议 15-60 秒，过长会增加生成时间。",
+    scriptLengthHint: "建议 15-60 秒；句子不要太长，多用标点制造自然停顿，口播语速不要太快。",
     scriptPlaceholder: "输入要数字人口播的文案...",
     audioHint: "上传音频后，将优先使用你的音频；未上传音频时会自动生成语音。支持 wav / mp3 / m4a。",
+    realismTitle: "真实度建议",
+    realismVideoTips: ["正脸出镜", "1080p 或更高", "光线稳定", "背景干净", "脸部占画面足够大", "头部动作不要太大"],
+    realismScriptTips: ["句子不要太长", "多用标点制造自然停顿", "15-60 秒更稳", "语速不要太快"],
+    ttsSpeed: "TTS 语速",
+    ttsSpeedHint: "仅用于模板文案自动配音；上传音频或自定义视频时保持原音频节奏。",
     steps: ["选择商务模板", "输入口播文案", "生成并下载 MP4"],
     generate: "生成口播视频",
     generating: "生成中",
@@ -78,7 +90,11 @@ const copy = {
     copyLink: "复制链接",
     copied: "已复制",
     result: "生成结果",
-    resultReady: "视频已生成，已自动添加中文字幕。",
+    resultReady: "视频已生成。",
+    subtitleBurned: "已添加中文字幕",
+    subtitleFallbackOriginal: "字幕处理失败，已保留原视频",
+    subtitleDisabled: "未开启字幕",
+    subtitleUnknown: "",
     preview: "预览",
     empty: "请选择模板并输入口播文案。",
     quotaTitle: "生成额度",
@@ -90,7 +106,7 @@ const copy = {
     upgrade: "升级套餐",
     healthChecking: "正在检查数字人生成服务状态...",
     healthReady: "数字人生成服务已就绪。",
-    healthUnavailable: "数字人生成服务暂未就绪，请稍后再试或联系管理员。",
+    healthUnavailable: "数字人 GPU 服务当前未开启，生成暂不可用。请开启 AutoDL/GPU 后再生成。",
     healthRetry: "重新检查服务状态",
     healthCheckingButton: "检查服务中...",
     healthUnavailableButton: "服务未就绪",
@@ -107,7 +123,7 @@ const copy = {
     deleteFailed: "删除失败，请稍后重试。",
     autoSubtitle: "自动字幕",
     authExpired: "登录状态已失效，请重新登录后再试。",
-    serviceUnavailable: "数字人生成服务暂未就绪，请稍后重试或联系管理员。",
+    serviceUnavailable: "数字人 GPU 服务当前未开启，生成暂不可用。请开启 AutoDL/GPU 后再生成。",
     fileUnsupported: "文件格式暂不支持，请上传 MP4/MOV/WebM 视频或 WAV/MP3/M4A 音频。",
     genericError: "生成失败，请稍后重试或联系管理员。",
   },
@@ -121,9 +137,14 @@ const copy = {
     audio: "Voice Audio",
     videoHint: "Optional. Upload a custom video to override the selected business template.",
     scriptHint: "Enter a script to synthesize speech, drive the avatar, and add Chinese subtitles by default.",
-    scriptLengthHint: "15-60 seconds is recommended. Longer scripts increase generation time.",
+    scriptLengthHint: "15-60 seconds is recommended. Keep sentences short, use punctuation for natural pauses, and avoid speaking too fast.",
     scriptPlaceholder: "Enter the script for the avatar...",
     audioHint: "Uploaded audio takes priority. Without audio, speech is generated automatically. wav / mp3 / m4a supported.",
+    realismTitle: "Realism tips",
+    realismVideoTips: ["Front-facing shot", "1080p or higher", "Stable lighting", "Clean background", "Face large enough in frame", "Avoid large head motion"],
+    realismScriptTips: ["Keep sentences short", "Use punctuation for pauses", "15-60 seconds is steadier", "Avoid fast delivery"],
+    ttsSpeed: "TTS speed",
+    ttsSpeedHint: "Applies only to template text-to-speech. Uploaded audio and custom video keep their original rhythm.",
     steps: ["Choose template", "Enter script", "Generate MP4"],
     generate: "Generate Avatar Video",
     generating: "Generating",
@@ -141,7 +162,11 @@ const copy = {
     copyLink: "Copy link",
     copied: "Copied",
     result: "Result",
-    resultReady: "Video generated with automatic Chinese subtitles.",
+    resultReady: "Video generated.",
+    subtitleBurned: "Chinese subtitles added",
+    subtitleFallbackOriginal: "Subtitle processing failed; original video preserved",
+    subtitleDisabled: "Subtitles not enabled",
+    subtitleUnknown: "",
     preview: "Preview",
     empty: "Choose a template and enter a script.",
     quotaTitle: "Generation credits",
@@ -153,7 +178,7 @@ const copy = {
     upgrade: "Upgrade",
     healthChecking: "Checking avatar generation service...",
     healthReady: "Avatar generation service is ready.",
-    healthUnavailable: "The avatar generation service is not ready yet. Please retry later or contact an administrator.",
+    healthUnavailable: "The avatar GPU service is currently off, so generation is unavailable. Please start AutoDL/GPU before generating.",
     healthRetry: "Recheck service status",
     healthCheckingButton: "Checking service...",
     healthUnavailableButton: "Service unavailable",
@@ -170,7 +195,7 @@ const copy = {
     deleteFailed: "Delete failed. Please retry later.",
     autoSubtitle: "Auto subtitles",
     authExpired: "Your login session expired. Please sign in again and retry.",
-    serviceUnavailable: "The avatar generation service is not ready yet. Please retry later or contact an administrator.",
+    serviceUnavailable: "The avatar GPU service is currently off, so generation is unavailable. Please start AutoDL/GPU before generating.",
     fileUnsupported: "This file format is not supported. Upload MP4/MOV/WebM video or WAV/MP3/M4A audio.",
     genericError: "Generation failed. Please retry later or contact an administrator.",
   },
@@ -196,7 +221,9 @@ export function AvatarVideoGenerator({
   const [progressStage, setProgressStage] = useState<ProgressStage>("waiting_gpu");
   const [progress, setProgress] = useState(0);
   const [resultUrl, setResultUrl] = useState("");
+  const [resultSubtitleStatus, setResultSubtitleStatus] = useState<AvatarSubtitleStatus>("unknown");
   const [error, setError] = useState("");
+  const [ttsSpeedRatio, setTtsSpeedRatio] = useState(0.9);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [tasks, setTasks] = useState<AvatarTask[]>([]);
   const [copied, setCopied] = useState(false);
@@ -268,7 +295,7 @@ export function AvatarVideoGenerator({
         if (task.progress_stage) setProgressStage(task.progress_stage as ProgressStage);
         const taskResultUrl = task.result_video_url || task.result_url;
         if (task.status === "completed" && taskResultUrl) {
-          return taskResultUrl;
+          return { url: taskResultUrl, subtitleStatus: normalizeSubtitleStatus(task.subtitle_status) };
         }
         if (task.status === "failed") {
           throw new Error(task.error_message || current.failed);
@@ -323,6 +350,7 @@ export function AvatarVideoGenerator({
   async function handleGenerate() {
     setError("");
     setResultUrl("");
+    setResultSubtitleStatus("unknown");
     setCopied(false);
     if (avatarHealthStatus !== "ready") {
       setError(current.healthUnavailable);
@@ -382,6 +410,7 @@ export function AvatarVideoGenerator({
               avatar_template_id: avatarTemplateId,
               script_text: text,
               voice_type: selectedTemplate.voice_type,
+              speed_ratio: ttsSpeedRatio,
             }),
           });
       const payload = await response.json().catch(() => ({}));
@@ -391,8 +420,14 @@ export function AvatarVideoGenerator({
       }
       const immediateResult = payload.result_video_url || payload.video_url || payload.task?.result_video_url || payload.task?.result_url || "";
       const taskId = payload.task_id || payload.task?.id;
-      const finalUrl = immediateResult || (taskId ? await pollTaskUntilDone(taskId, session.access_token) : "");
-      setResultUrl(finalUrl);
+      const immediateSubtitleStatus = normalizeSubtitleStatus(payload.subtitle_status || payload.task?.subtitle_status);
+      const finalResult = immediateResult
+        ? { url: immediateResult, subtitleStatus: immediateSubtitleStatus }
+        : taskId
+          ? await pollTaskUntilDone(taskId, session.access_token)
+          : { url: "", subtitleStatus: "unknown" as AvatarSubtitleStatus };
+      setResultUrl(finalResult.url);
+      setResultSubtitleStatus(finalResult.subtitleStatus);
       clearStageUpdates();
       setState("completed");
       setProgressStage("completed");
@@ -468,6 +503,7 @@ export function AvatarVideoGenerator({
         : current.generate;
   const stageText = getStageLabel(progressStage, current);
   const statusText = getStatusLabel(state, current);
+  const subtitleNotice = getSubtitleNotice(resultSubtitleStatus, current);
 
   return (
     <div className="mx-auto grid w-full max-w-6xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[0.92fr_1.08fr]">
@@ -479,6 +515,13 @@ export function AvatarVideoGenerator({
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.title}</h1>
           <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">{current.subtitle}</p>
+        </div>
+        <div className="rounded-md border border-blue-100 bg-blue-50/70 p-4">
+          <h2 className="text-sm font-semibold text-slate-900">{current.realismTitle}</h2>
+          <div className="mt-3 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+            <TipList items={current.realismVideoTips} />
+            <TipList items={current.realismScriptTips} />
+          </div>
         </div>
         <div className="grid gap-2 rounded-md border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-3">
           {current.steps.map((step, index) => (
@@ -611,6 +654,22 @@ export function AvatarVideoGenerator({
               onChange={(event) => setScriptText(event.target.value)}
             />
           </label>
+          <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
+            <span className="block text-sm font-semibold text-slate-900">{current.ttsSpeed}</span>
+            <span className="mt-1 block text-sm text-slate-500">{current.ttsSpeedHint}</span>
+            <select
+              className="mt-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500"
+              value={ttsSpeedRatio}
+              disabled={Boolean(videoFile)}
+              onChange={(event) => setTtsSpeedRatio(Number(event.target.value))}
+            >
+              {TTS_SPEED_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label[locale === "zh" ? "zh" : "en"]} ({option.value.toFixed(1)}x)
+                </option>
+              ))}
+            </select>
+          </label>
           <FilePicker
             title={current.audio}
             hint={current.audioHint}
@@ -659,7 +718,12 @@ export function AvatarVideoGenerator({
             </div>
           ) : null}
         </div>
-        {resultUrl ? <p className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{current.resultReady}</p> : null}
+        {resultUrl ? (
+          <p className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            {current.resultReady}
+            {subtitleNotice ? ` ${subtitleNotice}` : ""}
+          </p>
+        ) : null}
         <div className="grid min-h-[420px] place-items-center overflow-hidden rounded-md bg-slate-100">
           {resultUrl ? (
             <video className="h-full max-h-[680px] w-full bg-black object-contain" src={resultUrl} controls playsInline />
@@ -725,8 +789,10 @@ function TaskHistoryItem({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium text-slate-800">{getStatusLabel(task.status, labels)}</p>
-            {task.status === "completed" ? (
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{labels.autoSubtitle}</span>
+            {task.status === "completed" && getSubtitleNotice(normalizeSubtitleStatus(task.subtitle_status), labels) ? (
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                {getSubtitleNotice(normalizeSubtitleStatus(task.subtitle_status), labels)}
+              </span>
             ) : null}
           </div>
           <div className="flex items-center gap-2">
@@ -783,6 +849,31 @@ function getStageLabel(stage: ProgressStage, current: (typeof copy)["zh"]) {
   if (stage === "completed") return current.completed;
   if (stage === "failed") return current.failed;
   return "";
+}
+
+function normalizeSubtitleStatus(status?: string): AvatarSubtitleStatus {
+  if (status === "burned" || status === "fallback_original" || status === "disabled") return status;
+  return "unknown";
+}
+
+function getSubtitleNotice(status: AvatarSubtitleStatus, current: (typeof copy)["zh"]) {
+  if (status === "burned") return current.subtitleBurned;
+  if (status === "fallback_original") return current.subtitleFallbackOriginal;
+  if (status === "disabled") return current.subtitleDisabled;
+  return current.subtitleUnknown;
+}
+
+function TipList({ items }: { items: string[] }) {
+  return (
+    <ul className="grid gap-1.5">
+      {items.map((item) => (
+        <li key={item} className="flex items-center gap-2">
+          <span className="size-1.5 rounded-full bg-blue-500" />
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function FilePicker({

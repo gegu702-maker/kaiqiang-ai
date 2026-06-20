@@ -224,13 +224,14 @@ async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio
         logger.info("Avatar GPU ready task_id=%s", task_id)
         _update_avatar_task(supabase, task_id, {"status": "running", "progress_stage": "video_generating"})
         logger.info("Avatar MuseTalk generation started task_id=%s", task_id)
-        result_url = await generate_avatar_video_with_musetalk(
+        result = await generate_avatar_video_with_musetalk(
             supabase,
             video_url=video_url,
             audio_url=audio_url,
             task_id=task_id,
             script_text=script_text,
         )
+        result_url = result.result_url
         _update_avatar_task(
             supabase,
             task_id,
@@ -241,7 +242,7 @@ async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio
                 "last_gpu_used_at": datetime.now(timezone.utc).isoformat(),
             },
         )
-        logger.info("Avatar result uploaded task_id=%s result_video_url=%s", task_id, result_url)
+        logger.info("Avatar result uploaded task_id=%s result_video_url=%s subtitle_status=%s", task_id, result_url, result.subtitle_status)
         log_generation_usage(supabase, user_id=user_id, avatar_task_id=task_id)
         logger.info("Avatar MuseTalk task completed task_id=%s result_url=%s", task_id, result_url)
     except HTTPException as error:
@@ -374,8 +375,10 @@ def _compact_error_message(message: str) -> str:
 
 def _serialize_avatar_task(task: dict) -> dict:
     result_url = task.get("result_url") or task.get("result_video_url")
+    subtitle_status = task.get("subtitle_status") or "unknown"
     return {
         **task,
         "result_url": result_url,
         "result_video_url": result_url,
+        "subtitle_status": subtitle_status,
     }
