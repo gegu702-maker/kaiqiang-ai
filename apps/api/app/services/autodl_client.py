@@ -56,6 +56,16 @@ async def ensure_gpu_ready(stage_callback: StageCallback | None = None) -> dict[
     if not base_url:
         raise HTTPException(status_code=503, detail="MUSE_TALK_API_BASE_URL missing")
 
+    if not settings.autodl_auto_start_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "MuseTalk is not ready. Please manually start AutoDL / MuseTalk and retry.",
+                "message_zh": "MuseTalk 服务未就绪，请先手动启动 AutoDL / MuseTalk 后重试。",
+                "code": "musetalk_not_ready_manual_start_required",
+            },
+        )
+
     _require_autodl_config()
     _set_stage(stage_callback, "gpu_starting")
     await start_instance()
@@ -194,13 +204,14 @@ async def _normal_instance_request(action: str, payload: dict[str, Any]) -> dict
             return await _instance_request(method, path, json=payload)
         except HTTPException as error:
             errors.append(_summarize_autodl_error(path, error.detail))
+    logger.warning("AutoDL normal instance %s failed for all endpoint candidates: %s", action, errors)
     raise HTTPException(
         status_code=502,
         detail={
-            "message": "AutoDL normal instance API returned errors for all known endpoint candidates",
+            "message": "AutoDL automatic start failed. Please manually start AutoDL / MuseTalk and retry.",
+            "message_zh": "AutoDL 自动启动失败，请先手动启动 AutoDL / MuseTalk 后重试。",
+            "code": "autodl_auto_start_failed",
             "action": action,
-            "attempts": errors,
-            "todo": "If all candidates fail, set AUTODL_INSTANCE_ID to the pro-... UUID or update the endpoint mapping from AutoDL OpenAPI docs.",
         },
     )
 

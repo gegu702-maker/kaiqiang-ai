@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import tempfile
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -10,6 +12,14 @@ from supabase import Client
 
 from app.core.config import settings
 from app.services.storage import upload_public_bytes
+from app.services.subtitles import (
+    SubtitleBurnError,
+    build_subtitle_segments,
+    burn_subtitles_to_video,
+    normalize_script_text,
+    probe_video_duration,
+    write_ass_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +30,7 @@ async def generate_avatar_video_with_musetalk(
     video_url: str,
     audio_url: str,
     task_id: str,
+    script_text: str | None = None,
 ) -> str:
     base_url = settings.musetalk_api_base_url.strip().rstrip("/")
     if not base_url:
@@ -63,22 +74,72 @@ async def generate_avatar_video_with_musetalk(
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail=f"MuseTalk service request failed: {error}") from error
 
+    video_content = _with_optional_subtitles(video_response.content, task_id=task_id, script_text=script_text)
+
     result_url = upload_public_bytes(
         supabase,
         settings.supabase_video_bucket,
-        video_response.content,
+        video_content,
         f"avatar-results/{task_id}",
         ".mp4",
         "video/mp4",
     )
-    logger.info("MuseTalk upload completed task_id=%s result_url=%s bytes=%s", task_id, result_url, len(video_response.content))
+    logger.info("MuseTalk upload completed task_id=%s result_url=%s bytes=%s", task_id, result_url, len(video_content))
     return result_url
+
+
+def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text: str | None) -> bytes:
+    clean_text = normalize_script_text(script_text)
+    if not settings.avatar_subtitles_enabled or not clean_text:
+        return video_content
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            input_path = tmp_path / "musetalk-output.mp4"
+            ass_path = tmp_path / "subtitle.ass"
+            output_path = tmp_path / "captioned-output.mp4"
+
+            input_path.write_bytes(video_content)
+            duration = probe_video_duration(input_path, settings.ffmpeg_path)
+            segments = build_subtitle_segments(clean_text, duration)
+            if not segments:
+                return video_content
+            write_ass_file(segments, ass_path)
+            burn_subtitles_to_video(input_path, ass_path, output_path, settings.ffmpeg_path)
+            captioned = output_path.read_bytes()
+            if not _looks_like_mp4(captioned):
+                raise HTTPException(status_code=500, detail="Captioned output is not a valid MP4 file")
+            logger.info(
+                "subtitle_burn_success task_id=%s duration=%s segments=%s output_size=%s",
+                task_id,
+                duration,
+                len(segments),
+                len(captioned),
+            )
+            return captioned
+    except SubtitleBurnError as error:
+        logger.warning(
+            "subtitle_burn_failed_diagnostic task_id=%s diagnostics=%s",
+            task_id,
+            error.diagnostics,
+        )
+        logger.warning("subtitle_burn_failed_fallback_original task_id=%s error=%s", task_id, str(error)[:300])
+        if settings.avatar_subtitle_fallback_on_error:
+            return video_content
+        raise
+    except Exception as error:
+        logger.warning("subtitle_burn_failed_fallback_original task_id=%s error=%s", task_id, str(error)[:800])
+        if settings.avatar_subtitle_fallback_on_error:
+            return video_content
+        raise
 
 
 async def check_musetalk_health() -> dict[str, Any]:
     base_url = settings.musetalk_api_base_url.strip().rstrip("/")
     if not base_url:
         return {"status": "missing_config"}
+    configured_host = urlparse(base_url).hostname or ""
     headers = {}
     if settings.musetalk_api_key.strip():
         headers["Authorization"] = f"Bearer {settings.musetalk_api_key.strip()}"
@@ -86,9 +147,42 @@ async def check_musetalk_health() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
             response = await client.get(f"{base_url}/health", headers=headers)
             data = _parse_json(response)
-            return data if isinstance(data, dict) else {"status": "unknown"}
+            content_type = response.headers.get("content-type", "")
+            if not response.is_success:
+                return {
+                    "status": "unhealthy",
+                    "status_code": response.status_code,
+                    "message": "MuseTalk health check returned a non-2xx response.",
+                    "content_type": content_type,
+                    "preview": _text_preview(response),
+                    "configured_host": configured_host,
+                }
+            if not data:
+                return {
+                    "status": "unhealthy",
+                    "status_code": response.status_code,
+                    "message": "MuseTalk health check returned non-JSON or empty response.",
+                    "content_type": content_type,
+                    "preview": _text_preview(response),
+                    "configured_host": configured_host,
+                }
+            health_status = str(data.get("status") or "").lower()
+            if health_status not in {"ok", "ready", "healthy"}:
+                return {
+                    **data,
+                    "status": health_status or "unhealthy",
+                    "status_code": response.status_code,
+                    "configured_host": configured_host,
+                }
+            return {**data, "status": "ok", "status_code": response.status_code, "configured_host": configured_host}
+    except httpx.TimeoutException:
+        return {
+            "status": "error",
+            "message": "MuseTalk health check timeout",
+            "configured_host": configured_host,
+        }
     except Exception as error:
-        return {"status": "error", "message": str(error)}
+        return {"status": "error", "message": str(error), "configured_host": configured_host}
 
 
 def _parse_json(response: httpx.Response) -> dict[str, Any]:
@@ -97,6 +191,16 @@ def _parse_json(response: httpx.Response) -> dict[str, Any]:
         return data if isinstance(data, dict) else {"data": data}
     except ValueError:
         return {}
+
+
+def _text_preview(response: httpx.Response) -> str:
+    content_type = response.headers.get("content-type", "")
+    if "text" not in content_type and "html" not in content_type and "json" not in content_type:
+        return ""
+    try:
+        return response.text[:200]
+    except UnicodeDecodeError:
+        return ""
 
 
 def _extract_video_url(data: dict[str, Any]) -> str:

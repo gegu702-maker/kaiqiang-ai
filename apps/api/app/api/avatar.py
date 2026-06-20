@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import logging
 import traceback
 from datetime import datetime, timezone
@@ -112,7 +113,7 @@ async def generate_template_avatar_video(
         template_video_url,
         audio_url,
     )
-    background_tasks.add_task(_process_avatar_task, task["id"], user["id"], template_video_url, audio_url)
+    background_tasks.add_task(_process_avatar_task, task["id"], user["id"], template_video_url, audio_url, text)
     return {
         "success": True,
         "status": "queued",
@@ -184,7 +185,7 @@ async def generate_avatar_video(
             )
         task = _create_avatar_task(supabase, user["id"], video_url, audio_url)
         logger.info("Avatar task queued task_id=%s user_id=%s", task["id"], user["id"])
-        background_tasks.add_task(_process_avatar_task, task["id"], user["id"], video_url, audio_url)
+        background_tasks.add_task(_process_avatar_task, task["id"], user["id"], video_url, audio_url, text)
         return {
             "success": True,
             "status": "queued",
@@ -209,7 +210,7 @@ async def generate_avatar_video(
         ) from error
 
 
-async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio_url: str) -> None:
+async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio_url: str, script_text: str | None = None) -> None:
     supabase = get_supabase()
 
     def update_stage(stage: str) -> None:
@@ -228,6 +229,7 @@ async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio
             video_url=video_url,
             audio_url=audio_url,
             task_id=task_id,
+            script_text=script_text,
         )
         _update_avatar_task(
             supabase,
@@ -260,11 +262,41 @@ def list_avatar_tasks(
         supabase.table("avatar_tasks")
         .select("*")
         .eq("user_id", user["id"])
+        .is_("deleted_at", "null")
         .order("created_at", desc=True)
         .limit(20)
         .execute()
     )
     return [_serialize_avatar_task(item) for item in response.data or []]
+
+
+@router.delete("/tasks/{task_id}")
+def delete_avatar_task(
+    task_id: str,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    user = get_authenticated_user(supabase, token)
+    task = _get_owned_active_avatar_task(supabase, task_id, user["id"])
+    if task.get("status") in {"queued", "running"}:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "avatar_task_still_generating",
+                "message": "任务仍在生成中，暂不能删除。",
+            },
+        )
+    response = (
+        supabase.table("avatar_tasks")
+        .update({"deleted_at": datetime.now(timezone.utc).isoformat()})
+        .eq("id", task_id)
+        .eq("user_id", user["id"])
+        .is_("deleted_at", "null")
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Avatar task not found")
+    return {"success": True, "status": "deleted", "task_id": task_id}
 
 
 @router.get("/tasks/{task_id}")
@@ -274,11 +306,7 @@ def get_avatar_task(
     supabase: Client = Depends(get_supabase),
 ) -> dict:
     user = get_authenticated_user(supabase, token)
-    response = supabase.table("avatar_tasks").select("*").eq("id", task_id).eq("user_id", user["id"]).maybe_single().execute()
-    task = response.data
-    if not task:
-        raise HTTPException(status_code=404, detail="Avatar task not found")
-    return _serialize_avatar_task(task)
+    return _serialize_avatar_task(_get_owned_active_avatar_task(supabase, task_id, user["id"]))
 
 
 def _create_avatar_task(supabase: Client, user_id: str, video_url: str, audio_url: str) -> dict:
@@ -307,11 +335,41 @@ def _update_avatar_task(supabase: Client, task_id: str, values: dict) -> dict:
     return response.data[0]
 
 
+def _get_owned_active_avatar_task(supabase: Client, task_id: str, user_id: str) -> dict:
+    response = (
+        supabase.table("avatar_tasks")
+        .select("*")
+        .eq("id", task_id)
+        .eq("user_id", user_id)
+        .is_("deleted_at", "null")
+        .maybe_single()
+        .execute()
+    )
+    task = response.data
+    if not task:
+        raise HTTPException(status_code=404, detail="Avatar task not found")
+    return task
+
+
 def _safe_fail_task(supabase: Client, task_id: str, message: str) -> None:
     try:
-        supabase.table("avatar_tasks").update({"status": "failed", "progress_stage": "failed", "error_message": message[:2000]}).eq("id", task_id).execute()
+        supabase.table("avatar_tasks").update({"status": "failed", "progress_stage": "failed", "error_message": _compact_error_message(message)}).eq("id", task_id).execute()
     except Exception:
         logger.exception("Failed to mark avatar task failed")
+
+
+def _compact_error_message(message: str) -> str:
+    try:
+        parsed = ast.literal_eval(message)
+    except (SyntaxError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict):
+        primary = parsed.get("message_zh") or parsed.get("message") or parsed.get("code")
+        if primary:
+            code = parsed.get("code")
+            suffix = f" ({code})" if code and code not in str(primary) else ""
+            return f"{primary}{suffix}"[:500]
+    return message[:500]
 
 
 def _serialize_avatar_task(task: dict) -> dict:

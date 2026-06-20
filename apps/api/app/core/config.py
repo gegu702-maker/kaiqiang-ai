@@ -98,8 +98,12 @@ class Settings(BaseSettings):
     autodl_instance_id: str = ""
     autodl_region: str = ""
     autodl_api_base_url: str = "https://api.autodl.com"
+    autodl_auto_start_enabled: bool = False
     autodl_start_timeout_seconds: int = 900
     gpu_idle_shutdown_minutes: int = 10
+    avatar_subtitles_enabled: bool = True
+    avatar_subtitle_font: str = "Noto Sans CJK SC"
+    avatar_subtitle_fallback_on_error: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

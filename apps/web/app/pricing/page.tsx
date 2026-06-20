@@ -24,14 +24,14 @@ export default function PricingPage() {
 
       <div className="grid gap-5 lg:grid-cols-4">
         {current.plans.map((plan) => (
-          <section key={plan.name} className={plan.code === "plus" ? "relative rounded-lg border border-cyan/45 bg-panel/90 p-5 shadow-glow" : plan.code === "pro" ? "relative rounded-lg border border-lime/35 bg-panel/85 p-5 shadow-glow" : "relative rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow"}>
+          <section key={plan.name} className={plan.code === "plus" ? "relative flex h-full flex-col rounded-lg border border-cyan/45 bg-panel/90 p-5 shadow-glow" : plan.code === "pro" ? "relative flex h-full flex-col rounded-lg border border-lime/35 bg-panel/85 p-5 shadow-glow" : "relative flex h-full flex-col rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow"}>
             {"badge" in plan ? <span className="absolute right-4 top-4 rounded-full bg-cyan px-3 py-1 text-xs font-semibold text-ink">{plan.badge}</span> : null}
             <h2 className="text-2xl font-semibold text-white">{plan.name}</h2>
             <div className="mt-4">
               <span className="text-4xl font-semibold text-cyan">{plan.price}</span>
             </div>
             <p className="mt-3 text-sm leading-6 text-slate-400">{plan.desc}</p>
-            <ul className="mt-5 space-y-3 text-sm text-slate-300">
+            <ul className="mt-5 flex-1 space-y-3 text-sm text-slate-300">
               {plan.features.map((item) => (
                 <li key={item} className="flex items-center gap-2">
                   <CheckCircle2 size={16} className="text-lime" />

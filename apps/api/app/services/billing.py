@@ -10,8 +10,8 @@ from app.core.config import settings
 
 PLAN_QUOTAS: dict[str, int | None] = {
     "free": 3,
-    "plus": 100,
-    "pro": 1000,
+    "plus": 1000,
+    "pro": 3000,
     "business": None,
 }
 
@@ -32,8 +32,8 @@ PLAN_PRICES: dict[str, dict[str, dict[str, int]]] = {
 
 PLAN_MONTHLY_QUOTAS = {
     "free": 3,
-    "plus": 100,
-    "pro": 1000,
+    "plus": 1000,
+    "pro": 3000,
     "business": None,
 }
 
@@ -56,7 +56,7 @@ DEFAULT_PLAN_ROWS: list[dict[str, Any]] = [
         "code": "plus",
         "name": "Plus",
         "description": "轻量创作者套餐",
-        "monthly_quota": 100,
+        "monthly_quota": 1000,
         "monthly_price_cny": 19900,
         "yearly_price_cny": 199000,
         "voice_clone_enabled": False,
@@ -67,7 +67,7 @@ DEFAULT_PLAN_ROWS: list[dict[str, Any]] = [
         "code": "pro",
         "name": "Pro",
         "description": "专业创作者套餐",
-        "monthly_quota": 1000,
+        "monthly_quota": 3000,
         "monthly_price_cny": 79900,
         "yearly_price_cny": 799000,
         "voice_clone_enabled": True,
