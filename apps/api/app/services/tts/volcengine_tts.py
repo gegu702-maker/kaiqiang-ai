@@ -29,6 +29,7 @@ class VolcengineTTSProvider:
         self,
         *,
         text: str,
+        language: str | None = None,
         voice_type: str | None = None,
         speed_ratio: float = 1.0,
         volume_ratio: float = 1.0,
@@ -102,6 +103,7 @@ class VolcengineTTSProvider:
             "extension": ".mp3",
             "content_type": "audio/mpeg",
             "provider": "volcengine",
+            "language": language,
             "voice_type": selected_voice,
         }
 

@@ -20,6 +20,7 @@ async def synthesize_speech_to_storage(
     text: str,
     voice_clone: dict | None = None,
     folder: str = "tts",
+    language: str | None = None,
     voice_type: str | None = None,
     speed_ratio: float = 1.0,
     volume_ratio: float = 1.0,
@@ -34,6 +35,7 @@ async def synthesize_speech_to_storage(
     if provider == "volcengine":
         result = await VolcengineTTSProvider().synthesize(
             text=text,
+            language=language,
             voice_type=voice_type,
             speed_ratio=speed_ratio,
             volume_ratio=volume_ratio,
@@ -77,6 +79,7 @@ async def synthesize_speech_to_storage(
         "duration": duration,
         "audio_bytes": audio,
         "provider": provider_name,
+        "language": language,
         "voice_type": selected_voice_type,
         "content_type": content_type,
     }

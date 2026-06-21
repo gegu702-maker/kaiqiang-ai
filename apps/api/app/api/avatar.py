@@ -38,12 +38,15 @@ AUDIO_TYPES = {
     "audio/aac",
     "application/octet-stream",
 }
+SUPPORTED_TTS_LANGUAGES = {"zh-CN", "en-US"}
+ZH_CN_VOICE_TYPES = {"BV001_streaming", "BV002_streaming"}
 
 
 class TemplateAvatarGenerateRequest(BaseModel):
     script_text: str | None = None
     text: str | None = None
     audio_url: str | None = None
+    language: str | None = None
     voice_type: str | None = None
     avatar_template_id: str = Field(..., min_length=1)
     speed_ratio: float = 1.0
@@ -73,6 +76,9 @@ async def generate_template_avatar_video(
     template = get_avatar_template(template_id)
     template_video_url = get_dynamic_template_video_url(template.id)
     selected_voice_type = payload.voice_type or template.default_voice_type
+    selected_language = _normalize_tts_language(payload.language)
+    if selected_language:
+        _validate_template_tts_voice(selected_language, selected_voice_type)
 
     if not audio_url and not text:
         raise HTTPException(status_code=400, detail="请提供 audio_url，或输入文案用于生成语音。")
@@ -82,16 +88,18 @@ async def generate_template_avatar_video(
     if not audio_url:
         try:
             logger.info(
-                "Template avatar TTS started user_id=%s template=%s text_length=%s voice_type=%s",
+                "Template avatar TTS started user_id=%s template=%s text_length=%s language=%s voice_type=%s",
                 user["id"],
                 template.id,
                 len(text),
+                selected_language or "default",
                 selected_voice_type,
             )
             tts_result = await synthesize_speech_to_storage(
                 supabase,
                 text=text,
                 folder="avatar/template-generate/tts",
+                language=selected_language,
                 voice_type=selected_voice_type,
                 speed_ratio=payload.speed_ratio,
                 volume_ratio=payload.volume_ratio,
@@ -357,6 +365,40 @@ def _safe_fail_task(supabase: Client, task_id: str, message: str) -> None:
         supabase.table("avatar_tasks").update({"status": "failed", "progress_stage": "failed", "error_message": _compact_error_message(message)}).eq("id", task_id).execute()
     except Exception:
         logger.exception("Failed to mark avatar task failed")
+
+
+def _normalize_tts_language(language: str | None) -> str | None:
+    clean = (language or "").strip()
+    if not clean:
+        return None
+    if clean not in SUPPORTED_TTS_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported TTS language: {clean}")
+    return clean
+
+
+def _validate_template_tts_voice(language: str, voice_type: str) -> None:
+    selected_voice = (voice_type or "").strip()
+    if language == "zh-CN":
+        allowed_voices = {
+            *ZH_CN_VOICE_TYPES,
+            settings.volcengine_tts_zh_cn_female_voice_type.strip(),
+            settings.volcengine_tts_zh_cn_male_voice_type.strip(),
+        }
+        allowed_voices = {voice for voice in allowed_voices if voice}
+        if selected_voice not in allowed_voices:
+            raise HTTPException(status_code=400, detail="Unsupported zh-CN TTS voice_type.")
+        return
+
+    if language == "en-US":
+        configured_voices = {
+            settings.volcengine_tts_en_us_female_voice_type.strip(),
+            settings.volcengine_tts_en_us_male_voice_type.strip(),
+        }
+        configured_voices = {voice for voice in configured_voices if voice}
+        if not configured_voices:
+            raise HTTPException(status_code=400, detail="English TTS voices are not configured yet.")
+        if selected_voice not in configured_voices:
+            raise HTTPException(status_code=400, detail="Unsupported en-US TTS voice_type.")
 
 
 def _compact_error_message(message: str) -> str:

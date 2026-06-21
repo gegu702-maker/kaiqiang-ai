@@ -46,8 +46,17 @@ type AvatarHealthPayload = {
   };
 };
 type DeleteTaskError = Error & { status?: number };
+type TTSLanguage = "zh-CN" | "en-US";
 
 const AVATAR_HEALTH_READY_STATUSES = new Set(["ok", "ready", "healthy", "success"]);
+const TTS_LANGUAGE_OPTIONS: { value: TTSLanguage; label: { zh: string; en: string }; disabled?: boolean }[] = [
+  { value: "zh-CN", label: { zh: "中文普通话", en: "Mandarin Chinese" } },
+  { value: "en-US", label: { zh: "English（即将支持）", en: "English (coming soon)" }, disabled: true },
+];
+const ZH_CN_VOICE_OPTIONS = [
+  { value: "BV001_streaming", label: { zh: "中文女声", en: "Mandarin female" }, gender: "female" },
+  { value: "BV002_streaming", label: { zh: "中文男声", en: "Mandarin male" }, gender: "male" },
+] as const;
 const TTS_SPEED_OPTIONS = [
   { value: 0.9, label: { zh: "稳定自然", en: "Stable natural" } },
   { value: 1, label: { zh: "标准", en: "Standard" } },
@@ -68,6 +77,11 @@ const copy = {
     scriptLengthHint: "建议 15-60 秒；句子不要太长，多用标点制造自然停顿，口播语速不要太快。",
     scriptPlaceholder: "输入要数字人口播的文案...",
     audioHint: "上传音频后，将优先使用你的音频；未上传音频时会自动生成语音。支持 wav / mp3 / m4a。",
+    ttsLanguage: "配音语言",
+    ttsLanguageHint: "语言选择只影响配音音色，不会自动翻译文案；默认中文流程不变。",
+    ttsVoice: "配音音色",
+    ttsVoiceHint: "中文音色已可用；英文配音需配置并验证英文音色后启用。",
+    englishVoiceUnavailable: "英文配音音色尚未配置，请先使用中文普通话。",
     realismTitle: "真实度建议",
     realismVideoTips: ["正脸出镜", "1080p 或更高", "光线稳定", "背景干净", "脸部占画面足够大", "头部动作不要太大"],
     realismScriptTips: ["句子不要太长", "多用标点制造自然停顿", "15-60 秒更稳", "语速不要太快"],
@@ -124,6 +138,7 @@ const copy = {
     autoSubtitle: "自动字幕",
     authExpired: "登录状态已失效，请重新登录后再试。",
     serviceUnavailable: "数字人 GPU 服务当前未开启，生成暂不可用。请开启 AutoDL/GPU 后再生成。",
+    languageUnavailable: "英文配音音色尚未配置，请先使用中文普通话。",
     fileUnsupported: "文件格式暂不支持，请上传 MP4/MOV/WebM 视频或 WAV/MP3/M4A 音频。",
     genericError: "生成失败，请稍后重试或联系管理员。",
   },
@@ -140,6 +155,11 @@ const copy = {
     scriptLengthHint: "15-60 seconds is recommended. Keep sentences short, use punctuation for natural pauses, and avoid speaking too fast.",
     scriptPlaceholder: "Enter the script for the avatar...",
     audioHint: "Uploaded audio takes priority. Without audio, speech is generated automatically. wav / mp3 / m4a supported.",
+    ttsLanguage: "Voice language",
+    ttsLanguageHint: "Language only affects the voiceover voice. It does not translate your script. Chinese remains the default.",
+    ttsVoice: "Voice",
+    ttsVoiceHint: "Mandarin voices are available. English voiceover requires verified English voice configuration.",
+    englishVoiceUnavailable: "English voiceover is not configured yet. Please use Mandarin Chinese.",
     realismTitle: "Realism tips",
     realismVideoTips: ["Front-facing shot", "1080p or higher", "Stable lighting", "Clean background", "Face large enough in frame", "Avoid large head motion"],
     realismScriptTips: ["Keep sentences short", "Use punctuation for pauses", "15-60 seconds is steadier", "Avoid fast delivery"],
@@ -196,6 +216,7 @@ const copy = {
     autoSubtitle: "Auto subtitles",
     authExpired: "Your login session expired. Please sign in again and retry.",
     serviceUnavailable: "The avatar GPU service is currently off, so generation is unavailable. Please start AutoDL/GPU before generating.",
+    languageUnavailable: "English voiceover is not configured yet. Please use Mandarin Chinese.",
     fileUnsupported: "This file format is not supported. Upload MP4/MOV/WebM video or WAV/MP3/M4A audio.",
     genericError: "Generation failed. Please retry later or contact an administrator.",
   },
@@ -223,6 +244,8 @@ export function AvatarVideoGenerator({
   const [resultUrl, setResultUrl] = useState("");
   const [resultSubtitleStatus, setResultSubtitleStatus] = useState<AvatarSubtitleStatus>("unknown");
   const [error, setError] = useState("");
+  const [ttsLanguage, setTtsLanguage] = useState<TTSLanguage>("zh-CN");
+  const [selectedVoiceType, setSelectedVoiceType] = useState<string>(selectedTemplate.voice_type);
   const [ttsSpeedRatio, setTtsSpeedRatio] = useState(0.9);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [tasks, setTasks] = useState<AvatarTask[]>([]);
@@ -317,6 +340,10 @@ export function AvatarVideoGenerator({
     };
   }, [checkAvatarHealth, refreshTasks, refreshUsage]);
 
+  useEffect(() => {
+    setSelectedVoiceType(selectedTemplate.voice_type);
+  }, [selectedTemplate.voice_type]);
+
   function startProgress() {
     setProgress(8);
     progressTimer.current = window.setInterval(() => {
@@ -370,6 +397,12 @@ export function AvatarVideoGenerator({
       setError(current.quotaEmpty);
       return;
     }
+    if (!useCustomVideo && ttsLanguage === "en-US") {
+      setState("failed");
+      setProgressStage("failed");
+      setError(current.languageUnavailable);
+      return;
+    }
 
     const {
       data: { session },
@@ -409,7 +442,8 @@ export function AvatarVideoGenerator({
             body: JSON.stringify({
               avatar_template_id: avatarTemplateId,
               script_text: text,
-              voice_type: selectedTemplate.voice_type,
+              language: ttsLanguage,
+              voice_type: selectedVoiceType,
               speed_ratio: ttsSpeedRatio,
             }),
           });
@@ -653,6 +687,39 @@ export function AvatarVideoGenerator({
               value={scriptText}
               onChange={(event) => setScriptText(event.target.value)}
             />
+          </label>
+          <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
+            <span className="block text-sm font-semibold text-slate-900">{current.ttsLanguage}</span>
+            <span className="mt-1 block text-sm text-slate-500">{current.ttsLanguageHint}</span>
+            <select
+              className="mt-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500"
+              value={ttsLanguage}
+              disabled={Boolean(videoFile)}
+              onChange={(event) => setTtsLanguage(event.target.value as TTSLanguage)}
+            >
+              {TTS_LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value} disabled={option.disabled}>
+                  {option.label[locale === "zh" ? "zh" : "en"]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
+            <span className="block text-sm font-semibold text-slate-900">{current.ttsVoice}</span>
+            <span className="mt-1 block text-sm text-slate-500">{current.ttsVoiceHint}</span>
+            <select
+              className="mt-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500"
+              value={selectedVoiceType}
+              disabled={Boolean(videoFile) || ttsLanguage !== "zh-CN"}
+              onChange={(event) => setSelectedVoiceType(event.target.value)}
+            >
+              {ZH_CN_VOICE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label[locale === "zh" ? "zh" : "en"]} ({option.value})
+                </option>
+              ))}
+            </select>
+            {ttsLanguage === "en-US" ? <span className="mt-2 block text-xs text-amber-600">{current.englishVoiceUnavailable}</span> : null}
           </label>
           <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
             <span className="block text-sm font-semibold text-slate-900">{current.ttsSpeed}</span>
