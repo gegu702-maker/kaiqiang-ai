@@ -12,6 +12,7 @@ from supabase import Client
 from app.core.config import settings
 from app.services.storage import upload_public_bytes
 from app.services.tts.volcengine_tts import VolcengineTTSProvider
+from app.services.tts.voice_registry import DEFAULT_TTS_LANGUAGE, validate_tts_voice
 
 
 async def synthesize_speech_to_storage(
@@ -20,23 +21,29 @@ async def synthesize_speech_to_storage(
     text: str,
     voice_clone: dict | None = None,
     folder: str = "tts",
-    language: str | None = None,
+    language: str | None = DEFAULT_TTS_LANGUAGE,
     voice_type: str | None = None,
     speed_ratio: float = 1.0,
     volume_ratio: float = 1.0,
     pitch_ratio: float = 1.0,
 ) -> dict:
+    if speed_ratio < 0.5 or speed_ratio > 2.0:
+        raise HTTPException(status_code=400, detail="TTS speed_ratio must be between 0.5 and 2.0.")
+    if volume_ratio <= 0 or pitch_ratio <= 0:
+        raise HTTPException(status_code=400, detail="TTS volume_ratio and pitch_ratio must be greater than 0.")
+
     provider = settings.voice_clone_provider.lower()
     extension = ".mp3"
     content_type = "audio/mpeg"
     provider_name = "unknown"
-    selected_voice_type = voice_type
+    voice_config = validate_tts_voice(language, voice_type)
+    selected_voice_type = voice_config.id
 
     if provider == "volcengine":
         result = await VolcengineTTSProvider().synthesize(
             text=text,
-            language=language,
-            voice_type=voice_type,
+            language=voice_config.language,
+            voice_type=voice_config.id,
             speed_ratio=speed_ratio,
             volume_ratio=volume_ratio,
             pitch_ratio=pitch_ratio,
@@ -61,7 +68,7 @@ async def synthesize_speech_to_storage(
             detail=(
                 "TTS provider 未配置。若使用火山引擎，请设置 VOICE_CLONE_PROVIDER=volcengine、"
                 "VOLCENGINE_TTS_APP_ID、VOLCENGINE_TTS_ACCESS_TOKEN、VOLCENGINE_TTS_CLUSTER、"
-                "VOLCENGINE_TTS_VOICE_TYPE；或配置 OPENAI_API_KEY / ELEVENLABS_API_KEY。"
+                "VOLCENGINE_TTS_ZH_CN_FEMALE_VOICE_TYPE；或配置 OPENAI_API_KEY / ELEVENLABS_API_KEY。"
             ),
         )
 
@@ -79,7 +86,7 @@ async def synthesize_speech_to_storage(
         "duration": duration,
         "audio_bytes": audio,
         "provider": provider_name,
-        "language": language,
+        "language": voice_config.language,
         "voice_type": selected_voice_type,
         "content_type": content_type,
     }

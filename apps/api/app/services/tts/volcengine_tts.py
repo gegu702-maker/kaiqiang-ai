@@ -7,6 +7,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.services.tts.voice_registry import DEFAULT_TTS_LANGUAGE, validate_tts_voice
 
 
 class VolcengineTTSProvider:
@@ -29,14 +30,15 @@ class VolcengineTTSProvider:
         self,
         *,
         text: str,
-        language: str | None = None,
+        language: str | None = DEFAULT_TTS_LANGUAGE,
         voice_type: str | None = None,
         speed_ratio: float = 1.0,
         volume_ratio: float = 1.0,
         pitch_ratio: float = 1.0,
     ) -> dict:
         clean_text = text.strip()
-        selected_voice = (voice_type or settings.volcengine_tts_voice_type).strip()
+        voice_config = validate_tts_voice(language, voice_type)
+        selected_voice = voice_config.id
         self._validate(selected_voice)
 
         payload = {
@@ -103,7 +105,7 @@ class VolcengineTTSProvider:
             "extension": ".mp3",
             "content_type": "audio/mpeg",
             "provider": "volcengine",
-            "language": language,
+            "language": voice_config.language,
             "voice_type": selected_voice,
         }
 

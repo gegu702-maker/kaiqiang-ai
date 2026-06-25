@@ -9,6 +9,15 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { avatarTemplates } from "@/lib/avatarTemplates";
 import { createClient } from "@/lib/supabase/client";
 import type { UsageSummary } from "@/lib/types";
+import {
+  DEFAULT_DUBBING_LANGUAGE,
+  DEFAULT_DUBBING_VOICE,
+  dubbingLanguages,
+  getDefaultVoiceForLanguage,
+  getEnabledDubbingVoices,
+  type DubbingLanguage,
+  type DubbingLanguageCode,
+} from "@/lib/voiceRegistry";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -46,17 +55,9 @@ type AvatarHealthPayload = {
   };
 };
 type DeleteTaskError = Error & { status?: number };
-type TTSLanguage = "zh-CN" | "en-US";
+type PreviewState = "idle" | "generating" | "completed" | "failed";
 
 const AVATAR_HEALTH_READY_STATUSES = new Set(["ok", "ready", "healthy", "success"]);
-const TTS_LANGUAGE_OPTIONS: { value: TTSLanguage; label: { zh: string; en: string }; disabled?: boolean }[] = [
-  { value: "zh-CN", label: { zh: "中文普通话", en: "Mandarin Chinese" } },
-  { value: "en-US", label: { zh: "English（即将支持）", en: "English (coming soon)" }, disabled: true },
-];
-const ZH_CN_VOICE_OPTIONS = [
-  { value: "BV001_streaming", label: { zh: "中文女声", en: "Mandarin female" }, gender: "female" },
-  { value: "BV002_streaming", label: { zh: "中文男声", en: "Mandarin male" }, gender: "male" },
-] as const;
 const TTS_SPEED_OPTIONS = [
   { value: 0.9, label: { zh: "稳定自然", en: "Stable natural" } },
   { value: 1, label: { zh: "标准", en: "Standard" } },
@@ -82,6 +83,12 @@ const copy = {
     ttsVoice: "配音音色",
     ttsVoiceHint: "中文音色已可用；英文配音需配置并验证英文音色后启用。",
     englishVoiceUnavailable: "英文配音音色尚未配置，请先使用中文普通话。",
+    ttsPreview: "试听配音",
+    ttsPreviewGenerating: "试听生成中",
+    ttsPreviewFailed: "试听生成失败",
+    ttsPreviewReady: "试听音频已生成",
+    unsupportedTtsVoice: "当前语言暂无可用音色。",
+    comingSoon: "即将上线",
     realismTitle: "真实度建议",
     realismVideoTips: ["正脸出镜", "1080p 或更高", "光线稳定", "背景干净", "脸部占画面足够大", "头部动作不要太大"],
     realismScriptTips: ["句子不要太长", "多用标点制造自然停顿", "15-60 秒更稳", "语速不要太快"],
@@ -160,6 +167,12 @@ const copy = {
     ttsVoice: "Voice",
     ttsVoiceHint: "Mandarin voices are available. English voiceover requires verified English voice configuration.",
     englishVoiceUnavailable: "English voiceover is not configured yet. Please use Mandarin Chinese.",
+    ttsPreview: "Preview voice",
+    ttsPreviewGenerating: "Generating preview",
+    ttsPreviewFailed: "Preview failed",
+    ttsPreviewReady: "Preview audio is ready",
+    unsupportedTtsVoice: "No enabled voices are available for this language.",
+    comingSoon: "Coming soon",
     realismTitle: "Realism tips",
     realismVideoTips: ["Front-facing shot", "1080p or higher", "Stable lighting", "Clean background", "Face large enough in frame", "Avoid large head motion"],
     realismScriptTips: ["Keep sentences short", "Use punctuation for pauses", "15-60 seconds is steadier", "Avoid fast delivery"],
@@ -234,7 +247,6 @@ export function AvatarVideoGenerator({
   const supabase = useMemo(() => createClient(), []);
   const initialAvatarTemplate = avatarTemplates.some((template) => template.id === initialTemplateId) ? initialTemplateId : "business_female_01";
   const [avatarTemplateId, setAvatarTemplateId] = useState(initialAvatarTemplate);
-  const selectedTemplate = avatarTemplates.find((template) => template.id === avatarTemplateId) ?? avatarTemplates[0];
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [scriptText, setScriptText] = useState(initialScriptText);
@@ -244,9 +256,14 @@ export function AvatarVideoGenerator({
   const [resultUrl, setResultUrl] = useState("");
   const [resultSubtitleStatus, setResultSubtitleStatus] = useState<AvatarSubtitleStatus>("unknown");
   const [error, setError] = useState("");
-  const [ttsLanguage, setTtsLanguage] = useState<TTSLanguage>("zh-CN");
-  const [selectedVoiceType, setSelectedVoiceType] = useState<string>(selectedTemplate.voice_type);
+  const [voiceRegistry, setVoiceRegistry] = useState<DubbingLanguage[]>(dubbingLanguages);
+  const [ttsLanguage, setTtsLanguage] = useState<DubbingLanguageCode>(DEFAULT_DUBBING_LANGUAGE);
+  const [selectedVoiceType, setSelectedVoiceType] = useState<string>(DEFAULT_DUBBING_VOICE);
   const [ttsSpeedRatio, setTtsSpeedRatio] = useState(0.9);
+  const enabledVoices = getEnabledDubbingVoices(voiceRegistry, ttsLanguage);
+  const [previewState, setPreviewState] = useState<PreviewState>("idle");
+  const [previewAudioUrl, setPreviewAudioUrl] = useState("");
+  const [previewError, setPreviewError] = useState("");
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [tasks, setTasks] = useState<AvatarTask[]>([]);
   const [copied, setCopied] = useState(false);
@@ -341,8 +358,27 @@ export function AvatarVideoGenerator({
   }, [checkAvatarHealth, refreshTasks, refreshUsage]);
 
   useEffect(() => {
-    setSelectedVoiceType(selectedTemplate.voice_type);
-  }, [selectedTemplate.voice_type]);
+    let active = true;
+    void fetch(`${API_URL}/api/avatar/tts-voices`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (!active || !Array.isArray(payload?.languages)) return;
+        const languages = payload.languages as DubbingLanguage[];
+        setVoiceRegistry(languages);
+        const currentLanguage = languages.find((language) => language.code === ttsLanguage && language.enabled);
+        const fallbackLanguage = currentLanguage ?? languages.find((language) => language.code === DEFAULT_DUBBING_LANGUAGE && language.enabled) ?? languages.find((language) => language.enabled);
+        if (fallbackLanguage) {
+          setTtsLanguage(fallbackLanguage.code);
+          setSelectedVoiceType(getDefaultVoiceForLanguage(languages, fallbackLanguage.code));
+        }
+      })
+      .catch(() => {
+        // The bundled registry keeps the selector usable when the API is unavailable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [ttsLanguage]);
 
   function startProgress() {
     setProgress(8);
@@ -374,6 +410,55 @@ export function AvatarVideoGenerator({
     stageTimers.current = [];
   }
 
+  function handleTtsLanguageChange(value: string) {
+    const language = value as DubbingLanguageCode;
+    setTtsLanguage(language);
+    setSelectedVoiceType(getDefaultVoiceForLanguage(voiceRegistry, language));
+    setPreviewAudioUrl("");
+    setPreviewError("");
+    setPreviewState("idle");
+  }
+
+  async function handlePreviewAudio() {
+    const text = scriptText.trim();
+    if (!text || previewState === "generating" || enabledVoices.length === 0) return;
+    setPreviewState("generating");
+    setPreviewAudioUrl("");
+    setPreviewError("");
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      setPreviewState("failed");
+      setPreviewError(current.login);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/avatar/tts-preview`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          language: ttsLanguage,
+          voice: selectedVoiceType,
+          speed: ttsSpeedRatio,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail ?? payload);
+        throw new Error(detail || current.ttsPreviewFailed);
+      }
+      setPreviewAudioUrl(payload.audio_url || "");
+      setPreviewState("completed");
+    } catch (err) {
+      setPreviewState("failed");
+      setPreviewError(err instanceof Error ? err.message : current.ttsPreviewFailed);
+    }
+  }
+
   async function handleGenerate() {
     setError("");
     setResultUrl("");
@@ -397,7 +482,7 @@ export function AvatarVideoGenerator({
       setError(current.quotaEmpty);
       return;
     }
-    if (!useCustomVideo && ttsLanguage === "en-US") {
+    if (!useCustomVideo && enabledVoices.length === 0) {
       setState("failed");
       setProgressStage("failed");
       setError(current.languageUnavailable);
@@ -433,6 +518,10 @@ export function AvatarVideoGenerator({
               formData.set("video_file", videoFile as File);
               if (audioFile) formData.set("audio_file", audioFile);
               if (text) formData.set("script_text", text);
+              formData.set("language", ttsLanguage);
+              formData.set("voice", selectedVoiceType);
+              formData.set("voice_type", selectedVoiceType);
+              formData.set("speed_ratio", String(ttsSpeedRatio));
               return formData;
             })(),
           })
@@ -443,6 +532,7 @@ export function AvatarVideoGenerator({
               avatar_template_id: avatarTemplateId,
               script_text: text,
               language: ttsLanguage,
+              voice: selectedVoiceType,
               voice_type: selectedVoiceType,
               speed_ratio: ttsSpeedRatio,
             }),
@@ -695,11 +785,12 @@ export function AvatarVideoGenerator({
               className="mt-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500"
               value={ttsLanguage}
               disabled={Boolean(videoFile)}
-              onChange={(event) => setTtsLanguage(event.target.value as TTSLanguage)}
+              onChange={(event) => handleTtsLanguageChange(event.target.value)}
             >
-              {TTS_LANGUAGE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value} disabled={option.disabled}>
-                  {option.label[locale === "zh" ? "zh" : "en"]}
+              {voiceRegistry.map((option) => (
+                <option key={option.code} value={option.code} disabled={!option.enabled}>
+                  {option.nativeLabel} / {option.label}
+                  {option.comingSoon ? ` (${current.comingSoon})` : ""}
                 </option>
               ))}
             </select>
@@ -710,16 +801,20 @@ export function AvatarVideoGenerator({
             <select
               className="mt-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500"
               value={selectedVoiceType}
-              disabled={Boolean(videoFile) || ttsLanguage !== "zh-CN"}
+              disabled={Boolean(videoFile) || enabledVoices.length === 0}
               onChange={(event) => setSelectedVoiceType(event.target.value)}
             >
-              {ZH_CN_VOICE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label[locale === "zh" ? "zh" : "en"]} ({option.value})
-                </option>
-              ))}
+              {enabledVoices.length > 0 ? (
+                enabledVoices.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label} ({option.id})
+                  </option>
+                ))
+              ) : (
+                <option>{current.unsupportedTtsVoice}</option>
+              )}
             </select>
-            {ttsLanguage === "en-US" ? <span className="mt-2 block text-xs text-amber-600">{current.englishVoiceUnavailable}</span> : null}
+            {enabledVoices.length === 0 ? <span className="mt-2 block text-xs text-amber-600">{current.englishVoiceUnavailable}</span> : null}
           </label>
           <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
             <span className="block text-sm font-semibold text-slate-900">{current.ttsSpeed}</span>
@@ -737,6 +832,20 @@ export function AvatarVideoGenerator({
               ))}
             </select>
           </label>
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <button
+              type="button"
+              disabled={previewState === "generating" || !scriptText.trim() || Boolean(videoFile) || enabledVoices.length === 0}
+              onClick={handlePreviewAudio}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            >
+              {previewState === "generating" ? <Loader2 className="animate-spin" size={16} /> : null}
+              {previewState === "generating" ? current.ttsPreviewGenerating : current.ttsPreview}
+            </button>
+            {previewState === "completed" && previewAudioUrl ? <p className="mt-2 text-xs text-emerald-700">{current.ttsPreviewReady}</p> : null}
+            {previewError ? <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-sm text-rose-700">{previewError}</p> : null}
+            {previewAudioUrl ? <audio className="mt-3 w-full" src={previewAudioUrl} controls preload="metadata" /> : null}
+          </div>
           <FilePicker
             title={current.audio}
             hint={current.audioHint}

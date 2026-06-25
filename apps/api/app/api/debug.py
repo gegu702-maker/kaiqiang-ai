@@ -25,6 +25,7 @@ MUSETALK_DEBUG_SOURCE_AUDIO = "/root/MuseTalk/data/audio/kaiqiang.wav"
 
 class TTSTestRequest(BaseModel):
     text: str = Field(default="你好，我是凯强 AI 数字人", min_length=1)
+    language: str = "zh-CN"
     voice_type: str | None = None
     speed_ratio: float = 1.0
     volume_ratio: float = 1.0
@@ -119,7 +120,7 @@ def debug_config() -> dict:
             settings.volcengine_tts_app_id.strip(),
             settings.volcengine_tts_access_token.strip(),
             settings.volcengine_tts_cluster.strip(),
-            settings.volcengine_tts_voice_type.strip(),
+            settings.volcengine_tts_zh_cn_female_voice_type.strip() or settings.volcengine_tts_voice_type.strip(),
         ]
     )
     return {
@@ -143,6 +144,14 @@ def debug_config() -> dict:
         "volcengine_tts_cluster": settings.volcengine_tts_cluster,
         "volcengine_tts_voice_type_configured": bool(settings.volcengine_tts_voice_type),
         "volcengine_tts_voice_type": settings.volcengine_tts_voice_type,
+        "volcengine_tts_zh_cn_female_voice_type_configured": bool(settings.volcengine_tts_zh_cn_female_voice_type),
+        "volcengine_tts_zh_cn_male_voice_type_configured": bool(settings.volcengine_tts_zh_cn_male_voice_type),
+        "volcengine_tts_en_us_female_voice_type_configured": bool(settings.volcengine_tts_en_us_female_voice_type),
+        "volcengine_tts_en_us_male_voice_type_configured": bool(settings.volcengine_tts_en_us_male_voice_type),
+        "volcengine_tts_ja_jp_female_voice_type_configured": bool(settings.volcengine_tts_ja_jp_female_voice_type),
+        "volcengine_tts_ja_jp_male_voice_type_configured": bool(settings.volcengine_tts_ja_jp_male_voice_type),
+        "volcengine_tts_ko_kr_female_voice_type_configured": bool(settings.volcengine_tts_ko_kr_female_voice_type),
+        "volcengine_tts_ko_kr_male_voice_type_configured": bool(settings.volcengine_tts_ko_kr_male_voice_type),
         "volcengine_tts_configured": volcengine_tts_configured,
         "volcengine_tts_endpoint": settings.volcengine_tts_endpoint,
         "heygen_api_key_configured": bool(settings.heygen_api_key),
@@ -182,6 +191,7 @@ async def debug_tts_test(payload: TTSTestRequest) -> dict:
         supabase,
         text=payload.text,
         folder="debug/tts-test",
+        language=payload.language,
         voice_type=payload.voice_type,
         speed_ratio=payload.speed_ratio,
         volume_ratio=payload.volume_ratio,
@@ -205,6 +215,7 @@ async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict
             supabase,
             text=payload.text,
             folder="debug/avatar-video/tts",
+            language=payload.language,
             voice_type=selected_voice_type,
             speed_ratio=payload.speed_ratio,
             volume_ratio=payload.volume_ratio,
@@ -332,6 +343,7 @@ async def debug_liveportrait_test(payload: LivePortraitTestRequest) -> dict:
         supabase,
         text=payload.text,
         folder="debug/liveportrait/tts",
+        language=payload.language,
         voice_type=selected_voice_type,
         speed_ratio=payload.speed_ratio,
         volume_ratio=payload.volume_ratio,

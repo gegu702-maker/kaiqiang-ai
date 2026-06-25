@@ -120,6 +120,7 @@ async def process_video_task(supabase: Client, task: dict[str, Any]) -> dict[str
         text=script_package["narration_script"],
         voice_clone=voice_clone,
         folder=f"tts/{task_id}",
+        language=task.get("tts_language") or task.get("language") or "zh-CN",
         voice_type=task.get("tts_voice_name"),
     )
     update_video_task(

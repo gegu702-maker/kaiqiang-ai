@@ -19,6 +19,7 @@ from app.services.avatar_templates import get_avatar_template
 from app.services.musetalk_client import check_musetalk_health, generate_avatar_video_with_musetalk
 from app.services.storage import upload_public_file
 from app.services.tts import synthesize_speech_to_storage
+from app.services.tts.voice_registry import DEFAULT_TTS_LANGUAGE, get_language_config, normalize_tts_language, serialize_voice_registry, validate_tts_voice
 
 router = APIRouter(prefix="/avatar", tags=["avatar"])
 logger = logging.getLogger(__name__)
@@ -38,20 +39,26 @@ AUDIO_TYPES = {
     "audio/aac",
     "application/octet-stream",
 }
-SUPPORTED_TTS_LANGUAGES = {"zh-CN", "en-US"}
-ZH_CN_VOICE_TYPES = {"BV001_streaming", "BV002_streaming"}
-
-
 class TemplateAvatarGenerateRequest(BaseModel):
     script_text: str | None = None
     text: str | None = None
     audio_url: str | None = None
-    language: str | None = None
+    language: str = DEFAULT_TTS_LANGUAGE
+    voice: str | None = None
     voice_type: str | None = None
     avatar_template_id: str = Field(..., min_length=1)
-    speed_ratio: float = 1.0
+    speed_ratio: float = Field(default=1.0, ge=0.5, le=2.0)
     volume_ratio: float = 1.0
     pitch_ratio: float = 1.0
+
+
+class TTSPreviewRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1200)
+    language: str = DEFAULT_TTS_LANGUAGE
+    voice: str | None = None
+    voice_type: str | None = None
+    speed: float | None = Field(default=None, ge=0.5, le=2.0)
+    speed_ratio: float | None = Field(default=None, ge=0.5, le=2.0)
 
 
 @router.get("/health")
@@ -59,6 +66,48 @@ async def avatar_health() -> dict:
     return {
         "status": "ok",
         "musetalk": await check_musetalk_health(),
+    }
+
+
+@router.get("/tts-voices")
+def list_tts_voices() -> dict:
+    return {
+        "default_language": DEFAULT_TTS_LANGUAGE,
+        "languages": serialize_voice_registry(),
+    }
+
+
+@router.post("/tts-preview")
+async def generate_tts_preview(
+    payload: TTSPreviewRequest,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    user = get_authenticated_user(supabase, token)
+    selected_voice_type = payload.voice or payload.voice_type
+    selected_speed = payload.speed if payload.speed is not None else payload.speed_ratio
+    logger.info(
+        "Avatar TTS preview started user_id=%s text_length=%s language=%s voice_type=%s",
+        user["id"],
+        len(payload.text),
+        payload.language,
+        selected_voice_type,
+    )
+    result = await synthesize_speech_to_storage(
+        supabase,
+        text=payload.text,
+        folder="avatar/tts-preview",
+        language=payload.language,
+        voice_type=selected_voice_type,
+        speed_ratio=selected_speed or 1.0,
+    )
+    return {
+        "success": True,
+        "audio_url": result["audio_url"],
+        "duration": result.get("duration", 0),
+        "provider": result["provider"],
+        "language": result.get("language") or normalize_tts_language(payload.language),
+        "voice_type": result.get("voice_type") or selected_voice_type,
     }
 
 
@@ -75,10 +124,7 @@ async def generate_template_avatar_video(
     template_id = payload.avatar_template_id.strip()
     template = get_avatar_template(template_id)
     template_video_url = get_dynamic_template_video_url(template.id)
-    selected_voice_type = payload.voice_type or template.default_voice_type
-    selected_language = _normalize_tts_language(payload.language)
-    if selected_language:
-        _validate_template_tts_voice(selected_language, selected_voice_type)
+    selected_voice_type = payload.voice or payload.voice_type or template.default_voice_type
 
     if not audio_url and not text:
         raise HTTPException(status_code=400, detail="请提供 audio_url，或输入文案用于生成语音。")
@@ -86,6 +132,8 @@ async def generate_template_avatar_video(
     assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
 
     if not audio_url:
+        selected_voice = validate_tts_voice(payload.language, selected_voice_type)
+        selected_language = selected_voice.language
         try:
             logger.info(
                 "Template avatar TTS started user_id=%s template=%s text_length=%s language=%s voice_type=%s",
@@ -100,7 +148,7 @@ async def generate_template_avatar_video(
                 text=text,
                 folder="avatar/template-generate/tts",
                 language=selected_language,
-                voice_type=selected_voice_type,
+                voice_type=selected_voice.id,
                 speed_ratio=payload.speed_ratio,
                 volume_ratio=payload.volume_ratio,
                 pitch_ratio=payload.pitch_ratio,
@@ -139,7 +187,10 @@ async def generate_avatar_video(
     video_file: UploadFile = File(...),
     audio_file: UploadFile | None = File(None),
     script_text: str | None = Form(None),
+    language: str = Form(DEFAULT_TTS_LANGUAGE),
+    voice: str | None = Form(None),
     voice_type: str | None = Form(None),
+    speed_ratio: float = Form(1.0),
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> dict:
@@ -175,12 +226,21 @@ async def generate_avatar_video(
             )
             logger.info("Avatar input audio uploaded user_id=%s audio_url=%s", user["id"], audio_url)
         else:
-            logger.info("Avatar TTS started user_id=%s text_length=%s voice_type=%s", user["id"], len(text), voice_type or settings.volcengine_tts_voice_type)
+            selected_voice_type = voice or voice_type
+            logger.info(
+                "Avatar TTS started user_id=%s text_length=%s language=%s voice_type=%s",
+                user["id"],
+                len(text),
+                language,
+                selected_voice_type or settings.volcengine_tts_voice_type,
+            )
             tts_result = await synthesize_speech_to_storage(
                 supabase,
                 text=text,
                 folder="avatar-inputs/tts",
-                voice_type=voice_type,
+                language=language,
+                voice_type=selected_voice_type,
+                speed_ratio=speed_ratio,
             )
             audio_url = tts_result["audio_url"]
             logger.info(
@@ -368,37 +428,20 @@ def _safe_fail_task(supabase: Client, task_id: str, message: str) -> None:
 
 
 def _normalize_tts_language(language: str | None) -> str | None:
-    clean = (language or "").strip()
-    if not clean:
+    if not (language or "").strip():
         return None
-    if clean not in SUPPORTED_TTS_LANGUAGES:
-        raise HTTPException(status_code=400, detail=f"Unsupported TTS language: {clean}")
-    return clean
+    normalized = normalize_tts_language(language)
+    get_language_config(normalized)
+    return normalized
 
 
 def _validate_template_tts_voice(language: str, voice_type: str) -> None:
-    selected_voice = (voice_type or "").strip()
-    if language == "zh-CN":
-        allowed_voices = {
-            *ZH_CN_VOICE_TYPES,
-            settings.volcengine_tts_zh_cn_female_voice_type.strip(),
-            settings.volcengine_tts_zh_cn_male_voice_type.strip(),
-        }
-        allowed_voices = {voice for voice in allowed_voices if voice}
-        if selected_voice not in allowed_voices:
-            raise HTTPException(status_code=400, detail="Unsupported zh-CN TTS voice_type.")
-        return
-
-    if language == "en-US":
-        configured_voices = {
-            settings.volcengine_tts_en_us_female_voice_type.strip(),
-            settings.volcengine_tts_en_us_male_voice_type.strip(),
-        }
-        configured_voices = {voice for voice in configured_voices if voice}
-        if not configured_voices:
-            raise HTTPException(status_code=400, detail="English TTS voices are not configured yet.")
-        if selected_voice not in configured_voices:
-            raise HTTPException(status_code=400, detail="Unsupported en-US TTS voice_type.")
+    try:
+        validate_tts_voice(language, voice_type)
+    except HTTPException as error:
+        if normalize_tts_language(language) == "en-US" and "coming soon" in str(error.detail).lower():
+            raise HTTPException(status_code=400, detail="English TTS voices are not configured yet.") from error
+        raise
 
 
 def _compact_error_message(message: str) -> str:
