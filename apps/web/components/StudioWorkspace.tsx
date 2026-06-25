@@ -6,12 +6,12 @@ import { useMemo, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { runViralPipeline } from "@/lib/api";
+import { studioCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
 import type { ViralPipelineResult, ViralPipelineStatus, ViralRewrite } from "@/lib/types";
 
 type StepState = "idle" | "running" | "done";
-
-const workflowSteps = ["解析链接", "下载视频", "提取音频", "自动转写", "拆解爆点", "生成原创版本", "分析完成"];
+type StudioCopy = (typeof studioCopy)[keyof typeof studioCopy];
 
 const failedStepIndex: Record<ViralPipelineStatus, number> = {
   pending: 0,
@@ -25,66 +25,9 @@ const failedStepIndex: Record<ViralPipelineStatus, number> = {
   failed: 0,
 };
 
-const copy = {
-  zh: {
-    badge: "AI Video Agent Studio",
-    title: "AI 短视频生产工厂",
-    subtitle: "粘贴爆款链接，AI 自动拆解、仿写并生成数字人口播视频。",
-    placeholder: "粘贴爆款视频链接，AI自动拆解并生成原创口播",
-    analyze: "开始分析",
-    analyzing: "分析中",
-    supports: "支持 抖音 / TikTok / YouTube Shorts",
-    fallback: "该视频暂不支持自动解析，请上传视频继续分析。",
-    login: "请先登录后再分析爆款链接。",
-    status: "Agent 执行状态",
-    preview: "实时预览",
-    metadata: "视频信息",
-    transcript: "自动转写文案",
-    topic: "视频主题",
-    hook: "黄金3秒",
-    selling: "卖点",
-    structure: "结构拆解",
-    template: "模板",
-    rewrites: "AI仿写区",
-    copy: "复制",
-    copied: "已复制",
-    continue: "继续仿写",
-    avatar: "生成数字人",
-    empty: "粘贴一个爆款链接后开始。",
-    noResult: "完成分析后，这里会显示自动拆解结果和原创仿写版本。",
-  },
-  en: {
-    badge: "AI Video Agent Studio",
-    title: "AI Short Video Factory",
-    subtitle: "Paste a viral link. AI analyzes, rewrites, and turns it into a talking-avatar video.",
-    placeholder: "Paste a viral video link. AI will analyze and rewrite it.",
-    analyze: "Start analysis",
-    analyzing: "Analyzing",
-    supports: "Supports Douyin / TikTok / YouTube Shorts",
-    fallback: "This video is not supported for automatic parsing yet. Upload a video to continue.",
-    login: "Please sign in before analyzing viral links.",
-    status: "Agent status",
-    preview: "Live preview",
-    metadata: "Video metadata",
-    transcript: "Transcript",
-    topic: "Video topic",
-    hook: "Golden 3 seconds",
-    selling: "Selling points",
-    structure: "Structure",
-    template: "Template",
-    rewrites: "AI rewrites",
-    copy: "Copy",
-    copied: "Copied",
-    continue: "Rewrite more",
-    avatar: "Generate avatar",
-    empty: "Paste a viral link to begin.",
-    noResult: "Analysis results and original rewrites will appear here after the run.",
-  },
-};
-
 export function StudioWorkspace() {
-  const { locale } = useLanguage();
-  const t = copy[locale];
+  const { locale, selectedLocale } = useLanguage();
+  const t = studioCopy[selectedLocale] ?? studioCopy.en;
   const supabase = useMemo(() => createClient(), []);
   const [sourceUrl, setSourceUrl] = useState("");
   const [activeStep, setActiveStep] = useState(-1);
@@ -94,14 +37,14 @@ export function StudioWorkspace() {
   const [isRunning, setIsRunning] = useState(false);
   const hasStarted = activeStep >= 0;
   const rewrites = pipelineResult?.rewrites || [];
-  const fallbackActions = notice && sourceUrl.trim() && pipelineResult?.ok === false ? getFallbackActions(locale) : [];
+  const fallbackActions = notice && sourceUrl.trim() && pipelineResult?.ok === false ? getFallbackActions(t) : [];
   const steps = useMemo(
     () =>
-      workflowSteps.map((label, index): { label: string; state: StepState } => ({
+      t.workflowSteps.map((label, index): { label: string; state: StepState } => ({
         label,
         state: activeStep > index ? "done" : activeStep === index ? "running" : "idle",
       })),
-    [activeStep],
+    [activeStep, t.workflowSteps],
   );
 
   async function startWorkflow() {
@@ -251,14 +194,14 @@ export function StudioWorkspace() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={pipelineResult.metadata.thumbnail} alt={pipelineResult.metadata.title || "Douyin thumbnail"} className="aspect-[3/4] w-full rounded-md border border-white/10 object-cover" />
                 ) : (
-                  <div className="grid aspect-[3/4] place-items-center rounded-md border border-white/10 bg-white/[0.035] text-xs text-slate-500">No cover</div>
+                  <div className="grid aspect-[3/4] place-items-center rounded-md border border-white/10 bg-white/[0.035] text-xs text-slate-500">{t.noCover}</div>
                 )}
                 <div className="space-y-2 text-sm leading-6 text-slate-300">
-                  <InfoRow label="platform" value={pipelineResult.metadata.platform || "douyin"} />
-                  <InfoRow label="title" value={pipelineResult.metadata.title || "-"} />
-                  <InfoRow label="duration" value={pipelineResult.metadata.duration ? `${pipelineResult.metadata.duration}s` : "-"} />
-                  <InfoRow label="downloadable" value={pipelineResult.metadata.downloadable ? "true" : "false"} />
-                  <InfoRow label="url" value={pipelineResult.metadata.webpage_url || sourceUrl} />
+                  <InfoRow label={t.metadataLabels.platform} value={pipelineResult.metadata.platform || "douyin"} />
+                  <InfoRow label={t.metadataLabels.title} value={pipelineResult.metadata.title || "-"} />
+                  <InfoRow label={t.metadataLabels.duration} value={pipelineResult.metadata.duration ? `${pipelineResult.metadata.duration}s` : "-"} />
+                  <InfoRow label={t.metadataLabels.downloadable} value={pipelineResult.metadata.downloadable ? "true" : "false"} />
+                  <InfoRow label={t.metadataLabels.url} value={pipelineResult.metadata.webpage_url || sourceUrl} />
                 </div>
               </div>
             </section>
@@ -342,7 +285,7 @@ export function StudioWorkspace() {
               )}
             </div>
             <Link className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-cyan hover:text-cyan/80" href="/studio/viral-analyzer">
-              Viral Analyzer
+              {t.advancedAnalyzer}
               <ExternalLink size={15} />
             </Link>
           </section>
@@ -361,33 +304,20 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function getFallbackActions(locale: "zh" | "en") {
-  const text = {
-    zh: {
-      upload: "上传视频",
-      paste: "粘贴文案",
-      check: "检查链接",
-    },
-    en: {
-      upload: "Upload video",
-      paste: "Paste script",
-      check: "Check link",
-    },
-  }[locale];
-
+function getFallbackActions(t: StudioCopy) {
   return [
     {
-      label: text.upload,
+      label: t.fallbackActions.upload,
       icon: Video,
       href: "/studio/viral-analyzer",
     },
     {
-      label: text.paste,
+      label: t.fallbackActions.paste,
       icon: FileText,
       href: "/studio/viral-analyzer",
     },
     {
-      label: text.check,
+      label: t.fallbackActions.check,
       icon: ExternalLink,
       onClick: () => document.querySelector<HTMLInputElement>("input")?.focus(),
     },
