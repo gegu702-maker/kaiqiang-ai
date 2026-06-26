@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { avatarTemplates } from "@/lib/avatarTemplates";
+import { avatarCopy, avatarTemplateCopy, type AvatarCopy } from "@/lib/i18n/avatar";
 import { createClient } from "@/lib/supabase/client";
 import type { UsageSummary } from "@/lib/types";
 import {
@@ -59,181 +60,10 @@ type PreviewState = "idle" | "generating" | "completed" | "failed";
 
 const AVATAR_HEALTH_READY_STATUSES = new Set(["ok", "ready", "healthy", "success"]);
 const TTS_SPEED_OPTIONS = [
-  { value: 0.9, label: { zh: "稳定自然", en: "Stable natural" } },
-  { value: 1, label: { zh: "标准", en: "Standard" } },
-  { value: 1.1, label: { zh: "稍快", en: "Slightly faster" } },
-];
-
-const copy = {
-  zh: {
-    title: "数字人口播生成器",
-    subtitle: "选择商务数字人模板，输入文案，MuseTalk 会自动生成口播视频。",
-    template: "数字人模板",
-    templateHint: "选择本次出镜的商务数字人。",
-    video: "自定义人物视频",
-    script: "口播文案",
-    audio: "口播音频",
-    videoHint: "可选。上传后将使用你的自定义视频；不上传则使用所选商务模板。",
-    scriptHint: "输入文案后，系统会生成语音、驱动数字人，并默认添加中文字幕。",
-    scriptLengthHint: "建议 15-60 秒；句子不要太长，多用标点制造自然停顿，口播语速不要太快。",
-    scriptPlaceholder: "输入要数字人口播的文案...",
-    audioHint: "上传音频后，将优先使用你的音频；未上传音频时会自动生成语音。支持 wav / mp3 / m4a。",
-    ttsLanguage: "配音语言",
-    ttsLanguageHint: "语言选择只影响配音音色，不会自动翻译文案；默认中文流程不变。",
-    ttsVoice: "配音音色",
-    ttsVoiceHint: "中文音色已可用；英文配音需配置并验证英文音色后启用。",
-    englishVoiceUnavailable: "英文配音音色尚未配置，请先使用中文普通话。",
-    ttsPreview: "试听配音",
-    ttsPreviewGenerating: "试听生成中",
-    ttsPreviewFailed: "试听生成失败",
-    ttsPreviewReady: "试听音频已生成",
-    unsupportedTtsVoice: "当前语言暂无可用音色。",
-    comingSoon: "即将上线",
-    realismTitle: "真实度建议",
-    realismVideoTips: ["正脸出镜", "1080p 或更高", "光线稳定", "背景干净", "脸部占画面足够大", "头部动作不要太大"],
-    realismScriptTips: ["句子不要太长", "多用标点制造自然停顿", "15-60 秒更稳", "语速不要太快"],
-    ttsSpeed: "TTS 语速",
-    ttsSpeedHint: "仅用于模板文案自动配音；上传音频或自定义视频时保持原音频节奏。",
-    steps: ["选择商务模板", "输入口播文案", "生成并下载 MP4"],
-    generate: "生成口播视频",
-    generating: "生成中",
-    login: "登录状态已失效，请重新登录后再试。",
-    waitingGpu: "检查数字人服务中",
-    autodlStarting: "启动数字人服务中",
-    musetalkLoading: "加载数字人模型中",
-    videoGenerating: "视频生成中",
-    uploadingResult: "上传结果中",
-    queued: "排队中",
-    running: "生成中",
-    completed: "已完成",
-    failed: "失败",
-    download: "下载 MP4",
-    copyLink: "复制链接",
-    copied: "已复制",
-    result: "生成结果",
-    resultReady: "视频已生成。",
-    subtitleBurned: "已添加中文字幕",
-    subtitleFallbackOriginal: "字幕处理失败，已保留原视频",
-    subtitleDisabled: "未开启字幕",
-    subtitleUnknown: "",
-    preview: "预览",
-    empty: "请选择模板并输入口播文案。",
-    quotaTitle: "生成额度",
-    quotaLoading: "正在读取额度",
-    quotaUnlimited: "当前套餐不限额度",
-    quotaSummary: (remaining: number, used: number, total: number) => `剩余 ${remaining} 次，本月已用 ${used}/${total} 次`,
-    cost: "本次生成预计消耗 1 次额度",
-    quotaEmpty: "本月生成次数已用完，请升级套餐或联系管理员。",
-    upgrade: "升级套餐",
-    healthChecking: "正在检查数字人生成服务状态...",
-    healthReady: "数字人生成服务已就绪。",
-    healthUnavailable: "数字人 GPU 服务当前未开启，生成暂不可用。请开启 AutoDL/GPU 后再生成。",
-    healthRetry: "重新检查服务状态",
-    healthCheckingButton: "检查服务中...",
-    healthUnavailableButton: "服务未就绪",
-    selectedTemplate: "已选择模板",
-    templateComingSoon: "该模板视频即将上线，请先手动上传人物视频。",
-    history: "最近任务",
-    noHistory: "暂无历史任务。",
-    deleteTask: "删除",
-    deletingTask: "删除中",
-    deleteConfirm: "确认删除这条历史任务吗？视频文件不会立即从存储中物理删除。",
-    deleteRunning: "任务仍在生成中，暂不能删除。",
-    deleteLogin: "请先登录后再删除。",
-    deleteNotFound: "任务不存在或已删除。",
-    deleteFailed: "删除失败，请稍后重试。",
-    autoSubtitle: "自动字幕",
-    authExpired: "登录状态已失效，请重新登录后再试。",
-    serviceUnavailable: "数字人 GPU 服务当前未开启，生成暂不可用。请开启 AutoDL/GPU 后再生成。",
-    languageUnavailable: "英文配音音色尚未配置，请先使用中文普通话。",
-    fileUnsupported: "文件格式暂不支持，请上传 MP4/MOV/WebM 视频或 WAV/MP3/M4A 音频。",
-    genericError: "生成失败，请稍后重试或联系管理员。",
-  },
-  en: {
-    title: "Avatar Video Generator",
-    subtitle: "Choose a business avatar template, enter a script, and MuseTalk will generate a talking video.",
-    template: "Avatar Template",
-    templateHint: "Choose the business presenter for this video.",
-    video: "Custom Person Video",
-    script: "Voiceover Script",
-    audio: "Voice Audio",
-    videoHint: "Optional. Upload a custom video to override the selected business template.",
-    scriptHint: "Enter a script to synthesize speech, drive the avatar, and add Chinese subtitles by default.",
-    scriptLengthHint: "15-60 seconds is recommended. Keep sentences short, use punctuation for natural pauses, and avoid speaking too fast.",
-    scriptPlaceholder: "Enter the script for the avatar...",
-    audioHint: "Uploaded audio takes priority. Without audio, speech is generated automatically. wav / mp3 / m4a supported.",
-    ttsLanguage: "Voice language",
-    ttsLanguageHint: "Language only affects the voiceover voice. It does not translate your script. Chinese remains the default.",
-    ttsVoice: "Voice",
-    ttsVoiceHint: "Mandarin voices are available. English voiceover requires verified English voice configuration.",
-    englishVoiceUnavailable: "English voiceover is not configured yet. Please use Mandarin Chinese.",
-    ttsPreview: "Preview voice",
-    ttsPreviewGenerating: "Generating preview",
-    ttsPreviewFailed: "Preview failed",
-    ttsPreviewReady: "Preview audio is ready",
-    unsupportedTtsVoice: "No enabled voices are available for this language.",
-    comingSoon: "Coming soon",
-    realismTitle: "Realism tips",
-    realismVideoTips: ["Front-facing shot", "1080p or higher", "Stable lighting", "Clean background", "Face large enough in frame", "Avoid large head motion"],
-    realismScriptTips: ["Keep sentences short", "Use punctuation for pauses", "15-60 seconds is steadier", "Avoid fast delivery"],
-    ttsSpeed: "TTS speed",
-    ttsSpeedHint: "Applies only to template text-to-speech. Uploaded audio and custom video keep their original rhythm.",
-    steps: ["Choose template", "Enter script", "Generate MP4"],
-    generate: "Generate Avatar Video",
-    generating: "Generating",
-    login: "Your login session expired. Please sign in again and retry.",
-    waitingGpu: "Checking avatar service",
-    autodlStarting: "Starting avatar service",
-    musetalkLoading: "Loading avatar model",
-    videoGenerating: "Generating video",
-    uploadingResult: "Uploading result",
-    queued: "Queued",
-    running: "Generating",
-    completed: "Completed",
-    failed: "Failed",
-    download: "Download MP4",
-    copyLink: "Copy link",
-    copied: "Copied",
-    result: "Result",
-    resultReady: "Video generated.",
-    subtitleBurned: "Chinese subtitles added",
-    subtitleFallbackOriginal: "Subtitle processing failed; original video preserved",
-    subtitleDisabled: "Subtitles not enabled",
-    subtitleUnknown: "",
-    preview: "Preview",
-    empty: "Choose a template and enter a script.",
-    quotaTitle: "Generation credits",
-    quotaLoading: "Loading credits",
-    quotaUnlimited: "Current plan has custom credits",
-    quotaSummary: (remaining: number, used: number, total: number) => `${remaining} left, ${used}/${total} used this month`,
-    cost: "This generation costs 1 credit",
-    quotaEmpty: "Monthly generations are used up. Please upgrade your plan or contact an administrator.",
-    upgrade: "Upgrade",
-    healthChecking: "Checking avatar generation service...",
-    healthReady: "Avatar generation service is ready.",
-    healthUnavailable: "The avatar GPU service is currently off, so generation is unavailable. Please start AutoDL/GPU before generating.",
-    healthRetry: "Recheck service status",
-    healthCheckingButton: "Checking service...",
-    healthUnavailableButton: "Service unavailable",
-    selectedTemplate: "Selected template",
-    templateComingSoon: "This template video is coming soon. Upload a person video for now.",
-    history: "Recent tasks",
-    noHistory: "No recent tasks.",
-    deleteTask: "Delete",
-    deletingTask: "Deleting",
-    deleteConfirm: "Delete this history task? The video file will not be physically removed from storage immediately.",
-    deleteRunning: "This task is still generating and cannot be deleted yet.",
-    deleteLogin: "Please sign in before deleting.",
-    deleteNotFound: "This task does not exist or was already deleted.",
-    deleteFailed: "Delete failed. Please retry later.",
-    autoSubtitle: "Auto subtitles",
-    authExpired: "Your login session expired. Please sign in again and retry.",
-    serviceUnavailable: "The avatar GPU service is currently off, so generation is unavailable. Please start AutoDL/GPU before generating.",
-    languageUnavailable: "English voiceover is not configured yet. Please use Mandarin Chinese.",
-    fileUnsupported: "This file format is not supported. Upload MP4/MOV/WebM video or WAV/MP3/M4A audio.",
-    genericError: "Generation failed. Please retry later or contact an administrator.",
-  },
-};
+  { value: 0.9, labelKey: "stable" },
+  { value: 1, labelKey: "standard" },
+  { value: 1.1, labelKey: "faster" },
+] as const;
 
 export function AvatarVideoGenerator({
   initialTemplateId,
@@ -242,8 +72,8 @@ export function AvatarVideoGenerator({
   initialTemplateId?: string;
   initialScriptText?: string;
 }) {
-  const { locale } = useLanguage();
-  const current = copy[locale === "zh" ? "zh" : "en"];
+  const { selectedLocale } = useLanguage();
+  const current = avatarCopy[selectedLocale] ?? avatarCopy.en;
   const supabase = useMemo(() => createClient(), []);
   const initialAvatarTemplate = avatarTemplates.some((template) => template.id === initialTemplateId) ? initialTemplateId : "business_female_01";
   const [avatarTemplateId, setAvatarTemplateId] = useState(initialAvatarTemplate);
@@ -710,6 +540,11 @@ export function AvatarVideoGenerator({
           <div className="grid gap-3 sm:grid-cols-2">
             {avatarTemplates.map((template) => {
               const isSelected = avatarTemplateId === template.id;
+              const templateCopy = avatarTemplateCopy[template.id as keyof typeof avatarTemplateCopy]?.[selectedLocale];
+              const templateName = templateCopy?.name ?? template.name;
+              const templateSecondary = templateCopy?.secondary ?? template.englishName;
+              const templateDescription = templateCopy?.description ?? template.description;
+              const templateUseCases = templateCopy?.useCases ?? template.useCases;
               return (
                 <label key={template.id} className="cursor-pointer">
                   <input
@@ -725,14 +560,14 @@ export function AvatarVideoGenerator({
                       {template.preview_video_url ? (
                         <video className="h-full w-full object-cover" src={template.preview_video_url} poster={template.avatar_image} muted loop playsInline autoPlay preload="metadata" />
                       ) : (
-                        <Image className="object-cover" src={template.avatar_image} alt={template.name} fill sizes="(max-width: 640px) 100vw, 320px" />
+                        <Image className="object-cover" src={template.avatar_image} alt={templateName} fill sizes="(max-width: 640px) 100vw, 320px" />
                       )}
                     </div>
                     <div className="space-y-2 p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="font-semibold text-slate-950">{template.name}</p>
-                          <p className="text-sm font-medium text-blue-700">{template.englishName}</p>
+                          <p className="font-semibold text-slate-950">{templateName}</p>
+                          <p className="text-sm font-medium text-blue-700">{templateSecondary}</p>
                         </div>
                         {isSelected ? (
                           <span className="grid size-6 shrink-0 place-items-center rounded-full bg-blue-600 text-white">
@@ -740,9 +575,9 @@ export function AvatarVideoGenerator({
                           </span>
                         ) : null}
                       </div>
-                      <p className="text-sm leading-6 text-slate-600">{template.description}</p>
+                      <p className="text-sm leading-6 text-slate-600">{templateDescription}</p>
                       <div className="flex flex-wrap gap-1.5">
-                        {template.useCases.map((useCase) => (
+                        {templateUseCases.map((useCase) => (
                           <span key={useCase} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
                             {useCase}
                           </span>
@@ -827,7 +662,7 @@ export function AvatarVideoGenerator({
             >
               {TTS_SPEED_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
-                  {option.label[locale === "zh" ? "zh" : "en"]} ({option.value.toFixed(1)}x)
+                  {current.ttsSpeedOptions[option.labelKey]} ({option.value.toFixed(1)}x)
                 </option>
               ))}
             </select>
@@ -931,7 +766,7 @@ function TaskHistoryItem({
   onDelete,
 }: {
   task: AvatarTask;
-  labels: (typeof copy)["zh"];
+  labels: AvatarCopy;
   classifyError: (message: string) => string;
   onDelete: (taskId: string) => Promise<void>;
 }) {
@@ -1008,7 +843,7 @@ function formatDate(value?: string) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
-function getStatusLabel(status: GenerateState | AvatarTask["status"], current: (typeof copy)["zh"]) {
+function getStatusLabel(status: GenerateState | AvatarTask["status"], current: AvatarCopy) {
   if (status === "queued") return current.queued;
   if (status === "running") return current.running;
   if (status === "completed") return current.completed;
@@ -1016,7 +851,7 @@ function getStatusLabel(status: GenerateState | AvatarTask["status"], current: (
   return "";
 }
 
-function getStageLabel(stage: ProgressStage, current: (typeof copy)["zh"]) {
+function getStageLabel(stage: ProgressStage, current: AvatarCopy) {
   if (stage === "waiting_gpu") return current.waitingGpu;
   if (stage === "autodl_starting" || stage === "gpu_starting") return current.autodlStarting;
   if (stage === "musetalk_loading" || stage === "model_loading") return current.musetalkLoading;
@@ -1032,14 +867,14 @@ function normalizeSubtitleStatus(status?: string): AvatarSubtitleStatus {
   return "unknown";
 }
 
-function getSubtitleNotice(status: AvatarSubtitleStatus, current: (typeof copy)["zh"]) {
+function getSubtitleNotice(status: AvatarSubtitleStatus, current: AvatarCopy) {
   if (status === "burned") return current.subtitleBurned;
   if (status === "fallback_original") return current.subtitleFallbackOriginal;
   if (status === "disabled") return current.subtitleDisabled;
   return current.subtitleUnknown;
 }
 
-function TipList({ items }: { items: string[] }) {
+function TipList({ items }: { items: readonly string[] }) {
   return (
     <ul className="grid gap-1.5">
       {items.map((item) => (
