@@ -5,84 +5,23 @@ import { useActionState } from "react";
 import { BriefcaseBusiness, CheckCircle2, ChevronDown, Clapperboard, Mail, Megaphone, PlayCircle, ShoppingBag, Sparkles, UsersRound } from "lucide-react";
 
 import { joinWaitlistAction } from "@/app/actions/waitlist";
-import { useLanguage } from "@/components/LanguageProvider";
-import { customerCases, getFeaturedCases, type CaseLocale, type CustomerCase } from "@/lib/cases";
+import { useLanguage, type Locale } from "@/components/LanguageProvider";
+import { customerCases, getFeaturedCases, type CustomerCase } from "@/lib/cases";
+import { landingCopy } from "@/lib/i18n/landing";
 
 const initialWaitlistState = { ok: false, message: "" };
 
-const copy = {
-  zh: {
-    demoEyebrow: "演示案例",
-    demoTitle: "输入文案，\n生成真实 AI 数字人口播视频。",
-    before: "真实演示",
-    after: "产品介绍",
-    placeholder: "真实案例生成中",
-    previewSoon: "真实视频",
-    examplesEyebrow: "案例展示",
-    examplesTitle: "生产环境生成的真实案例视频",
-    trustedTitle: "面向未来创作者",
-    trustedBody: "为创作者、营销团队和企业提供真实数字人口播能力。",
-    waitlistEyebrow: "抢先体验",
-    waitlistTitle: "加入等待名单",
-    waitlistBody: "告诉我们你的使用场景，优先获取新模板、案例和商业化功能。",
-    email: "邮箱",
-    industry: "行业",
-    useCase: "使用场景",
-    industryPlaceholder: "行业，例如电商 / 教育 / SaaS",
-    useCasePlaceholder: "使用场景，例如产品介绍、课程视频、企业培训",
-    submit: "加入等待名单",
-    faqEyebrow: "FAQ",
-    faqTitle: "常见问题",
-    faq: [
-      ["如何生成数字人视频？", "上传人物视频和音频后，系统会创建异步任务并生成口型同步的数字人口播视频。"],
-      ["支持哪些格式？", "人物视频支持 mp4 / mov / webm，音频支持 wav / mp3 / m4a 等常见格式。"],
-      ["免费额度是多少？", "当前 Free 套餐默认每月 3 次生成额度，适合先验证效果。"],
-      ["视频生成需要多久？", "通常几分钟内完成，具体取决于素材时长、排队情况和 GPU 状态。"],
-      ["是否支持商业用途？", "支持用于商业内容验证。请确保上传素材、肖像和音频拥有合法授权。"],
-    ],
-  },
-  en: {
-    demoEyebrow: "Hero Demo",
-    demoTitle: "Enter a script,\ngenerate a real AI talking avatar video.",
-    before: "Real Demo",
-    after: "Product Demo",
-    placeholder: "Real case generating",
-    previewSoon: "Real video",
-    examplesEyebrow: "Examples",
-    examplesTitle: "Real production-generated customer examples",
-    trustedTitle: "Trusted By Future Creators",
-    trustedBody: "Built for creators, marketers, and businesses.",
-    waitlistEyebrow: "Get Early Access",
-    waitlistTitle: "Join the waitlist",
-    waitlistBody: "Share your use case to get early access to new templates, demos, and commercial features.",
-    email: "Email",
-    industry: "Industry",
-    useCase: "Use Case",
-    industryPlaceholder: "Industry, e.g. e-commerce / education / SaaS",
-    useCasePlaceholder: "Use case, e.g. product demos, course videos, training",
-    submit: "Join waitlist",
-    faqEyebrow: "FAQ",
-    faqTitle: "Frequently Asked Questions",
-    faq: [
-      ["How do I generate an AI avatar video?", "Upload a person video and an audio file. Kaiqiang AI creates an async task and generates a lip-synced talking avatar video."],
-      ["Which formats are supported?", "Person videos support mp4 / mov / webm, and audio supports common formats such as wav / mp3 / m4a."],
-      ["How many free credits are included?", "The current Free plan includes 3 generations per month, designed for validating results first."],
-      ["How long does generation take?", "Most videos complete within minutes, depending on media length, queue status, and GPU availability."],
-      ["Can I use the videos commercially?", "Commercial validation is supported. Make sure you have proper rights for uploaded footage, likeness, and audio."],
-    ],
-  },
-};
-
 const exampleIcons = [Megaphone, Clapperboard, ShoppingBag, BriefcaseBusiness];
+type HomeConversionCopy = (typeof landingCopy)[Locale];
 
 export function HomeConversionSections() {
-  const { locale } = useLanguage();
-  const current = copy[locale];
+  const { locale, selectedLocale } = useLanguage();
+  const current = landingCopy[selectedLocale] ?? landingCopy.en;
 
   return (
     <>
-      <HeroDemoShowcase current={current} />
-      <CustomerExamples current={current} />
+      <HeroDemoShowcase current={current} selectedLocale={selectedLocale} />
+      <CustomerExamples current={current} selectedLocale={selectedLocale} />
       <TrustedByFutureCreators current={current} />
       <WaitlistForm current={current} locale={locale} />
       <HomeFAQ current={current} />
@@ -90,8 +29,7 @@ export function HomeConversionSections() {
   );
 }
 
-function HeroDemoShowcase({ current }: { current: (typeof copy)["zh"] }) {
-  const { locale } = useLanguage();
+function HeroDemoShowcase({ current, selectedLocale }: { current: HomeConversionCopy; selectedLocale: Locale }) {
   const featuredCases = getFeaturedCases();
   const beforeCase = featuredCases[0] ?? customerCases[0];
   const afterCase = featuredCases[1] ?? customerCases[1] ?? beforeCase;
@@ -104,21 +42,23 @@ function HeroDemoShowcase({ current }: { current: (typeof copy)["zh"] }) {
           <h2 className="mt-4 whitespace-pre-line text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.demoTitle}</h2>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
-          <DemoVideo label={current.before} item={beforeCase} locale={locale} placeholder={current.placeholder} />
-          <DemoVideo label={current.after} item={afterCase} locale={locale} placeholder={current.placeholder} />
+          <DemoVideo label={current.before} item={beforeCase} locale={selectedLocale} placeholder={current.placeholder} />
+          <DemoVideo label={current.after} item={afterCase} locale={selectedLocale} placeholder={current.placeholder} />
         </div>
       </div>
     </section>
   );
 }
 
-function DemoVideo({ label, item, locale, placeholder }: { label: string; item: CustomerCase; locale: CaseLocale; placeholder: string }) {
+function DemoVideo({ label, item, locale, placeholder }: { label: string; item: CustomerCase; locale: Locale; placeholder: string }) {
+  const title = item.title[locale] ?? item.title.en;
+
   return (
     <article className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_14px_38px_rgba(15,23,42,0.06)]">
       <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-slate-950">{label}</p>
-          <p className="mt-0.5 truncate text-xs text-slate-500">{item.title[locale]}</p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">{title}</p>
         </div>
         <Sparkles size={16} className="text-indigo-500" />
       </div>
@@ -130,9 +70,7 @@ function DemoVideo({ label, item, locale, placeholder }: { label: string; item: 
   );
 }
 
-function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
-  const { locale } = useLanguage();
-
+function CustomerExamples({ current, selectedLocale }: { current: HomeConversionCopy; selectedLocale: Locale }) {
   return (
     <section id="examples" className="border-y border-slate-200/70 bg-white/68 px-6 py-16 sm:px-10 lg:py-20">
       <div className="mx-auto max-w-[1280px]">
@@ -143,8 +81,8 @@ function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
         <div className="mt-9 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {customerCases.map((item, index) => {
             const Icon = exampleIcons[index];
-            const title = item.title[locale];
-            const desc = item.description[locale];
+            const title = item.title[selectedLocale] ?? item.title.en;
+            const desc = item.description[selectedLocale] ?? item.description.en;
             return (
               <article key={title} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_14px_38px_rgba(15,23,42,0.05)]">
                 <div className="relative aspect-video bg-slate-100">
@@ -181,7 +119,7 @@ function CustomerExamples({ current }: { current: (typeof copy)["zh"] }) {
   );
 }
 
-function TrustedByFutureCreators({ current }: { current: (typeof copy)["zh"] }) {
+function TrustedByFutureCreators({ current }: { current: HomeConversionCopy }) {
   return (
     <section className="mx-auto max-w-[1280px] px-6 py-14 sm:px-10">
       <div className="grid gap-5 rounded-lg border border-slate-200 bg-slate-950 p-6 text-white shadow-[0_16px_44px_rgba(15,23,42,0.13)] sm:p-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">
@@ -197,7 +135,7 @@ function TrustedByFutureCreators({ current }: { current: (typeof copy)["zh"] }) 
   );
 }
 
-function WaitlistForm({ current, locale }: { current: (typeof copy)["zh"]; locale: "zh" | "en" }) {
+function WaitlistForm({ current, locale }: { current: HomeConversionCopy; locale: "zh" | "en" }) {
   const [state, action] = useActionState(joinWaitlistAction, initialWaitlistState);
 
   return (
@@ -237,7 +175,7 @@ function WaitlistForm({ current, locale }: { current: (typeof copy)["zh"]; local
   );
 }
 
-function HomeFAQ({ current }: { current: (typeof copy)["zh"] }) {
+function HomeFAQ({ current }: { current: HomeConversionCopy }) {
   return (
     <section className="border-t border-slate-200/70 bg-white/68 px-6 py-16 sm:px-10 lg:py-20">
       <div className="mx-auto max-w-[980px]">

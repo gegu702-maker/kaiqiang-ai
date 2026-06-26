@@ -1,0 +1,156 @@
+export const commonCopy = {
+  zh: {
+    contactActions: {
+      phone: "电话",
+      email: "邮箱",
+      copyPhone: "复制电话",
+      copyEmail: "复制邮箱",
+    },
+    footer: {
+      description: "Kaiqiang AI 专注于数字人视频、AI 口播生成和创作者内容工具。",
+      pricing: "定价",
+      templates: "模板",
+      avatarStudio: "数字人工作台",
+      contact: "联系",
+      contactTitle: "联系我们",
+      contactBody: "需要商务咨询、定制模板或生成支持，可以直接联系。",
+    },
+    pricingContact: {
+      label: "联系我们",
+      title: "需要定制套餐或商务支持？",
+      body: "如需团队额度、定制模板或上线前咨询，可以直接联系。",
+    },
+  },
+  en: {
+    contactActions: {
+      phone: "Phone",
+      email: "Email",
+      copyPhone: "Copy Phone",
+      copyEmail: "Copy Email",
+    },
+    footer: {
+      description: "AI Avatar Generator for digital human videos, talking avatar workflows, and creator-ready AI video generation.",
+      pricing: "Pricing",
+      templates: "Templates",
+      avatarStudio: "Avatar Studio",
+      contact: "Contact",
+      contactTitle: "Contact",
+      contactBody: "Need business consultation, custom templates, or generation support? Feel free to contact us.",
+    },
+    pricingContact: {
+      label: "Contact",
+      title: "Need a custom plan or business support?",
+      body: "Reach out for team credits, custom templates, or pre-launch questions.",
+    },
+  },
+  ja: {
+    contactActions: {
+      phone: "電話",
+      email: "メール",
+      copyPhone: "電話番号をコピー",
+      copyEmail: "メールをコピー",
+    },
+    footer: {
+      description: "Kaiqiang AI はデジタルヒューマン動画、AI 口播生成、クリエイター向け動画ツールに注力しています。",
+      pricing: "料金",
+      templates: "テンプレート",
+      avatarStudio: "デジタルヒューマンスタジオ",
+      contact: "お問い合わせ",
+      contactTitle: "お問い合わせ",
+      contactBody: "商用相談、カスタムテンプレート、生成サポートが必要な場合はご連絡ください。",
+    },
+    pricingContact: {
+      label: "お問い合わせ",
+      title: "カスタムプランや法人サポートが必要ですか？",
+      body: "チーム向けクレジット、カスタムテンプレート、導入前の相談はお気軽にご連絡ください。",
+    },
+  },
+  ko: {
+    contactActions: {
+      phone: "전화",
+      email: "이메일",
+      copyPhone: "전화번호 복사",
+      copyEmail: "이메일 복사",
+    },
+    footer: {
+      description: "Kaiqiang AI는 디지털 휴먼 영상, AI 말하기 영상 생성, 크리에이터용 콘텐츠 도구에 집중합니다.",
+      pricing: "요금제",
+      templates: "템플릿",
+      avatarStudio: "디지털 휴먼 스튜디오",
+      contact: "문의",
+      contactTitle: "문의하기",
+      contactBody: "비즈니스 상담, 맞춤 템플릿, 생성 지원이 필요하면 편하게 문의하세요.",
+    },
+    pricingContact: {
+      label: "문의",
+      title: "맞춤 요금제나 비즈니스 지원이 필요하신가요?",
+      body: "팀 크레딧, 맞춤 템플릿, 출시 전 상담이 필요하면 문의하세요.",
+    },
+  },
+  es: {
+    contactActions: {
+      phone: "Telefono",
+      email: "Email",
+      copyPhone: "Copiar telefono",
+      copyEmail: "Copiar email",
+    },
+    footer: {
+      description: "Kaiqiang AI se centra en videos con humanos digitales, avatares parlantes y herramientas IA para creadores.",
+      pricing: "Precios",
+      templates: "Plantillas",
+      avatarStudio: "Estudio avatar",
+      contact: "Contacto",
+      contactTitle: "Contacto",
+      contactBody: "Si necesitas consulta comercial, plantillas personalizadas o soporte de generacion, contactanos.",
+    },
+    pricingContact: {
+      label: "Contacto",
+      title: "Necesitas un plan personalizado o soporte comercial?",
+      body: "Contactanos para creditos de equipo, plantillas personalizadas o preguntas antes del lanzamiento.",
+    },
+  },
+  fr: {
+    contactActions: {
+      phone: "Telephone",
+      email: "Email",
+      copyPhone: "Copier le telephone",
+      copyEmail: "Copier l'email",
+    },
+    footer: {
+      description: "Kaiqiang AI se concentre sur les videos digital human, les avatars parlants IA et les outils createurs.",
+      pricing: "Tarifs",
+      templates: "Modeles",
+      avatarStudio: "Studio avatar",
+      contact: "Contact",
+      contactTitle: "Contact",
+      contactBody: "Besoin d'une consultation, de modeles personnalises ou d'aide a la generation ? Contactez-nous.",
+    },
+    pricingContact: {
+      label: "Contact",
+      title: "Besoin d'un plan personnalise ou d'un support business ?",
+      body: "Contactez-nous pour des credits equipe, des modeles personnalises ou des questions avant lancement.",
+    },
+  },
+  ru: {
+    contactActions: {
+      phone: "Телефон",
+      email: "Email",
+      copyPhone: "Скопировать телефон",
+      copyEmail: "Скопировать email",
+    },
+    footer: {
+      description: "Kaiqiang AI создает digital human видео, AI-аватары для озвучки и инструменты для авторов.",
+      pricing: "Тарифы",
+      templates: "Шаблоны",
+      avatarStudio: "Студия аватаров",
+      contact: "Контакты",
+      contactTitle: "Связаться",
+      contactBody: "Если нужна бизнес-консультация, шаблоны или поддержка генерации, напишите нам.",
+    },
+    pricingContact: {
+      label: "Контакты",
+      title: "Нужен индивидуальный план или бизнес-поддержка?",
+      body: "Свяжитесь с нами по вопросам командных кредитов, шаблонов или подготовки к запуску.",
+    },
+  },
+} as const;

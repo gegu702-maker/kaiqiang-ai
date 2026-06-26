@@ -4,80 +4,19 @@ import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Spa
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { useLanguage } from "@/components/LanguageProvider";
 import { analyzeViralScript, runViralPipeline } from "@/lib/api";
+import { viralAnalyzerCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
 import type { ViralAnalyzeResult, ViralIndustry, ViralPipelineResult } from "@/lib/types";
 
-const industries: Array<{ value: ViralIndustry; zh: string; en: string }> = [
-  { value: "ecommerce", zh: "电商带货", en: "E-commerce" },
-  { value: "knowledge", zh: "知识口播", en: "Knowledge" },
-  { value: "training", zh: "企业培训", en: "Training" },
-  { value: "local", zh: "本地生活", en: "Local services" },
-  { value: "personal_brand", zh: "个人IP", en: "Personal brand" },
-  { value: "global", zh: "出海营销", en: "Global marketing" },
-];
+const industries: ViralIndustry[] = ["ecommerce", "knowledge", "training", "local", "personal_brand", "global"];
 
 const LINK_PIPELINE_TIMEOUT_MS = 40000;
 const VISIBLE_VIDEO_URL_RE = /(?:https?:\/\/|(?:v\.)?douyin\.com|(?:www\.)?iesdouyin\.com)/i;
 
-const copy = {
-  zh: {
-    eyebrow: "爆款拆解",
-    title: "Viral Script Analyzer",
-    subtitle: "粘贴原始文案稳定拆解；短视频链接自动解析为 Beta，适合辅助尝试。",
-    url: "短视频链接（Beta）",
-    rawScript: "原始视频文案",
-    upload: "上传视频文件",
-    uploadHint: "上传视频自动拆解为后续功能；当前公开测试请优先粘贴视频文案。",
-    industry: "行业/场景",
-    language: "输出语言",
-    start: "开始拆解",
-    analyzing: "拆解中",
-    linkPlaceholder: "抖音 / 小红书 / 快手 / TikTok / YouTube Shorts 链接",
-    scriptPlaceholder: "粘贴原视频文案，系统会学习结构并生成原创改写，不会逐字复制。",
-    fallback: "抖音链接解析暂不稳定，请粘贴视频文案继续拆解。",
-    pipelineFallback: "抖音链接解析暂不稳定，请粘贴视频文案继续拆解。",
-    topic: "视频核心主题",
-    hook: "黄金开头",
-    sellingPoints: "爆点拆解",
-    structure: "文案结构",
-    template: "可复用模板",
-    rewrites: "原创改写版本",
-    copy: "复制",
-    copied: "已复制",
-    generate: "使用此文案生成数字人",
-    quota: "本月拆解次数",
-  },
-  en: {
-    eyebrow: "Viral Analyzer",
-    title: "Viral Script Analyzer",
-    subtitle: "Paste the original script for stable analysis. Link auto-parsing is Beta and may fail.",
-    url: "Short-video link (Beta)",
-    rawScript: "Original script",
-    upload: "Upload video file",
-    uploadHint: "Video upload auto-analysis is planned. For public testing, paste the video script.",
-    industry: "Industry",
-    language: "Output language",
-    start: "Analyze",
-    analyzing: "Analyzing",
-    linkPlaceholder: "Douyin / RED / Kuaishou / TikTok / YouTube Shorts URL",
-    scriptPlaceholder: "Paste the original script. The system learns the structure and creates original rewrites.",
-    fallback: "Douyin link parsing is currently unstable. Paste the video script to continue analyzing.",
-    pipelineFallback: "Douyin link parsing is currently unstable. Paste the video script to continue analyzing.",
-    topic: "Core Topic",
-    hook: "Golden Hook",
-    sellingPoints: "Viral Angles",
-    structure: "Script Structure",
-    template: "Reusable Template",
-    rewrites: "Original Rewrites",
-    copy: "Copy",
-    copied: "Copied",
-    generate: "Generate avatar with this script",
-    quota: "Monthly analyses",
-  },
-};
-
 export function ViralAnalyzerClient() {
+  const { selectedLocale } = useLanguage();
   const supabase = useMemo(() => createClient(), []);
   const [language, setLanguage] = useState<"zh" | "en">("zh");
   const [industry, setIndustry] = useState<ViralIndustry>("ecommerce");
@@ -88,7 +27,7 @@ export function ViralAnalyzerClient() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  const t = copy[language];
+  const t = viralAnalyzerCopy[selectedLocale] ?? viralAnalyzerCopy.en;
 
   async function handleAnalyze() {
     setError("");
@@ -99,7 +38,7 @@ export function ViralAnalyzerClient() {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session?.access_token) {
-        throw new Error("请先登录后再使用爆款拆解。");
+        throw new Error(t.authRequired);
       }
       const trimmedSourceUrl = sourceUrl.trim();
       const trimmedRawScript = rawScript.trim();
@@ -129,7 +68,7 @@ export function ViralAnalyzerClient() {
             );
       setResult(payload);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "拆解失败，请稍后重试。");
+      setError(err instanceof Error ? err.message : t.genericError);
     } finally {
       setLoading(false);
     }
@@ -207,8 +146,8 @@ export function ViralAnalyzerClient() {
                     onChange={(event) => setIndustry(event.target.value as ViralIndustry)}
                   >
                     {industries.map((item) => (
-                      <option key={item.value} value={item.value}>
-                        {language === "zh" ? item.zh : item.en}
+                      <option key={item} value={item}>
+                        {t.industries[item]}
                       </option>
                     ))}
                   </select>
@@ -254,7 +193,7 @@ export function ViralAnalyzerClient() {
             <>
               {result.quota ? (
                 <p className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm text-slate-400">
-                  {t.quota}: {result.quota.monthly_limit === null ? `${result.quota.used} / 自定义` : `${result.quota.used} / ${result.quota.monthly_limit}`}
+                  {t.quota}: {result.quota.monthly_limit === null ? `${result.quota.used} / ${t.quotaCustom}` : `${result.quota.used} / ${result.quota.monthly_limit}`}
                 </p>
               ) : null}
               <ResultCard title={t.topic}>{result.topic}</ResultCard>

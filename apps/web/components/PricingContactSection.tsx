@@ -2,23 +2,11 @@
 
 import { ContactActions } from "@/components/ContactActions";
 import { useLanguage } from "@/components/LanguageProvider";
-
-const copy = {
-  zh: {
-    label: "联系我们",
-    title: "需要定制套餐或商务支持？",
-    body: "如需团队额度、定制模板或上线前咨询，可以直接联系。",
-  },
-  en: {
-    label: "Contact",
-    title: "Need a custom plan or business support?",
-    body: "Reach out for team credits, custom templates, or pre-launch questions.",
-  },
-};
+import { commonCopy } from "@/lib/i18n/common";
 
 export function PricingContactSection() {
-  const { locale } = useLanguage();
-  const current = copy[locale === "zh" ? "zh" : "en"];
+  const { selectedLocale } = useLanguage();
+  const current = commonCopy[selectedLocale].pricingContact;
 
   return (
     <section className="mt-6 rounded-lg border border-white/10 bg-panel/70 p-5 shadow-glow">

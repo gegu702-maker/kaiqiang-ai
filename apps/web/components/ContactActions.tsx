@@ -5,30 +5,16 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { commonCopy } from "@/lib/i18n/common";
 
 const phone = "+86 17798561222";
 const email = "17798561222@163.com";
 
 type Tone = "light" | "dark";
 
-const copy = {
-  zh: {
-    phone: "电话",
-    email: "邮箱",
-    copyPhone: "复制电话",
-    copyEmail: "复制邮箱",
-  },
-  en: {
-    phone: "Phone",
-    email: "Email",
-    copyPhone: "Copy Phone",
-    copyEmail: "Copy Email",
-  },
-};
-
 export function ContactActions({ tone = "light", compact = false, embedded = false }: { tone?: Tone; compact?: boolean; embedded?: boolean }) {
-  const { locale } = useLanguage();
-  const current = copy[locale];
+  const { selectedLocale } = useLanguage();
+  const current = commonCopy[selectedLocale].contactActions;
   const [copied, setCopied] = useState<"phone" | "email" | null>(null);
   const isDark = tone === "dark";
 
