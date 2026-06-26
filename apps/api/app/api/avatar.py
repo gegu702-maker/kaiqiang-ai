@@ -57,8 +57,8 @@ class TTSPreviewRequest(BaseModel):
     language: str = DEFAULT_TTS_LANGUAGE
     voice: str | None = None
     voice_type: str | None = None
-    speed: float | None = Field(default=None, ge=0.5, le=2.0)
-    speed_ratio: float | None = Field(default=None, ge=0.5, le=2.0)
+    speed: float | None = None
+    speed_ratio: float | None = None
 
 
 @router.get("/health")
@@ -86,6 +86,9 @@ async def generate_tts_preview(
     user = get_authenticated_user(supabase, token)
     selected_voice_type = payload.voice or payload.voice_type
     selected_speed = payload.speed if payload.speed is not None else payload.speed_ratio
+    speed_ratio = selected_speed if selected_speed is not None else 1.0
+    if speed_ratio < 0.5 or speed_ratio > 2.0:
+        raise HTTPException(status_code=400, detail="speed must be between 0.5 and 2.0")
     logger.info(
         "Avatar TTS preview started user_id=%s text_length=%s language=%s voice_type=%s",
         user["id"],
@@ -99,7 +102,7 @@ async def generate_tts_preview(
         folder="avatar/tts-preview",
         language=payload.language,
         voice_type=selected_voice_type,
-        speed_ratio=selected_speed or 1.0,
+        speed_ratio=speed_ratio,
     )
     return {
         "success": True,

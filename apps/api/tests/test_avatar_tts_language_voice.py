@@ -2,8 +2,12 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from app.api import avatar
+from app.core.auth import get_bearer_token
+from app.core.supabase import get_supabase
 from app.services import tts
 
 
@@ -80,3 +84,23 @@ def test_synthesize_speech_passes_language_and_audio_controls(monkeypatch):
     assert result["language"] == "zh-CN"
     assert result["voice_type"] == "BV001_streaming"
     assert result["audio_url"] == "https://storage.example/audio.mp3"
+
+
+def test_tts_preview_speed_out_of_range_returns_400(monkeypatch):
+    app = FastAPI()
+    app.include_router(avatar.router, prefix="/api")
+    client = TestClient(app)
+
+    app.dependency_overrides[get_bearer_token] = lambda: "test-token"
+    app.dependency_overrides[get_supabase] = lambda: object()
+    monkeypatch.setattr(avatar, "get_authenticated_user", lambda *_args, **_kwargs: {"id": "user-1", "email": "test@example.com"})
+
+    for speed in (0.4, 2.1):
+        response = client.post(
+            "/api/avatar/tts-preview",
+            json={"text": "hello", "language": "zh-CN", "voice": "BV001_streaming", "speed": speed},
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "speed must be between 0.5 and 2.0"
+
+    app.dependency_overrides.clear()
