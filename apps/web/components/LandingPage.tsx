@@ -2,12 +2,13 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowUpRight, Captions, Database, Gauge, Mic2, MousePointerClick, PlayCircle, ShieldCheck, Sparkles, UserRoundCheck, Video, Zap } from "lucide-react";
+import { ArrowUpRight, Captions, Clapperboard, Database, Gauge, Mic2, MousePointerClick, PlayCircle, ShieldCheck, Sparkles, UserRoundCheck, Video, WandSparkles, Zap } from "lucide-react";
 
 import { HomeConversionSections } from "@/components/HomeConversionSections";
 import { useLanguage } from "@/components/LanguageProvider";
 import { trackEvent } from "@/lib/analytics";
 import { landingCopy } from "@/lib/i18n/landing";
+import { studioCopy } from "@/lib/i18n/studio";
 
 const icons = [Video, Mic2, Captions, Zap];
 const trustIcons = [Gauge, UserRoundCheck, ShieldCheck, MousePointerClick];
@@ -15,6 +16,7 @@ const trustIcons = [Gauge, UserRoundCheck, ShieldCheck, MousePointerClick];
 export function LandingPage({ startHref }: { startHref: string }) {
   const { selectedLocale } = useLanguage();
   const current = landingCopy[selectedLocale] ?? landingCopy.en;
+  const studio = studioCopy[selectedLocale] ?? studioCopy.en;
 
   return (
     <main
@@ -75,6 +77,14 @@ export function LandingPage({ startHref }: { startHref: string }) {
               <PlayCircle size={21} />
               {current.examples}
             </a>
+            <Link
+              href="/studio/viral-analyzer"
+              onClick={() => trackEvent("click_open_viral_analyzer", { source: "home_hero", href: "/studio/viral-analyzer" })}
+              className="inline-flex h-13 min-w-[162px] items-center justify-center gap-3 rounded-full border border-indigo-200 bg-indigo-50/76 px-6 text-base font-semibold text-indigo-700 shadow-[0_10px_30px_rgba(79,70,229,0.08)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-indigo-100"
+            >
+              <WandSparkles size={20} />
+              {studio.openViralAnalyzer}
+            </Link>
           </div>
         </div>
 
@@ -97,6 +107,31 @@ export function LandingPage({ startHref }: { startHref: string }) {
       </section>
 
       <HomeConversionSections />
+
+      <section className="mx-auto max-w-[1280px] px-6 py-16 sm:px-10 lg:py-20">
+        <div className="max-w-2xl">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">{studio.studioToolsTitle}</p>
+          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{studio.studioToolsSubtitle}</h2>
+        </div>
+        <div className="mt-9 grid gap-4 md:grid-cols-2">
+          <HomeToolCard
+            href="/studio/avatar"
+            icon={Clapperboard}
+            title={studio.avatarStudioTitle}
+            description={studio.avatarStudioDescription}
+            action={studio.openAvatarStudio}
+            source="home_tools_avatar"
+          />
+          <HomeToolCard
+            href="/studio/viral-analyzer"
+            icon={WandSparkles}
+            title={studio.viralAnalyzerTitle}
+            description={studio.viralAnalyzerDescription}
+            action={studio.openViralAnalyzer}
+            source="home_tools_viral"
+          />
+        </div>
+      </section>
 
       <section className="mx-auto max-w-[1280px] px-6 py-16 sm:px-10 lg:py-24">
         <div className="grid gap-4 sm:grid-cols-2 min-[1180px]:grid-cols-4">
@@ -145,5 +180,43 @@ export function LandingPage({ startHref }: { startHref: string }) {
         </div>
       </section>
     </main>
+  );
+}
+
+function HomeToolCard({
+  href,
+  icon: Icon,
+  title,
+  description,
+  action,
+  source,
+}: {
+  href: string;
+  icon: typeof Clapperboard;
+  title: string;
+  description: string;
+  action: string;
+  source: string;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={() => trackEvent("click_home_tool_card", { source, href })}
+      className="group rounded-lg border border-slate-200 bg-white p-6 shadow-[0_14px_38px_rgba(15,23,42,0.05)] transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_18px_44px_rgba(79,70,229,0.1)]"
+    >
+      <div className="flex items-start gap-4">
+        <span className="grid size-12 shrink-0 place-items-center rounded-lg bg-slate-950 text-white">
+          <Icon size={22} />
+        </span>
+        <span>
+          <span className="block text-xl font-semibold text-slate-950">{title}</span>
+          <span className="mt-3 block text-sm leading-6 text-slate-500">{description}</span>
+          <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 group-hover:text-indigo-500">
+            {action}
+            <ArrowUpRight size={16} />
+          </span>
+        </span>
+      </div>
+    </Link>
   );
 }

@@ -1,12 +1,12 @@
 "use client";
 
-import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Sparkles, UploadCloud, WandSparkles } from "lucide-react";
+import { ArrowRight, Check, Clapperboard, Copy, FileText, LayoutDashboard, LinkIcon, Loader2, Sparkles, UploadCloud, WandSparkles } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { analyzeViralScript, runViralPipeline } from "@/lib/api";
-import { viralAnalyzerCopy } from "@/lib/i18n/studio";
+import { studioCopy, viralAnalyzerCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
 import type { ViralAnalyzeResult, ViralIndustry, ViralPipelineResult } from "@/lib/types";
 
@@ -28,6 +28,7 @@ export function ViralAnalyzerClient() {
   const [loading, setLoading] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const t = viralAnalyzerCopy[selectedLocale] ?? viralAnalyzerCopy.en;
+  const studio = studioCopy[selectedLocale] ?? studioCopy.en;
 
   async function handleAnalyze() {
     setError("");
@@ -83,6 +84,19 @@ export function ViralAnalyzerClient() {
   return (
     <main className="min-h-[calc(100vh-86px)] bg-ink text-slate-100">
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:py-10">
+        <nav className="rounded-lg border border-white/10 bg-panel/80 p-3 shadow-glow lg:col-span-2" aria-label="Studio navigation">
+          <div className="flex flex-wrap gap-2">
+            <Link className="inline-flex h-10 items-center gap-2 rounded-md border border-white/10 px-3 text-sm font-semibold text-slate-200 transition hover:bg-white/[0.06]" href="/studio">
+              <LayoutDashboard size={16} />
+              {studio.backToStudio}
+            </Link>
+            <Link className="inline-flex h-10 items-center gap-2 rounded-md bg-cyan px-3 text-sm font-semibold text-ink transition hover:bg-cyan/90" href="/studio/avatar">
+              <Clapperboard size={16} />
+              {studio.switchToAvatar}
+              <ArrowRight size={15} />
+            </Link>
+          </div>
+        </nav>
         <section className="space-y-5">
           <div>
             <p className="inline-flex items-center gap-2 rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1 text-sm font-semibold text-cyan">

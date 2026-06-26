@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, Download, Film, Loader2, Trash2, UploadCloud, Video } from "lucide-react";
+import { ArrowRight, Check, Copy, Download, Film, LayoutDashboard, Loader2, Trash2, UploadCloud, Video, WandSparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { avatarTemplates } from "@/lib/avatarTemplates";
 import { avatarCopy, avatarTemplateCopy, type AvatarCopy } from "@/lib/i18n/avatar";
+import { studioCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
 import type { UsageSummary } from "@/lib/types";
 import {
@@ -74,6 +75,7 @@ export function AvatarVideoGenerator({
 }) {
   const { selectedLocale } = useLanguage();
   const current = avatarCopy[selectedLocale] ?? avatarCopy.en;
+  const studio = studioCopy[selectedLocale] ?? studioCopy.en;
   const supabase = useMemo(() => createClient(), []);
   const initialAvatarTemplate = avatarTemplates.some((template) => template.id === initialTemplateId) ? initialTemplateId : "business_female_01";
   const [avatarTemplateId, setAvatarTemplateId] = useState(initialAvatarTemplate);
@@ -461,6 +463,19 @@ export function AvatarVideoGenerator({
 
   return (
     <div className="mx-auto grid w-full max-w-6xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[0.92fr_1.08fr]">
+      <nav className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm lg:col-span-2" aria-label="Studio navigation">
+        <div className="flex flex-wrap gap-2">
+          <Link className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50" href="/studio">
+            <LayoutDashboard size={16} />
+            {studio.backToStudio}
+          </Link>
+          <Link className="inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-semibold text-white transition hover:bg-slate-800" href="/studio/viral-analyzer">
+            <WandSparkles size={16} />
+            {studio.switchToViralAnalyzer}
+            <ArrowRight size={15} />
+          </Link>
+        </div>
+      </nav>
       <section className="space-y-5">
         <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
           <Film size={15} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, CheckCircle2, Clapperboard, Copy, ExternalLink, FileText, Loader2, Play, Sparkles, Video } from "lucide-react";
+import { ArrowRight, CheckCircle2, Clapperboard, Copy, ExternalLink, FileText, Loader2, Play, Sparkles, Video, WandSparkles } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -112,6 +112,30 @@ export function StudioWorkspace() {
             </p>
             <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-tight text-white sm:text-5xl">{t.title}</h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-slate-400">{t.subtitle}</p>
+            <div className="mt-6 rounded-lg border border-white/10 bg-white/[0.035] p-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">{t.studioToolsTitle}</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-400">{t.studioToolsSubtitle}</p>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <StudioToolCard
+                  href="/studio/avatar"
+                  icon={Clapperboard}
+                  title={t.avatarStudioTitle}
+                  description={t.avatarStudioDescription}
+                  action={t.openAvatarStudio}
+                />
+                <StudioToolCard
+                  href="/studio/viral-analyzer"
+                  icon={WandSparkles}
+                  title={t.viralAnalyzerTitle}
+                  description={t.viralAnalyzerDescription}
+                  action={t.openViralAnalyzer}
+                />
+              </div>
+            </div>
             <div className="mt-6 grid gap-3 rounded-lg border border-cyan/20 bg-cyan/[0.06] p-3 sm:grid-cols-[1fr_auto]">
               <input
                 className="h-12 rounded-md border border-white/10 bg-ink/80 px-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan/60"
@@ -292,6 +316,38 @@ export function StudioWorkspace() {
         </aside>
       </div>
     </main>
+  );
+}
+
+function StudioToolCard({
+  href,
+  icon: Icon,
+  title,
+  description,
+  action,
+}: {
+  href: string;
+  icon: typeof Clapperboard;
+  title: string;
+  description: string;
+  action: string;
+}) {
+  return (
+    <Link href={href} className="group rounded-lg border border-white/10 bg-ink/55 p-4 transition hover:border-cyan/35 hover:bg-cyan/[0.06]">
+      <span className="flex items-start gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-md bg-cyan/10 text-cyan">
+          <Icon size={19} />
+        </span>
+        <span>
+          <span className="block font-semibold text-white">{title}</span>
+          <span className="mt-2 block text-sm leading-6 text-slate-400">{description}</span>
+          <span className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-cyan group-hover:text-cyan/80">
+            {action}
+            <ArrowRight size={15} />
+          </span>
+        </span>
+      </span>
+    </Link>
   );
 }
 
