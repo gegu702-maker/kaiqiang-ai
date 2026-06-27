@@ -5,10 +5,10 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { SUPPORTED_LOCALES, type Locale } from "@/components/LanguageProvider";
-import { analyzeViralScript, checkVideoLink } from "@/lib/api";
+import { analyzeViralScript, checkVideoLink, runViralPipeline } from "@/lib/api";
 import { advancedAnalyzerCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
-import type { ViralAnalyzeResult, ViralIndustry, ViralLinkErrorCode, VideoLinkResolveResult } from "@/lib/types";
+import type { ViralAnalyzeResult, ViralIndustry, ViralLinkErrorCode, ViralPipelineResult, VideoLinkResolveResult } from "@/lib/types";
 
 const industries: Array<{ value: ViralIndustry; labels: Record<Locale, string> }> = [
   { value: "ecommerce", labels: { zh: "电商带货", en: "E-commerce", ja: "EC販売", ko: "커머스", es: "E-commerce", fr: "E-commerce", ru: "E-commerce" } },
@@ -24,6 +24,19 @@ function looksLikeUrl(value: string) {
   return URL_RE.test(value.trim());
 }
 
+function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResult | null {
+  if (!payload.analysis) return null;
+  return {
+    project_id: payload.project_id,
+    topic: payload.analysis.topic,
+    hook: payload.analysis.hook,
+    selling_points: payload.analysis.selling_points,
+    structure: payload.analysis.structure,
+    template: payload.analysis.template,
+    rewrites: payload.rewrites,
+  };
+}
+
 export function ViralAnalyzerClient() {
   const supabase = useMemo(() => createClient(), []);
   const [language, setLanguage] = useState<Locale>("zh");
@@ -36,6 +49,7 @@ export function ViralAnalyzerClient() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [runStage, setRunStage] = useState<"idle" | "checking" | "pipeline" | "manual">("idle");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const t = advancedAnalyzerCopy[language];
   const linkCheckCopy =
@@ -46,11 +60,13 @@ export function ViralAnalyzerClient() {
           checkPassed: "链接可自动读取，可以开始分析。",
           checkFailed: "链接暂时无法自动读取。",
           loginError: "请先登录后再检查链接。",
-          needsScript: "链接可读取，但当前高级拆解页仍需要原文案才能生成拆解。请粘贴原文案，或回到 Studio 使用自动分析流程。",
+          pipelineEmpty: "链接已读取，但自动分析暂未返回拆解结果。请上传视频或粘贴原文案继续分析。",
           redirectOk: "短链跳转：正常",
           redirectFailed: "短链跳转：失败",
           platformUnsupported: "平台：暂不支持",
           platform: "平台",
+          pipelineReading: "正在读取视频",
+          manualAnalyzing: "正在拆解文案",
         }
       : {
           checkLink: "Check link",
@@ -58,11 +74,13 @@ export function ViralAnalyzerClient() {
           checkPassed: "This link can be read automatically. You can start analysis.",
           checkFailed: "This link cannot be read automatically right now.",
           loginError: "Please sign in before checking links.",
-          needsScript: "The link is readable, but this manual analyzer still needs the original script to generate analysis. Paste the script, or return to Studio for the automatic flow.",
+          pipelineEmpty: "The link was read, but automatic analysis did not return a result. Upload the video or paste the original script to continue.",
           redirectOk: "Redirect: OK",
           redirectFailed: "Redirect: failed",
           platformUnsupported: "Platform: unsupported",
           platform: "Platform",
+          pipelineReading: "Reading video",
+          manualAnalyzing: "Analyzing script",
         };
 
   function friendlyLinkMessage(payload?: Pick<VideoLinkResolveResult, "error_code" | "message" | "fallback_reason"> | null) {
@@ -80,6 +98,21 @@ export function ViralAnalyzerClient() {
     };
     if (code) return messages[code];
     return payload?.message || payload?.fallback_reason || linkCheckCopy.checkFailed;
+  }
+
+  function friendlyPipelineMessage(payload: Pick<ViralPipelineResult, "error_code" | "message" | "fallback_reason">) {
+    return friendlyLinkMessage({
+      error_code: payload.error_code,
+      message: payload.message,
+      fallback_reason: payload.fallback_reason,
+    });
+  }
+
+  function loadingLabel() {
+    if (runStage === "checking") return linkCheckCopy.checkingLink;
+    if (runStage === "pipeline") return linkCheckCopy.pipelineReading;
+    if (runStage === "manual") return linkCheckCopy.manualAnalyzing;
+    return t.analyzing;
   }
 
   async function getSessionToken() {
@@ -126,18 +159,37 @@ export function ViralAnalyzerClient() {
       const linkCandidate = sourceLooksLikeUrl ? sourceUrl : scriptLooksLikeUrl ? rawScript : "";
 
       if (linkCandidate && !hasManualScript) {
+        setRunStage("checking");
         const payload = await checkVideoLink(linkCandidate, accessToken);
         setLinkCheck(payload);
         if (!payload.ok) {
           throw new Error(friendlyLinkMessage(payload));
         }
-        throw new Error(linkCheckCopy.needsScript);
+        setRunStage("pipeline");
+        const pipeline = await runViralPipeline(
+          {
+            source_url: linkCandidate,
+            industry,
+            language,
+          },
+          accessToken,
+        );
+        if (!pipeline.ok) {
+          throw new Error(friendlyPipelineMessage(pipeline));
+        }
+        const pipelineResult = pipelineToAnalyzeResult(pipeline);
+        if (!pipelineResult) {
+          throw new Error(linkCheckCopy.pipelineEmpty);
+        }
+        setResult(pipelineResult);
+        return;
       }
 
       if (!hasManualScript && !linkCandidate) {
         throw new Error("请粘贴短视频链接，或粘贴原始视频文案继续分析。");
       }
 
+      setRunStage("manual");
       const payload = await analyzeViralScript(
         {
           source_url: sourceLooksLikeUrl ? sourceUrl : "",
@@ -152,6 +204,7 @@ export function ViralAnalyzerClient() {
       setError(err instanceof Error ? err.message : t.failedError);
     } finally {
       setLoading(false);
+      setRunStage("idle");
     }
   }
 
@@ -267,7 +320,7 @@ export function ViralAnalyzerClient() {
                   className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-cyan px-5 text-sm font-semibold text-ink transition hover:bg-cyan/90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading ? <Loader2 className="animate-spin" size={18} /> : <WandSparkles size={18} />}
-                  {loading ? t.analyzing : t.start}
+                  {loading ? loadingLabel() : t.start}
                 </button>
               </div>
               {linkCheck ? (
