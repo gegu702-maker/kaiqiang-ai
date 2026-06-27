@@ -89,8 +89,8 @@ export function ViralAnalyzerClient() {
       non_douyin_url: "请输入抖音 / TikTok / YouTube Shorts 链接，或直接上传视频。",
       redirect_failed: "短链跳转失败，请复制完整链接重试，或上传视频继续分析。",
       redirect_timeout: "短链跳转超时，请复制完整链接重试，或上传视频继续分析。",
-      metadata_blocked: "平台限制自动读取，请上传视频或粘贴原文案继续分析。",
-      not_downloadable: "平台限制自动读取，请上传视频或粘贴原文案继续分析。",
+      metadata_blocked: "链接可以识别，但平台可能限制视频读取。如失败，请上传视频或粘贴原文案继续分析。",
+      not_downloadable: "链接可以识别，但视频下载受限，请上传视频或粘贴原文案继续分析。",
       resolver_timeout: "链接检查超时，请稍后重试，或使用上传/粘贴方式。",
       unknown_error: "链接解析失败，请上传视频或粘贴原文案继续分析。",
       parse_failed: "页面可打开，但未能解析到视频信息，请上传视频或粘贴原文案继续分析。",
@@ -101,7 +101,10 @@ export function ViralAnalyzerClient() {
   }
 
   function friendlyPipelineMessage(payload: Pick<ViralPipelineResult, "failed_at" | "error_code" | "message" | "fallback_reason">) {
-    if (payload.failed_at === "downloading_video" && payload.error_code === "not_downloadable") {
+    if (
+      payload.error_code === "not_downloadable" &&
+      (payload.failed_at === "downloading_video" || payload.failed_at === "resolving_link")
+    ) {
       return "链接可以识别，但视频下载受限，请上传视频或粘贴原文案继续分析。";
     }
     if (payload.failed_at === "transcribing") {
