@@ -100,7 +100,16 @@ export function ViralAnalyzerClient() {
     return payload?.message || payload?.fallback_reason || linkCheckCopy.checkFailed;
   }
 
-  function friendlyPipelineMessage(payload: Pick<ViralPipelineResult, "error_code" | "message" | "fallback_reason">) {
+  function friendlyPipelineMessage(payload: Pick<ViralPipelineResult, "failed_at" | "error_code" | "message" | "fallback_reason">) {
+    if (payload.failed_at === "downloading_video" && payload.error_code === "not_downloadable") {
+      return "链接可以识别，但视频下载受限，请上传视频或粘贴原文案继续分析。";
+    }
+    if (payload.failed_at === "transcribing") {
+      return "视频读取成功，但语音转文字失败，请上传更清晰的视频或粘贴原文案继续分析。";
+    }
+    if (payload.failed_at === "analyzing") {
+      return "文案提取成功，但拆解失败，请稍后重试或粘贴文案继续分析。";
+    }
     return friendlyLinkMessage({
       error_code: payload.error_code,
       message: payload.message,
