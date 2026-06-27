@@ -41,11 +41,25 @@ LANGUAGE_LABELS = {
 }
 
 
-def _failed(*, status: ViralPipelineStatus, fallback_reason: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+FALLBACK_OPTIONS = ["upload_video", "paste_text"]
+
+
+def _failed(
+    *,
+    status: ViralPipelineStatus,
+    fallback_reason: str,
+    metadata: dict[str, Any] | None = None,
+    error_code: str = "unknown_error",
+) -> dict[str, Any]:
     return {
         "ok": False,
+        "success": False,
         "status": ViralPipelineStatus.FAILED,
         "failed_at": status,
+        "error_code": error_code,
+        "message": fallback_reason,
+        "fallback_available": True,
+        "fallback_options": FALLBACK_OPTIONS,
         "fallback_reason": fallback_reason,
         "project_id": "",
         "transcript": "",
@@ -159,7 +173,12 @@ async def run_viral_pipeline(
             "downloadable": resolved.get("downloadable", False),
         }
         if not resolved.get("ok") or not resolved.get("downloadable"):
-            return _failed(status=status, fallback_reason=resolved.get("fallback_reason") or DOWNLOAD_FALLBACK, metadata=metadata)
+            return _failed(
+                status=status,
+                fallback_reason=resolved.get("message") or resolved.get("fallback_reason") or DOWNLOAD_FALLBACK,
+                metadata=metadata,
+                error_code=resolved.get("error_code") or "unknown_error",
+            )
 
         status = ViralPipelineStatus.DOWNLOADING_VIDEO
         downloaded = await download_video(str(resolved.get("webpage_url") or source_url), work_dir)
@@ -174,18 +193,28 @@ async def run_viral_pipeline(
             }
         )
         if not downloaded.ok or not downloaded.video_path:
-            return _failed(status=status, fallback_reason=downloaded.fallback_reason or DOWNLOAD_FALLBACK, metadata=metadata)
+            return _failed(
+                status=status,
+                fallback_reason=downloaded.fallback_reason or DOWNLOAD_FALLBACK,
+                metadata=metadata,
+                error_code="not_downloadable",
+            )
 
         status = ViralPipelineStatus.EXTRACTING_AUDIO
         try:
             audio_path = await extract_audio(downloaded.video_path, work_dir)
         except RuntimeError:
-            return _failed(status=status, fallback_reason="该视频暂不支持自动解析，请上传视频继续分析。", metadata=metadata)
+            return _failed(status=status, fallback_reason="该视频暂不支持自动解析，请上传视频继续分析。", metadata=metadata, error_code="not_downloadable")
 
         status = ViralPipelineStatus.TRANSCRIBING
         asr = await transcribe_audio(audio_path, language)
         if not asr.ok:
-            return _failed(status=status, fallback_reason=asr.fallback_reason or "该视频暂不支持自动转写，请上传视频继续分析。", metadata=metadata)
+            return _failed(
+                status=status,
+                fallback_reason=asr.fallback_reason or "该视频暂不支持自动转写，请上传视频继续分析。",
+                metadata=metadata,
+                error_code="not_downloadable",
+            )
 
         status = ViralPipelineStatus.ANALYZING
         analysis = await analyze_viral_script(
@@ -205,8 +234,13 @@ async def run_viral_pipeline(
 
         return {
             "ok": True,
+            "success": True,
             "status": ViralPipelineStatus.READY,
             "failed_at": "",
+            "error_code": "",
+            "message": "",
+            "fallback_available": False,
+            "fallback_options": [],
             "fallback_reason": "",
             "project_id": project_id,
             "transcript": asr.transcript,

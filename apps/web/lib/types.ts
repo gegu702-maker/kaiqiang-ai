@@ -260,6 +260,7 @@ export type ViralAnalyzeResult = {
 
 export type VideoLinkResolveResult = {
   ok: boolean;
+  success?: boolean;
   platform: "douyin" | "unknown" | string;
   title: string;
   description: string;
@@ -268,7 +269,23 @@ export type VideoLinkResolveResult = {
   webpage_url: string;
   downloadable: boolean;
   fallback_reason: string;
+  error_code?: ViralLinkErrorCode | "";
+  message?: string;
+  fallback_available?: boolean;
+  fallback_options?: string[];
+  redirect_ok?: boolean;
+  supported_platform?: boolean;
+  next_step?: string;
 };
+
+export type ViralLinkErrorCode =
+  | "metadata_blocked"
+  | "redirect_failed"
+  | "redirect_timeout"
+  | "not_downloadable"
+  | "resolver_timeout"
+  | "non_douyin_url"
+  | "unknown_error";
 
 export type ViralPipelineStatus =
   | "pending"
@@ -293,8 +310,13 @@ export type ViralPipelineMetadata = {
 
 export type ViralPipelineResult = {
   ok: boolean;
+  success?: boolean;
   status: ViralPipelineStatus;
   failed_at: ViralPipelineStatus | "";
+  error_code?: ViralLinkErrorCode | "";
+  message?: string;
+  fallback_available?: boolean;
+  fallback_options?: string[];
   fallback_reason: string;
   project_id: string;
   transcript: string;

@@ -5,10 +5,10 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { SUPPORTED_LOCALES, type Locale } from "@/components/LanguageProvider";
-import { analyzeViralScript } from "@/lib/api";
+import { analyzeViralScript, checkVideoLink } from "@/lib/api";
 import { advancedAnalyzerCopy } from "@/lib/i18n/studio";
 import { createClient } from "@/lib/supabase/client";
-import type { ViralAnalyzeResult, ViralIndustry } from "@/lib/types";
+import type { ViralAnalyzeResult, ViralIndustry, ViralLinkErrorCode, VideoLinkResolveResult } from "@/lib/types";
 
 const industries: Array<{ value: ViralIndustry; labels: Record<Locale, string> }> = [
   { value: "ecommerce", labels: { zh: "电商带货", en: "E-commerce", ja: "EC販売", ko: "커머스", es: "E-commerce", fr: "E-commerce", ru: "E-commerce" } },
@@ -27,21 +27,98 @@ export function ViralAnalyzerClient() {
   const [rawScript, setRawScript] = useState("");
   const [videoFileName, setVideoFileName] = useState("");
   const [result, setResult] = useState<ViralAnalyzeResult | null>(null);
+  const [linkCheck, setLinkCheck] = useState<VideoLinkResolveResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const t = advancedAnalyzerCopy[language];
+  const linkCheckCopy =
+    language === "zh"
+      ? {
+          checkLink: "检查链接",
+          checkingLink: "检查中",
+          checkPassed: "链接可自动读取，可以开始分析。",
+          checkFailed: "链接暂时无法自动读取。",
+          loginError: "请先登录后再检查链接。",
+          needsScript: "链接可读取，但当前高级拆解页仍需要原文案才能生成拆解。请粘贴原文案，或回到 Studio 使用自动分析流程。",
+          redirectOk: "短链跳转：正常",
+          redirectFailed: "短链跳转：失败",
+          platformUnsupported: "平台：暂不支持",
+          platform: "平台",
+        }
+      : {
+          checkLink: "Check link",
+          checkingLink: "Checking",
+          checkPassed: "This link can be read automatically. You can start analysis.",
+          checkFailed: "This link cannot be read automatically right now.",
+          loginError: "Please sign in before checking links.",
+          needsScript: "The link is readable, but this manual analyzer still needs the original script to generate analysis. Paste the script, or return to Studio for the automatic flow.",
+          redirectOk: "Redirect: OK",
+          redirectFailed: "Redirect: failed",
+          platformUnsupported: "Platform: unsupported",
+          platform: "Platform",
+        };
+
+  function friendlyLinkMessage(payload?: Pick<VideoLinkResolveResult, "error_code" | "message" | "fallback_reason"> | null) {
+    const code = payload?.error_code as ViralLinkErrorCode | undefined;
+    const messages: Record<ViralLinkErrorCode, string> = {
+      non_douyin_url: "请输入抖音 / TikTok / YouTube Shorts 链接，或直接上传视频。",
+      redirect_failed: "短链跳转失败，请复制完整链接重试，或上传视频继续分析。",
+      redirect_timeout: "短链跳转超时，请复制完整链接重试，或上传视频继续分析。",
+      metadata_blocked: "平台限制自动读取，请上传视频或粘贴原文案继续分析。",
+      not_downloadable: "平台限制自动读取，请上传视频或粘贴原文案继续分析。",
+      resolver_timeout: "链接检查超时，请稍后重试，或使用上传/粘贴方式。",
+      unknown_error: "链接解析失败，请上传视频或粘贴原文案继续分析。",
+    };
+    if (code) return messages[code];
+    return payload?.message || payload?.fallback_reason || linkCheckCopy.checkFailed;
+  }
+
+  async function getSessionToken() {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error(linkCheckCopy.loginError);
+    }
+    return session.access_token;
+  }
+
+  async function handleCheckLink() {
+    if (!sourceUrl.trim()) return;
+    setError("");
+    setResult(null);
+    setLinkCheck(null);
+    setChecking(true);
+    try {
+      const accessToken = await getSessionToken();
+      const payload = await checkVideoLink(sourceUrl, accessToken);
+      setLinkCheck(payload);
+      if (!payload.ok) {
+        setError(friendlyLinkMessage(payload));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t.failedError);
+    } finally {
+      setChecking(false);
+    }
+  }
 
   async function handleAnalyze() {
     setError("");
     setResult(null);
+    setLinkCheck(null);
     setLoading(true);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        throw new Error(t.loginError);
+      const accessToken = await getSessionToken();
+      if (sourceUrl.trim() && !rawScript.trim()) {
+        const payload = await checkVideoLink(sourceUrl, accessToken);
+        setLinkCheck(payload);
+        if (!payload.ok) {
+          throw new Error(friendlyLinkMessage(payload));
+        }
+        throw new Error(linkCheckCopy.needsScript);
       }
       const payload = await analyzeViralScript(
         {
@@ -50,7 +127,7 @@ export function ViralAnalyzerClient() {
           industry,
           language,
         },
-        session.access_token,
+        accessToken,
       );
       setResult(payload);
     } catch (err) {
@@ -155,15 +232,35 @@ export function ViralAnalyzerClient() {
               </div>
 
               <p className="rounded-md border border-amber-300/15 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100">{t.fallback}</p>
-              <button
-                type="button"
-                disabled={loading}
-                onClick={handleAnalyze}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-cyan px-5 text-sm font-semibold text-ink transition hover:bg-cyan/90 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {loading ? <Loader2 className="animate-spin" size={18} /> : <WandSparkles size={18} />}
-                {loading ? t.analyzing : t.start}
-              </button>
+              <div className="grid gap-3 sm:grid-cols-[auto_1fr]">
+                <button
+                  type="button"
+                  disabled={checking || loading || !sourceUrl.trim()}
+                  onClick={handleCheckLink}
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-md border border-cyan/30 px-5 text-sm font-semibold text-cyan transition hover:bg-cyan/10 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {checking ? <Loader2 className="animate-spin" size={18} /> : <LinkIcon size={18} />}
+                  {checking ? linkCheckCopy.checkingLink : linkCheckCopy.checkLink}
+                </button>
+                <button
+                  type="button"
+                  disabled={loading || checking}
+                  onClick={handleAnalyze}
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-cyan px-5 text-sm font-semibold text-ink transition hover:bg-cyan/90 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {loading ? <Loader2 className="animate-spin" size={18} /> : <WandSparkles size={18} />}
+                  {loading ? t.analyzing : t.start}
+                </button>
+              </div>
+              {linkCheck ? (
+                <div className={linkCheck.ok ? "rounded-md border border-lime/20 bg-lime/10 p-3 text-sm leading-6 text-lime" : "rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100"}>
+                  <p>{linkCheck.ok ? linkCheckCopy.checkPassed : friendlyLinkMessage(linkCheck)}</p>
+                  <p className="mt-1 text-xs opacity-80">
+                    {linkCheck.redirect_ok === false ? linkCheckCopy.redirectFailed : linkCheckCopy.redirectOk} /{" "}
+                    {linkCheck.supported_platform === false ? linkCheckCopy.platformUnsupported : `${linkCheckCopy.platform}: ${linkCheck.platform || "douyin"}`}
+                  </p>
+                </div>
+              ) : null}
               {error ? <p className="rounded-md border border-rose-300/20 bg-rose-400/10 p-3 text-sm leading-6 text-rose-100">{error}</p> : null}
             </div>
           </div>
