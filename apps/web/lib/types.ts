@@ -283,6 +283,8 @@ export type ViralLinkErrorCode =
   | "redirect_failed"
   | "redirect_timeout"
   | "not_downloadable"
+  | "parse_failed"
+  | "unsupported_page_structure"
   | "resolver_timeout"
   | "non_douyin_url"
   | "unknown_error";

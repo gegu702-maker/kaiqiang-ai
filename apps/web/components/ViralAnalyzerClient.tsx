@@ -18,6 +18,11 @@ const industries: Array<{ value: ViralIndustry; labels: Record<Locale, string> }
   { value: "personal_brand", labels: { zh: "个人IP", en: "Personal brand", ja: "個人ブランド", ko: "개인 브랜드", es: "Marca personal", fr: "Marque personnelle", ru: "Личный бренд" } },
   { value: "global", labels: { zh: "出海营销", en: "Global marketing", ja: "海外マーケティング", ko: "글로벌 마케팅", es: "Marketing global", fr: "Marketing global", ru: "Глобальный маркетинг" } },
 ];
+const URL_RE = /https?:\/\/[^\s"'<>，。；、]+/i;
+
+function looksLikeUrl(value: string) {
+  return URL_RE.test(value.trim());
+}
 
 export function ViralAnalyzerClient() {
   const supabase = useMemo(() => createClient(), []);
@@ -70,6 +75,8 @@ export function ViralAnalyzerClient() {
       not_downloadable: "平台限制自动读取，请上传视频或粘贴原文案继续分析。",
       resolver_timeout: "链接检查超时，请稍后重试，或使用上传/粘贴方式。",
       unknown_error: "链接解析失败，请上传视频或粘贴原文案继续分析。",
+      parse_failed: "页面可打开，但未能解析到视频信息，请上传视频或粘贴原文案继续分析。",
+      unsupported_page_structure: "页面结构暂不支持自动读取，请上传视频或粘贴原文案继续分析。",
     };
     if (code) return messages[code];
     return payload?.message || payload?.fallback_reason || linkCheckCopy.checkFailed;
@@ -86,14 +93,15 @@ export function ViralAnalyzerClient() {
   }
 
   async function handleCheckLink() {
-    if (!sourceUrl.trim()) return;
+    const linkCandidate = sourceUrl.trim() || rawScript.trim();
+    if (!linkCandidate || !looksLikeUrl(linkCandidate)) return;
     setError("");
     setResult(null);
     setLinkCheck(null);
     setChecking(true);
     try {
       const accessToken = await getSessionToken();
-      const payload = await checkVideoLink(sourceUrl, accessToken);
+      const payload = await checkVideoLink(linkCandidate, accessToken);
       setLinkCheck(payload);
       if (!payload.ok) {
         setError(friendlyLinkMessage(payload));
@@ -112,17 +120,27 @@ export function ViralAnalyzerClient() {
     setLoading(true);
     try {
       const accessToken = await getSessionToken();
-      if (sourceUrl.trim() && !rawScript.trim()) {
-        const payload = await checkVideoLink(sourceUrl, accessToken);
+      const sourceLooksLikeUrl = looksLikeUrl(sourceUrl);
+      const scriptLooksLikeUrl = looksLikeUrl(rawScript);
+      const hasManualScript = rawScript.trim() && !scriptLooksLikeUrl;
+      const linkCandidate = sourceLooksLikeUrl ? sourceUrl : scriptLooksLikeUrl ? rawScript : "";
+
+      if (linkCandidate && !hasManualScript) {
+        const payload = await checkVideoLink(linkCandidate, accessToken);
         setLinkCheck(payload);
         if (!payload.ok) {
           throw new Error(friendlyLinkMessage(payload));
         }
         throw new Error(linkCheckCopy.needsScript);
       }
+
+      if (!hasManualScript && !linkCandidate) {
+        throw new Error("请粘贴短视频链接，或粘贴原始视频文案继续分析。");
+      }
+
       const payload = await analyzeViralScript(
         {
-          source_url: sourceUrl,
+          source_url: sourceLooksLikeUrl ? sourceUrl : "",
           raw_script: rawScript,
           industry,
           language,
@@ -235,7 +253,7 @@ export function ViralAnalyzerClient() {
               <div className="grid gap-3 sm:grid-cols-[auto_1fr]">
                 <button
                   type="button"
-                  disabled={checking || loading || !sourceUrl.trim()}
+                  disabled={checking || loading || !looksLikeUrl(sourceUrl || rawScript)}
                   onClick={handleCheckLink}
                   className="inline-flex h-12 items-center justify-center gap-2 rounded-md border border-cyan/30 px-5 text-sm font-semibold text-cyan transition hover:bg-cyan/10 disabled:cursor-not-allowed disabled:opacity-60"
                 >

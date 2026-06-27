@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import html
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -17,9 +19,18 @@ ERROR_MESSAGES = {
     "redirect_failed": "短链跳转失败，请复制完整链接重试，或上传视频继续分析。",
     "redirect_timeout": "短链跳转超时，请复制完整链接重试，或上传视频继续分析。",
     "not_downloadable": "该视频暂不支持自动读取，请上传视频或粘贴原文案继续分析。",
+    "parse_failed": "页面可打开，但未能解析到视频信息，请上传视频或粘贴原文案继续分析。",
+    "unsupported_page_structure": "页面结构暂不支持自动读取，请上传视频或粘贴原文案继续分析。",
     "resolver_timeout": "链接检查超时，请稍后重试，或使用上传/粘贴方式。",
     "non_douyin_url": "请输入抖音 / TikTok / YouTube Shorts 链接，或直接上传视频。",
     "unknown_error": "链接解析失败，请上传视频或粘贴原文案继续分析。",
+}
+ROUTER_DATA_RE = re.compile(r"window\._ROUTER_DATA\s*=\s*(\{.*?\})\s*</script>", re.DOTALL)
+SHARE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    )
 }
 
 
@@ -75,13 +86,7 @@ def is_douyin_short_url(url: str) -> bool:
 async def expand_short_url(url: str) -> str:
     if not is_douyin_short_url(url):
         return url
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        )
-    }
-    async with httpx.AsyncClient(follow_redirects=True, timeout=15, headers=headers) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15, headers=SHARE_HEADERS) as client:
         response = await client.get(url)
     return str(response.url)
 
@@ -113,7 +118,91 @@ def _classify_metadata_error(error: Exception) -> str:
         return "not_downloadable"
     if "login" in text or "captcha" in text or "forbidden" in text or "403" in text or "verify" in text:
         return "metadata_blocked"
-    return "metadata_blocked"
+    if "unable to extract" in text or "could not extract" in text:
+        return "parse_failed"
+    return "parse_failed"
+
+
+def _first_url(value: Any) -> str:
+    if isinstance(value, dict):
+        urls = value.get("url_list")
+        if isinstance(urls, list):
+            for item in urls:
+                if isinstance(item, str) and item:
+                    return item
+    return ""
+
+
+def _metadata_from_router_data(url: str, data: dict[str, Any]) -> dict[str, Any]:
+    loader_data = data.get("loaderData")
+    if not isinstance(loader_data, dict):
+        return _fallback(webpage_url=url, error_code="unsupported_page_structure")
+
+    page_data = next((value for key, value in loader_data.items() if key.endswith("/page") and isinstance(value, dict)), None)
+    if not isinstance(page_data, dict):
+        return _fallback(webpage_url=url, error_code="unsupported_page_structure")
+
+    video_info = page_data.get("videoInfoRes")
+    if not isinstance(video_info, dict):
+        return _fallback(webpage_url=url, error_code="metadata_blocked")
+    if video_info.get("status_code") not in (0, "0", None):
+        return _fallback(webpage_url=url, error_code="metadata_blocked")
+
+    item_list = video_info.get("item_list")
+    if not isinstance(item_list, list) or not item_list:
+        return _fallback(webpage_url=url, error_code="parse_failed")
+    item = item_list[0]
+    if not isinstance(item, dict):
+        return _fallback(webpage_url=url, error_code="parse_failed")
+
+    video = item.get("video") if isinstance(item.get("video"), dict) else {}
+    play_url = _first_url(video.get("play_addr"))
+    cover_url = _first_url(video.get("cover"))
+    duration_ms = int(video.get("duration") or 0)
+    downloadable = bool(play_url)
+    if not item.get("aweme_id") and not item.get("desc") and not video:
+        return _fallback(webpage_url=url, error_code="parse_failed")
+    if not downloadable:
+        return _fallback(webpage_url=url, error_code="not_downloadable")
+
+    return ResolvedVideoLink(
+        ok=True,
+        platform="douyin",
+        title=str(item.get("desc") or ""),
+        description=str(item.get("desc") or ""),
+        duration=round(duration_ms / 1000) if duration_ms else 0,
+        thumbnail=cover_url,
+        webpage_url=url,
+        downloadable=True,
+        fallback_reason="",
+    ).to_dict()
+
+
+async def _metadata_from_share_page(url: str) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15, headers=SHARE_HEADERS) as client:
+            response = await client.get(url)
+        response.raise_for_status()
+    except httpx.TimeoutException:
+        return _fallback(webpage_url=url, error_code="resolver_timeout")
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code in {401, 403, 429}:
+            return _fallback(webpage_url=url, error_code="metadata_blocked")
+        return _fallback(webpage_url=url, error_code="parse_failed")
+    except httpx.HTTPError:
+        return _fallback(webpage_url=url, error_code="parse_failed")
+
+    match = ROUTER_DATA_RE.search(response.text)
+    if not match:
+        if "verify" in response.text.lower() or "captcha" in response.text.lower():
+            return _fallback(webpage_url=url, error_code="metadata_blocked")
+        return _fallback(webpage_url=url, error_code="unsupported_page_structure")
+
+    try:
+        data = json.loads(html.unescape(match.group(1)))
+    except (json.JSONDecodeError, TypeError):
+        return _fallback(webpage_url=url, error_code="parse_failed")
+    return _metadata_from_router_data(str(response.url), data)
 
 
 def _metadata_with_ytdlp(url: str) -> dict[str, Any]:
@@ -178,7 +267,12 @@ async def resolve_video_link(source_url: str) -> dict[str, Any]:
     if not is_douyin_url(expanded_url):
         return _fallback(platform="unknown", webpage_url=expanded_url, reason=ERROR_MESSAGES["non_douyin_url"], error_code="non_douyin_url")
 
-    return await asyncio.to_thread(_metadata_with_ytdlp, expanded_url)
+    metadata = await asyncio.to_thread(_metadata_with_ytdlp, expanded_url)
+    if metadata.get("ok"):
+        return metadata
+    if metadata.get("error_code") in {"unknown_error", "parse_failed", "metadata_blocked"}:
+        return await _metadata_from_share_page(expanded_url)
+    return metadata
 
 
 async def check_video_link(source_url: str) -> dict[str, Any]:
@@ -205,6 +299,8 @@ async def check_video_link(source_url: str) -> dict[str, Any]:
         return {**payload, "redirect_ok": redirect_ok, "supported_platform": False, "next_step": payload["message"]}
 
     payload = await asyncio.to_thread(_metadata_with_ytdlp, expanded_url)
+    if not payload.get("ok") and payload.get("error_code") in {"unknown_error", "parse_failed", "metadata_blocked"}:
+        payload = await _metadata_from_share_page(expanded_url)
     if payload.get("ok"):
         return {
             **payload,
