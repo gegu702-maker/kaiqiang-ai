@@ -17,7 +17,10 @@ import type {
 } from "@/lib/types";
 import type { Locale } from "@/components/LanguageProvider";
 
-const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL =
+  process.env.SERVER_API_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === "production" ? "https://api.kaiqiang.ai" : "http://localhost:8000");
 
 function readAdminApiKey(): string {
   const raw = process.env.SERVER_ADMIN_API_KEY ?? process.env.ADMIN_API_KEY ?? "";
