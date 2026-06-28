@@ -20,6 +20,7 @@ const failedStepIndex: Record<ViralPipelineStatus, number> = {
   extracting_audio: 2,
   transcribing: 3,
   analyzing: 4,
+  metadata_fallback: 4,
   rewriting: 5,
   ready: 6,
   failed: 0,

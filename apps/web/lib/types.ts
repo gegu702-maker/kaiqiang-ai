@@ -59,7 +59,7 @@ export type VideoTask = {
   voice_url: string;
   voice_clone_id: string | null;
   use_cloned_voice: boolean;
-  tts_language: "zh" | "en";
+  tts_language: "zh" | "en" | "ja" | "ko" | "es" | "fr" | "ru";
   tts_voice_name: string;
   admin_notes: string;
   status: TaskStatus;
@@ -171,12 +171,13 @@ export type Subscription = {
   id: string;
   user_id: string;
   plan: PlanCode;
-  status: "active" | "trialing" | "past_due" | "canceled";
+  status: "active" | "trialing" | "past_due" | "canceled" | "unpaid" | "incomplete" | "incomplete_expired";
   provider: PaymentProvider;
   current_period_start: string | null;
   current_period_end: string | null;
   cancel_at_period_end?: boolean;
   provider_subscription_id?: string;
+  provider_price_id?: string;
   created_at: string;
 };
 
@@ -219,7 +220,7 @@ export type AdminStats = {
 export type CheckoutResponse = {
   order: Order;
   checkout_url: string | null;
-  provider_status: "created" | "not_configured" | "manual_review" | "pending";
+  provider_status: "created" | "updated" | "not_configured" | "manual_review" | "pending";
   payment_status: OrderStatus;
   message: string;
 };
@@ -234,6 +235,7 @@ export type VoiceClone = {
   status: "uploaded" | "pending" | "ready" | "completed" | "failed" | "deleted";
   created_at: string;
 };
+
 export type ViralIndustry = "ecommerce" | "knowledge" | "training" | "local" | "personal_brand" | "global";
 
 export type ViralRewrite = {
@@ -256,19 +258,9 @@ export type ViralAnalyzeResult = {
   };
 };
 
-export type VideoLinkResolveErrorCode =
-  | ""
-  | "no_url"
-  | "non_douyin_url"
-  | "redirect_failed"
-  | "redirect_timeout"
-  | "metadata_blocked"
-  | "not_downloadable"
-  | "resolver_timeout"
-  | "unknown_error";
-
 export type VideoLinkResolveResult = {
   ok: boolean;
+  success?: boolean;
   platform: "douyin" | "unknown" | string;
   title: string;
   description: string;
@@ -277,10 +269,26 @@ export type VideoLinkResolveResult = {
   webpage_url: string;
   downloadable: boolean;
   fallback_reason: string;
-  errorCode: VideoLinkResolveErrorCode;
-  inputUrl: string;
-  fallbackActions: Array<"upload_video" | "paste_script" | "check_link" | string>;
+  error_code?: ViralLinkErrorCode | "";
+  message?: string;
+  fallback_available?: boolean;
+  fallback_options?: string[];
+  redirect_ok?: boolean;
+  supported_platform?: boolean;
+  next_step?: string;
 };
+
+export type ViralLinkErrorCode =
+  | "metadata_blocked"
+  | "redirect_failed"
+  | "redirect_timeout"
+  | "not_downloadable"
+  | "insufficient_metadata"
+  | "parse_failed"
+  | "unsupported_page_structure"
+  | "resolver_timeout"
+  | "non_douyin_url"
+  | "unknown_error";
 
 export type ViralPipelineStatus =
   | "pending"
@@ -290,6 +298,7 @@ export type ViralPipelineStatus =
   | "transcribing"
   | "analyzing"
   | "rewriting"
+  | "metadata_fallback"
   | "ready"
   | "failed";
 
@@ -305,8 +314,13 @@ export type ViralPipelineMetadata = {
 
 export type ViralPipelineResult = {
   ok: boolean;
+  success?: boolean;
   status: ViralPipelineStatus;
   failed_at: ViralPipelineStatus | "";
+  error_code?: ViralLinkErrorCode | "";
+  message?: string;
+  fallback_available?: boolean;
+  fallback_options?: string[];
   fallback_reason: string;
   project_id: string;
   transcript: string;
@@ -319,4 +333,7 @@ export type ViralPipelineResult = {
   } | null;
   rewrites: ViralRewrite[];
   metadata: ViralPipelineMetadata;
+  source_type?: "video_asr" | "link_metadata_fallback" | string;
+  analysis_quality?: "full" | "partial" | string;
+  warning?: string;
 };

@@ -15,6 +15,7 @@ import type {
   VideoTask,
   VoiceClone,
 } from "@/lib/types";
+import type { Locale } from "@/components/LanguageProvider";
 
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -154,6 +155,15 @@ export async function getUserOrders(accessToken?: string): Promise<Order[]> {
   return parseResponse<Order[]>(response);
 }
 
+export async function getUserPayments(accessToken?: string): Promise<Payment[]> {
+  if (!accessToken) return [];
+  const response = await fetch(`${API_URL}/api/billing/payments`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<Payment[]>(response);
+}
+
 export async function getUserUsageLogs(accessToken?: string): Promise<UsageLog[]> {
   if (!accessToken) return [];
   const response = await fetch(`${API_URL}/api/billing/usage-logs`, {
@@ -177,7 +187,7 @@ export async function analyzeViralScript(
     source_url?: string;
     raw_script?: string;
     industry: string;
-    language: "zh" | "en";
+    language: Locale;
   },
   accessToken?: string,
 ): Promise<ViralAnalyzeResult> {
@@ -201,29 +211,28 @@ export async function resolveVideoLink(sourceUrl: string, accessToken?: string):
     body: JSON.stringify({ source_url: sourceUrl }),
     cache: "no-store",
   });
-  const payload = await parseResponse<
-    VideoLinkResolveResult & {
-      error_code?: VideoLinkResolveResult["errorCode"];
-      input_url?: string;
-      fallback_actions?: VideoLinkResolveResult["fallbackActions"];
-    }
-  >(response, { url: `${API_URL}/api/viral/link/resolve`, method: "POST" });
-  return {
-    ...payload,
-    errorCode: payload.errorCode ?? payload.error_code ?? "",
-    inputUrl: payload.inputUrl ?? payload.input_url ?? sourceUrl,
-    fallbackActions: payload.fallbackActions ?? payload.fallback_actions ?? [],
-  };
+  return parseResponse<VideoLinkResolveResult>(response, { url: `${API_URL}/api/viral/link/resolve`, method: "POST" });
+}
+
+export async function checkVideoLink(sourceUrl: string, accessToken?: string): Promise<VideoLinkResolveResult> {
+  const response = await fetch(`${API_URL}/api/viral/link/check`, {
+    method: "POST",
+    headers: accessToken
+      ? { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }
+      : { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_url: sourceUrl }),
+    cache: "no-store",
+  });
+  return parseResponse<VideoLinkResolveResult>(response, { url: `${API_URL}/api/viral/link/check`, method: "POST" });
 }
 
 export async function runViralPipeline(
   payload: {
     source_url: string;
     industry?: string;
-    language?: "zh" | "en";
+    language?: Locale;
   },
   accessToken?: string,
-  options?: { signal?: AbortSignal },
 ): Promise<ViralPipelineResult> {
   const response = await fetch(`${API_URL}/api/viral/pipeline/run`, {
     method: "POST",
@@ -232,7 +241,6 @@ export async function runViralPipeline(
       : { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
     cache: "no-store",
-    signal: options?.signal,
   });
   return parseResponse<ViralPipelineResult>(response, { url: `${API_URL}/api/viral/pipeline/run`, method: "POST" });
 }
@@ -288,6 +296,24 @@ export async function getAdminOrders(): Promise<Order[]> {
     cache: "no-store",
   });
   return parseResponse<Order[]>(response);
+}
+
+export async function getUserSubscriptions(accessToken?: string): Promise<Subscription[]> {
+  if (!accessToken) return [];
+  const response = await fetch(`${API_URL}/api/billing/subscriptions`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<Subscription[]>(response);
+}
+
+export async function cancelUserSubscription(accessToken?: string): Promise<{ ok: boolean }> {
+  const response = await fetch(`${API_URL}/api/billing/subscription/cancel`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<{ ok: boolean }>(response);
 }
 
 export async function getAdminSubscriptions(): Promise<Subscription[]> {

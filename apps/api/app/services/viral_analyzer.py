@@ -22,6 +22,11 @@ INDUSTRY_LABELS = {
 LANGUAGE_LABELS = {
     "zh": "中文",
     "en": "English",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "es": "Spanish",
+    "fr": "French",
+    "ru": "Russian",
 }
 
 PLAN_LIMITS: dict[str, int | None] = {
@@ -30,20 +35,6 @@ PLAN_LIMITS: dict[str, int | None] = {
     "pro": 300,
     "business": None,
 }
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _count_monthly_analyses(supabase: Client, *, user_id: str) -> int:
@@ -61,42 +52,10 @@ def _count_monthly_analyses(supabase: Client, *, user_id: str) -> int:
         return 0
 
 
-def _active_viral_extra_quota(supabase: Client, *, user_id: str) -> dict[str, Any]:
-    try:
-        result = (
-            supabase.table("viral_quota_overrides")
-            .select("extra_monthly_limit,expires_at")
-            .eq("user_id", user_id)
-            .limit(1)
-            .execute()
-        )
-    except APIError:
-        return {"extra_limit": 0, "extra_expires_at": None}
-
-    if not result.data:
-        return {"extra_limit": 0, "extra_expires_at": None}
-
-    override = result.data[0]
-    expires_at = _parse_datetime(override.get("expires_at"))
-    if expires_at is not None and expires_at <= datetime.now(UTC):
-        return {"extra_limit": 0, "extra_expires_at": override.get("expires_at")}
-
-    try:
-        extra_limit = int(override.get("extra_monthly_limit") or 0)
-    except (TypeError, ValueError):
-        extra_limit = 0
-    return {"extra_limit": max(extra_limit, 0), "extra_expires_at": override.get("expires_at")}
-
-
 def _assert_viral_quota(supabase: Client, *, user_id: str, email: str) -> dict[str, Any]:
     profile = ensure_profile(supabase, user_id=user_id, email=email)
     plan = profile.get("plan") or "free"
-    base_limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
-    extra_quota = {"extra_limit": 0, "extra_expires_at": None}
-    limit = base_limit
-    if base_limit is not None:
-        extra_quota = _active_viral_extra_quota(supabase, user_id=user_id)
-        limit = base_limit + extra_quota["extra_limit"]
+    limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
     used = _count_monthly_analyses(supabase, user_id=user_id)
     if limit is not None and used >= limit:
         raise HTTPException(
@@ -107,42 +66,53 @@ def _assert_viral_quota(supabase: Client, *, user_id: str, email: str) -> dict[s
                 "plan": plan,
                 "used": used,
                 "monthly_limit": limit,
-                "effective_monthly_limit": limit,
-                "base_limit": base_limit,
-                **extra_quota,
             },
         )
-    return {
-        "plan": plan,
-        "used": used,
-        "monthly_limit": limit,
-        "effective_monthly_limit": limit,
-        "base_limit": base_limit,
-        **extra_quota,
-    }
+    return {"plan": plan, "used": used, "monthly_limit": limit}
 
 
 def _list_of_strings(value: Any, fallback: list[str]) -> list[str]:
     if isinstance(value, list):
         items = [str(item).strip() for item in value if str(item).strip()]
         return items or fallback
+    if isinstance(value, str):
+        parts = [
+            item.strip(" -•\t")
+            for item in value.replace("；", "\n").replace(";", "\n").replace("、", "\n").replace("/", "\n").splitlines()
+            if item.strip(" -•\t")
+        ]
+        return parts or ([value.strip()] if value.strip() else fallback)
     return fallback
 
 
-def _rewrites(value: Any, fallback_topic: str) -> list[dict[str, str]]:
-    default = [
-        {"title": "保守版", "script": f"今天用一个更清晰的角度，重新聊聊{fallback_topic}。先看问题，再看方法，最后给你一个可以直接执行的建议。"},
-        {"title": "强转化版", "script": f"如果你也在为{fallback_topic}纠结，先别急着做决定。真正拉开差距的不是投入更多，而是找到更适合你的方法。"},
-        {"title": "短视频口播版", "script": f"很多人做不好{fallback_topic}，不是能力不行，而是开头、节奏和转化点都没设计好。"},
-    ]
+def _rewrites(value: Any, fallback_topic: str, language: str) -> list[dict[str, str]]:
+    if language == "zh":
+        default = [
+            {"title": "保守版", "script": f"今天用一个更清晰的角度，重新聊聊{fallback_topic}。先看问题，再看方法，最后给你一个可以直接执行的建议。"},
+            {"title": "强转化版", "script": f"如果你也在为{fallback_topic}纠结，先别急着做决定。真正拉开差距的不是投入更多，而是找到更适合你的方法。"},
+            {"title": "短视频口播版", "script": f"很多人做不好{fallback_topic}，不是能力不行，而是开头、节奏和转化点都没设计好。"},
+        ]
+    else:
+        default = [
+            {"title": "Conservative version", "script": f"Today, let us look at {fallback_topic} from a clearer angle: the problem, the method, and one action you can take right away."},
+            {"title": "Conversion version", "script": f"If you are still unsure about {fallback_topic}, do not rush the decision. The real difference comes from choosing the right method, not doing more work."},
+            {"title": "Short video version", "script": f"Many people struggle with {fallback_topic} because the opening, pacing, and conversion point are not designed clearly enough."},
+        ]
+    if isinstance(value, str):
+        value = [{"title": "基础版" if language == "zh" else "Base version", "script": value}]
     if not isinstance(value, list):
         return default
     normalized: list[dict[str, str]] = []
     for item in value:
+        if isinstance(item, str):
+            script = item.strip()
+            if script:
+                normalized.append({"title": f"版本{len(normalized) + 1}" if language == "zh" else f"Version {len(normalized) + 1}", "script": script})
+            continue
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title") or "").strip()
-        script = str(item.get("script") or "").strip()
+        title = str(item.get("title") or item.get("name") or item.get("version") or "").strip()
+        script = str(item.get("script") or item.get("content") or item.get("text") or item.get("copy") or "").strip()
         if title and script:
             normalized.append({"title": title, "script": script})
     if len(normalized) < 3:
@@ -176,6 +146,19 @@ async def analyze_viral_script(
 
     quota = _assert_viral_quota(supabase, user_id=user_id, email=email)
     output_language = LANGUAGE_LABELS[language]
+    fallback_text = {
+        "topic": "短视频内容拆解" if language == "zh" else "Short video content analysis",
+        "hook": "用强问题或反差在前 3 秒抓住注意力。" if language == "zh" else "Use a strong question or contrast to capture attention in the first 3 seconds.",
+        "selling_points": ["痛点明确", "反差制造注意力", "好奇心推动完播", "利益点清晰", "情绪共鸣", "信任背书"]
+        if language == "zh"
+        else ["Clear pain point", "Contrast for attention", "Curiosity for completion", "Clear benefit", "Emotional resonance", "Trust proof"],
+        "structure": ["开头钩子", "问题放大", "解决方案", "证明/案例", "行动号召"]
+        if language == "zh"
+        else ["Opening hook", "Amplify the problem", "Solution", "Proof or case", "Call to action"],
+        "template": "不是 X 不行，而是你没有找到适合自己的 Y。"
+        if language == "zh"
+        else "It is not that X does not work; you have not found the right Y for your situation.",
+    }
     prompt_payload = {
         "source_url": source_url,
         "raw_script": raw_script,
@@ -207,30 +190,33 @@ async def analyze_viral_script(
         system=(
             "你是短视频爆款文案拆解专家和数字人口播编导。"
             "你的任务是提炼结构和创作方法，并生成原创改写稿。"
-            f"除字段名外，内容使用{output_language}。只输出合法 JSON。"
+            f"目标输出语言是{output_language}。除字段名外，所有内容必须使用{output_language}。只输出合法 JSON。"
         ),
         payload=prompt_payload,
     )
 
-    topic = str(data.get("topic") or "短视频内容拆解").strip()
+    topic = str(data.get("topic") or fallback_text["topic"]).strip()
+    rewrites_value = data.get("rewrites")
+    if rewrites_value is None:
+        rewrites_value = data.get("rewrite_versions") or data.get("rewriteVersions") or data.get("scripts")
+
     result = {
         "topic": topic,
-        "hook": str(data.get("hook") or "用强问题或反差在前 3 秒抓住注意力。").strip(),
+        "hook": str(data.get("hook") or fallback_text["hook"]).strip(),
         "selling_points": _list_of_strings(
             data.get("selling_points"),
-            ["痛点明确", "反差制造注意力", "好奇心推动完播", "利益点清晰", "情绪共鸣", "信任背书"],
+            fallback_text["selling_points"],
         ),
         "structure": _list_of_strings(
             data.get("structure"),
-            ["开头钩子", "问题放大", "解决方案", "证明/案例", "行动号召"],
+            fallback_text["structure"],
         ),
-        "template": str(data.get("template") or "不是 X 不行，而是你没有找到适合自己的 Y。").strip(),
-        "rewrites": _rewrites(data.get("rewrites"), topic),
+        "template": str(data.get("template") or data.get("template_formula") or fallback_text["template"]).strip(),
+        "rewrites": _rewrites(rewrites_value, topic, language),
     }
 
-    project_id = ""
     try:
-        insert_result = supabase.table("viral_analyses").insert(
+        supabase.table("viral_analyses").insert(
             {
                 "user_id": user_id,
                 "source_url": source_url,
@@ -245,8 +231,6 @@ async def analyze_viral_script(
                 "rewrites": result["rewrites"],
             }
         ).execute()
-        if insert_result.data and isinstance(insert_result.data, list):
-            project_id = str(insert_result.data[0].get("id") or "")
     except APIError:
         pass
 
@@ -262,4 +246,4 @@ async def analyze_viral_script(
     except APIError:
         pass
 
-    return {**result, "project_id": project_id, "quota": {**quota, "used": quota["used"] + 1}}
+    return {**result, "quota": {**quota, "used": quota["used"] + 1}}

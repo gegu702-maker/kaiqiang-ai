@@ -1,12 +1,86 @@
 from __future__ import annotations
 
+import ast
 import json
+import re
 from typing import Any
 
 import httpx
 from fastapi import HTTPException
 
 from app.core.config import settings
+
+
+def _strip_code_fence(value: str) -> str:
+    text = value.strip()
+    fence = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    return fence.group(1).strip() if fence else text
+
+
+def _extract_json_object(value: str) -> str:
+    text = _strip_code_fence(value)
+    start = text.find("{")
+    if start < 0:
+        return text
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    end = text.rfind("}")
+    return text[start : end + 1] if end > start else text
+
+
+def _remove_trailing_commas(value: str) -> str:
+    return re.sub(r",\s*([}\]])", r"\1", value)
+
+
+def safe_parse_json_response(raw: str) -> dict[str, Any]:
+    """Parse model JSON with tolerance for common chat-model formatting noise."""
+    candidates: list[str] = []
+    extracted = _extract_json_object(raw)
+    for candidate in (raw, _strip_code_fence(raw), extracted, _remove_trailing_commas(extracted)):
+        candidate = candidate.strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError as error:
+            last_error = error
+        else:
+            if isinstance(data, dict):
+                return data
+
+    python_literal = _remove_trailing_commas(extracted).strip()
+    try:
+        data = ast.literal_eval(python_literal)
+    except (SyntaxError, ValueError) as error:
+        last_error = error
+    else:
+        if isinstance(data, dict):
+            return data
+
+    raise ValueError("Model response did not contain a usable JSON object.") from last_error
 
 
 class LLMProvider:
@@ -65,9 +139,9 @@ class LLMProvider:
 
         raw = response.json()["choices"][0]["message"]["content"]
         try:
-            return json.loads(raw)
-        except json.JSONDecodeError as error:
-            raise HTTPException(status_code=502, detail=f"{provider_name} returned invalid JSON: {raw[:500]}") from error
+            return safe_parse_json_response(raw)
+        except ValueError as error:
+            raise HTTPException(status_code=502, detail="AI 拆解结果解析失败，请稍后重试，或粘贴原文案继续分析。") from error
 
     def _mock(self, payload: dict[str, Any]) -> dict[str, Any]:
         product_name = payload.get("product_name", "商品")

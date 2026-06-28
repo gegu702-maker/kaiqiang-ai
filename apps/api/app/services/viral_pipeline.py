@@ -25,18 +25,44 @@ class ViralPipelineStatus(str, Enum):
     TRANSCRIBING = "transcribing"
     ANALYZING = "analyzing"
     REWRITING = "rewriting"
+    METADATA_FALLBACK = "metadata_fallback"
     READY = "ready"
     FAILED = "failed"
 
 
 REWRITE_TITLES = ["版本A", "版本B", "版本C", "老板IP版", "知识分享版", "成交转化版", "故事版", "直播版", "极简口播版"]
+LANGUAGE_LABELS = {
+    "zh": "中文",
+    "en": "English",
+    "ja": "日本語",
+    "ko": "한국어",
+    "es": "Español",
+    "fr": "Français",
+    "ru": "Русский",
+}
 
 
-def _failed(*, status: ViralPipelineStatus, fallback_reason: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+FALLBACK_OPTIONS = ["upload_video", "paste_text"]
+METADATA_FALLBACK_WARNING = "已基于链接可读取信息完成初步拆解。由于平台限制，未读取完整视频语音，建议补充原文案可提升准确度。"
+INSUFFICIENT_METADATA_MESSAGE = "链接可识别，但可读取内容不足。请粘贴原文案或上传视频以获得完整拆解。"
+
+
+def _failed(
+    *,
+    status: ViralPipelineStatus,
+    fallback_reason: str,
+    metadata: dict[str, Any] | None = None,
+    error_code: str = "unknown_error",
+) -> dict[str, Any]:
     return {
         "ok": False,
+        "success": False,
         "status": ViralPipelineStatus.FAILED,
         "failed_at": status,
+        "error_code": error_code,
+        "message": fallback_reason,
+        "fallback_available": True,
+        "fallback_options": FALLBACK_OPTIONS,
         "fallback_reason": fallback_reason,
         "project_id": "",
         "transcript": "",
@@ -54,6 +80,31 @@ def _analysis_payload(analysis: dict[str, Any]) -> dict[str, Any]:
         "structure": analysis.get("structure", []),
         "template": analysis.get("template", ""),
     }
+
+
+def _metadata_text(metadata: dict[str, Any]) -> str:
+    parts: list[str] = []
+    title = str(metadata.get("title") or "").strip()
+    description = str(metadata.get("description") or "").strip()
+    platform = str(metadata.get("platform") or "").strip()
+    duration = metadata.get("duration") or 0
+    webpage_url = str(metadata.get("webpage_url") or "").strip()
+    if title:
+        parts.append(f"标题：{title}")
+    if description and description != title:
+        parts.append(f"视频描述/分享文案：{description}")
+    if platform:
+        parts.append(f"平台：{platform}")
+    if duration:
+        parts.append(f"时长：{duration}秒")
+    if webpage_url:
+        parts.append(f"链接：{webpage_url}")
+    return "\n".join(parts).strip()
+
+
+def _has_enough_metadata_text(text: str) -> bool:
+    cjk_count = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+    return cjk_count >= 10 or len(text) >= 30
 
 
 def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
@@ -77,14 +128,21 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
 
 def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
     fallback = _fallback_rewrites(analysis, transcript)
+    if isinstance(value, str):
+        value = [{"title": "基础版", "script": value}]
     if not isinstance(value, list):
         return fallback
     normalized: list[dict[str, str]] = []
     for item in value:
+        if isinstance(item, str):
+            script = item.strip()
+            if script:
+                normalized.append({"title": f"版本{len(normalized) + 1}", "script": script})
+            continue
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title") or "").strip()
-        script = str(item.get("script") or "").strip()
+        title = str(item.get("title") or item.get("name") or item.get("version") or "").strip()
+        script = str(item.get("script") or item.get("content") or item.get("text") or item.get("copy") or "").strip()
         if title and script:
             normalized.append({"title": title, "script": script})
     existing = {item["title"] for item in normalized}
@@ -94,7 +152,7 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
 
 async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], language: str) -> list[dict[str, str]]:
     payload = {
-        "language": "中文" if language == "zh" else "English",
+        "language": LANGUAGE_LABELS.get(language, "中文"),
         "transcript": transcript,
         "analysis": _analysis_payload(analysis),
         "rewrite_titles": REWRITE_TITLES,
@@ -115,7 +173,7 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
         )
     except Exception:
         return _fallback_rewrites(analysis, transcript)
-    return _normalize_rewrites(data.get("rewrites"), analysis, transcript)
+    return _normalize_rewrites(data.get("rewrites") or data.get("rewrite_versions") or data.get("rewriteVersions") or data.get("scripts"), analysis, transcript)
 
 
 def _update_project_rewrites(supabase: Client, *, project_id: str, rewrites: list[dict[str, str]]) -> None:
@@ -125,6 +183,58 @@ def _update_project_rewrites(supabase: Client, *, project_id: str, rewrites: lis
         supabase.table("viral_analyses").update({"rewrites": rewrites}).eq("id", project_id).execute()
     except APIError:
         pass
+
+
+async def _metadata_fallback_analysis(
+    supabase: Client,
+    *,
+    user_id: str,
+    email: str,
+    source_url: str,
+    metadata: dict[str, Any],
+    industry: str,
+    language: str,
+) -> dict[str, Any]:
+    transcript = _metadata_text(metadata)
+    if not _has_enough_metadata_text(transcript):
+        return _failed(
+            status=ViralPipelineStatus.METADATA_FALLBACK,
+            fallback_reason=INSUFFICIENT_METADATA_MESSAGE,
+            metadata=metadata,
+            error_code="insufficient_metadata",
+        )
+
+    analysis = await analyze_viral_script(
+        supabase,
+        user_id=user_id,
+        email=email,
+        source_url=str(metadata.get("webpage_url") or source_url),
+        raw_script=transcript,
+        industry=industry,
+        language=language,
+    )
+    rewrites = await _generate_nine_rewrites(transcript=transcript, analysis=analysis, language=language)
+    project_id = str(analysis.get("project_id") or uuid4())
+    _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
+    return {
+        "ok": True,
+        "success": True,
+        "status": ViralPipelineStatus.READY,
+        "failed_at": "",
+        "error_code": "",
+        "message": "",
+        "fallback_available": False,
+        "fallback_options": [],
+        "fallback_reason": "",
+        "project_id": project_id,
+        "transcript": transcript,
+        "analysis": _analysis_payload(analysis),
+        "rewrites": rewrites,
+        "metadata": metadata,
+        "source_type": "link_metadata_fallback",
+        "analysis_quality": "partial",
+        "warning": METADATA_FALLBACK_WARNING,
+    }
 
 
 async def run_viral_pipeline(
@@ -150,7 +260,23 @@ async def run_viral_pipeline(
             "downloadable": resolved.get("downloadable", False),
         }
         if not resolved.get("ok") or not resolved.get("downloadable"):
-            return _failed(status=status, fallback_reason=resolved.get("fallback_reason") or DOWNLOAD_FALLBACK, metadata=metadata)
+            if resolved.get("ok") and (resolved.get("error_code") == "not_downloadable" or not resolved.get("downloadable")):
+                metadata["downloadable"] = False
+                return await _metadata_fallback_analysis(
+                    supabase,
+                    user_id=user_id,
+                    email=email,
+                    source_url=source_url,
+                    metadata=metadata,
+                    industry=industry,
+                    language=language,
+                )
+            return _failed(
+                status=status,
+                fallback_reason=resolved.get("message") or resolved.get("fallback_reason") or DOWNLOAD_FALLBACK,
+                metadata=metadata,
+                error_code=resolved.get("error_code") or "unknown_error",
+            )
 
         status = ViralPipelineStatus.DOWNLOADING_VIDEO
         downloaded = await download_video(str(resolved.get("webpage_url") or source_url), work_dir)
@@ -165,18 +291,32 @@ async def run_viral_pipeline(
             }
         )
         if not downloaded.ok or not downloaded.video_path:
-            return _failed(status=status, fallback_reason=downloaded.fallback_reason or DOWNLOAD_FALLBACK, metadata=metadata)
+            metadata["downloadable"] = False
+            return await _metadata_fallback_analysis(
+                supabase,
+                user_id=user_id,
+                email=email,
+                source_url=source_url,
+                metadata=metadata,
+                industry=industry,
+                language=language,
+            )
 
         status = ViralPipelineStatus.EXTRACTING_AUDIO
         try:
             audio_path = await extract_audio(downloaded.video_path, work_dir)
         except RuntimeError:
-            return _failed(status=status, fallback_reason="该视频暂不支持自动解析，请上传视频继续分析。", metadata=metadata)
+            return _failed(status=status, fallback_reason="该视频暂不支持自动解析，请上传视频继续分析。", metadata=metadata, error_code="not_downloadable")
 
         status = ViralPipelineStatus.TRANSCRIBING
         asr = await transcribe_audio(audio_path, language)
         if not asr.ok:
-            return _failed(status=status, fallback_reason=asr.fallback_reason or "该视频暂不支持自动转写，请上传视频继续分析。", metadata=metadata)
+            return _failed(
+                status=status,
+                fallback_reason=asr.fallback_reason or "该视频暂不支持自动转写，请上传视频继续分析。",
+                metadata=metadata,
+                error_code="not_downloadable",
+            )
 
         status = ViralPipelineStatus.ANALYZING
         analysis = await analyze_viral_script(
@@ -196,8 +336,13 @@ async def run_viral_pipeline(
 
         return {
             "ok": True,
+            "success": True,
             "status": ViralPipelineStatus.READY,
             "failed_at": "",
+            "error_code": "",
+            "message": "",
+            "fallback_available": False,
+            "fallback_options": [],
             "fallback_reason": "",
             "project_id": project_id,
             "transcript": asr.transcript,
