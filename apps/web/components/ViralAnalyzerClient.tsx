@@ -241,9 +241,9 @@ export function ViralAnalyzerClient() {
   }
 
   return (
-    <main className="min-h-[calc(100vh-86px)] bg-ink text-slate-100">
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:py-10">
-        <section className="space-y-5">
+    <main className="min-h-[calc(100vh-86px)] overflow-x-hidden bg-ink text-slate-100">
+      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:py-10">
+        <section className="min-w-0 max-w-full space-y-5 overflow-hidden">
           <div>
             <p className="inline-flex items-center gap-2 rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1 text-sm font-semibold text-cyan">
               <Sparkles size={15} />
@@ -261,7 +261,7 @@ export function ViralAnalyzerClient() {
                   {t.url}
                 </span>
                 <input
-                  className="h-11 w-full rounded-md border border-white/10 bg-ink/70 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan/60"
+                  className="h-11 w-full min-w-0 rounded-md border border-white/10 bg-ink/70 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan/60"
                   value={sourceUrl}
                   onChange={(event) => setSourceUrl(event.target.value)}
                   placeholder={t.linkPlaceholder}
@@ -274,7 +274,7 @@ export function ViralAnalyzerClient() {
                   {t.rawScript}
                 </span>
                 <textarea
-                  className="min-h-44 w-full resize-y rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan/60"
+                  className="min-h-44 w-full min-w-0 resize-y rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan/60"
                   maxLength={6000}
                   value={rawScript}
                   onChange={(event) => setRawScript(event.target.value)}
@@ -289,7 +289,7 @@ export function ViralAnalyzerClient() {
                 </span>
                 <span className="mt-1 block text-xs leading-5 text-slate-500">{t.uploadHint}</span>
                 <input
-                  className="mt-3 block w-full text-sm text-slate-400 file:mr-4 file:rounded-md file:border-0 file:bg-cyan file:px-4 file:py-2 file:text-sm file:font-semibold file:text-ink hover:file:bg-cyan/90"
+                  className="mt-3 block w-full min-w-0 text-sm text-slate-400 file:mr-4 file:rounded-md file:border-0 file:bg-cyan file:px-4 file:py-2 file:text-sm file:font-semibold file:text-ink hover:file:bg-cyan/90"
                   type="file"
                   accept="video/mp4,video/quicktime,video/webm"
                   onChange={(event) => setVideoFileName(event.target.files?.[0]?.name ?? "")}
@@ -350,8 +350,8 @@ export function ViralAnalyzerClient() {
                 </button>
               </div>
               {linkCheck ? (
-                <div className={linkCheck.ok ? "rounded-md border border-lime/20 bg-lime/10 p-3 text-sm leading-6 text-lime" : "rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100"}>
-                  <p>{linkCheck.ok ? linkCheckCopy.checkPassed : friendlyLinkMessage(linkCheck)}</p>
+                <div className={linkCheck.ok ? "max-w-full overflow-hidden rounded-md border border-lime/20 bg-lime/10 p-3 text-sm leading-6 text-lime" : "max-w-full overflow-hidden rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100"}>
+                  <p className="break-words">{linkCheck.ok ? linkCheckCopy.checkPassed : friendlyLinkMessage(linkCheck)}</p>
                   <p className="mt-1 text-xs opacity-80">
                     {linkCheck.redirect_ok === false ? linkCheckCopy.redirectFailed : linkCheckCopy.redirectOk} /{" "}
                     {linkCheck.supported_platform === false ? linkCheckCopy.platformUnsupported : `${linkCheckCopy.platform}: ${linkCheck.platform || "douyin"}`}
@@ -372,7 +372,7 @@ export function ViralAnalyzerClient() {
           </div>
         </section>
 
-        <section className="space-y-5">
+        <section className="min-w-0 max-w-full space-y-5 overflow-hidden">
           {!result ? (
             <div className="grid min-h-[560px] place-items-center rounded-lg border border-white/10 bg-panel/60 p-8 text-center shadow-glow">
               <div>
@@ -384,14 +384,14 @@ export function ViralAnalyzerClient() {
           ) : (
             <>
               {pipelineWarning ? (
-                <p className="rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">{pipelineWarning}</p>
+                <p className="rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100 break-words">{pipelineWarning}</p>
               ) : null}
               {pipelineMetadata ? (
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-slate-300">
-                  <div className="flex gap-3">
+                <div className="max-w-full overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-slate-300">
+                  <div className="flex min-w-0 gap-3">
                     {pipelineMetadata.thumbnail ? <Image className="h-16 w-16 rounded-md object-cover" src={pipelineMetadata.thumbnail} alt="" width={64} height={64} unoptimized /> : null}
-                    <div className="min-w-0">
-                      {pipelineMetadata.title ? <p className="truncate font-semibold text-white">{pipelineMetadata.title}</p> : null}
+                    <div className="min-w-0 break-words">
+                      {pipelineMetadata.title ? <p className="break-words font-semibold text-white">{pipelineMetadata.title}</p> : null}
                       <p>平台：{pipelineMetadata.platform || "douyin"}</p>
                       {pipelineMetadata.duration ? <p>时长：{pipelineMetadata.duration}秒</p> : null}
                       {pipelineSourceType === "link_metadata_fallback" ? <p>分析来源：链接公开信息</p> : null}
@@ -401,7 +401,7 @@ export function ViralAnalyzerClient() {
                 </div>
               ) : null}
               {result.quota ? (
-                <p className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm text-slate-400">
+                <p className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm text-slate-400 break-words">
                   {t.quota}: {result.quota.monthly_limit === null ? `${result.quota.used} / ${t.customQuota}` : `${result.quota.used} / ${result.quota.monthly_limit}`}
                 </p>
               ) : null}
@@ -411,32 +411,30 @@ export function ViralAnalyzerClient() {
               <ListCard title={t.structure} items={result.structure} />
               <ResultCard title={t.template}>{result.template}</ResultCard>
 
-              <div className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+              <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
                 <h2 className="text-lg font-semibold text-white">{t.rewrites}</h2>
                 <div className="mt-4 grid gap-4">
                   {result.rewrites.map((rewrite, index) => (
-                    <article key={`${rewrite.title}-${index}`} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <h3 className="text-base font-semibold text-cyan">{rewrite.title}</h3>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => copyScript(rewrite.script, index)}
-                            className="inline-flex h-9 items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-slate-200 hover:bg-white/[0.06]"
-                          >
-                            {copiedIndex === index ? <Check size={14} /> : <Copy size={14} />}
-                            {copiedIndex === index ? t.copied : t.copy}
-                          </button>
-                          <Link
-                            className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan px-3 text-xs font-semibold text-ink hover:bg-cyan/90"
-                            href={`/studio/avatar?script_text=${encodeURIComponent(rewrite.script)}`}
-                          >
-                            {t.generate}
-                            <ArrowRight size={14} />
-                          </Link>
-                        </div>
+                    <article key={`${rewrite.title}-${index}`} className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] p-4">
+                      <h3 className="break-words text-base font-semibold text-cyan">{rewrite.title}</h3>
+                      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300">{rewrite.script}</p>
+                      <div className="mt-4 flex max-w-full flex-wrap justify-start gap-2 sm:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => copyScript(rewrite.script, index)}
+                          className="inline-flex h-9 max-w-full items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-slate-200 hover:bg-white/[0.06]"
+                        >
+                          {copiedIndex === index ? <Check size={14} /> : <Copy size={14} />}
+                          <span className="truncate">{copiedIndex === index ? t.copied : t.copy}</span>
+                        </button>
+                        <Link
+                          className="inline-flex h-9 max-w-full items-center gap-2 rounded-md bg-cyan px-3 text-xs font-semibold text-ink hover:bg-cyan/90"
+                          href={`/studio/avatar?script_text=${encodeURIComponent(rewrite.script)}`}
+                        >
+                          <span className="truncate">{t.generate}</span>
+                          <ArrowRight size={14} />
+                        </Link>
                       </div>
-                      <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-300">{rewrite.script}</p>
                     </article>
                   ))}
                 </div>
@@ -451,20 +449,20 @@ export function ViralAnalyzerClient() {
 
 function ResultCard({ title, children }: { title: string; children: string }) {
   return (
-    <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
-      <h2 className="text-lg font-semibold text-white">{title}</h2>
-      <p className="mt-3 text-sm leading-7 text-slate-300">{children}</p>
+    <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+      <h2 className="break-words text-lg font-semibold text-white">{title}</h2>
+      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300">{children}</p>
     </section>
   );
 }
 
 function ListCard({ title, items }: { title: string; items: string[] }) {
   return (
-    <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
-      <h2 className="text-lg font-semibold text-white">{title}</h2>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+    <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+      <h2 className="break-words text-lg font-semibold text-white">{title}</h2>
+      <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
         {items.map((item) => (
-          <div key={item} className="rounded-md border border-white/10 bg-white/[0.035] px-3 py-2 text-sm text-slate-300">
+          <div key={item} className="min-w-0 rounded-md border border-white/10 bg-white/[0.035] px-3 py-2 text-sm text-slate-300 break-words">
             {item}
           </div>
         ))}
