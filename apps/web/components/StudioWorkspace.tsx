@@ -139,27 +139,27 @@ export function StudioWorkspace({
   }
 
   return (
-    <main className="min-h-[calc(100vh-86px)] bg-ink text-slate-100">
-      <div className="mx-auto grid max-w-[1500px] gap-6 px-4 py-6 sm:px-6 xl:grid-cols-[1.08fr_0.92fr]">
-        <section className="space-y-5">
-          <div className="rounded-lg border border-white/10 bg-panel/85 p-5 shadow-glow">
+    <main className="min-h-[calc(100vh-86px)] w-full max-w-full overflow-x-hidden bg-ink text-slate-100">
+      <div className="mx-auto grid w-full max-w-[1500px] grid-cols-1 gap-6 overflow-hidden px-4 py-6 sm:px-6 xl:grid-cols-[minmax(0,1fr)_minmax(220px,320px)]">
+        <section className="min-w-0 max-w-full space-y-5 overflow-hidden">
+          <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/85 p-5 shadow-glow">
             <p className="inline-flex items-center gap-2 rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1 text-sm font-semibold text-cyan">
               <Sparkles size={15} />
               {t.badge}
             </p>
-            <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-tight text-white sm:text-5xl">{t.title}</h1>
-            <p className="mt-3 max-w-2xl text-base leading-7 text-slate-400">{t.subtitle}</p>
+            <h1 className="mt-4 max-w-3xl break-words text-4xl font-semibold leading-tight text-white sm:text-5xl">{t.title}</h1>
+            <p className="mt-3 max-w-2xl break-words text-base leading-7 text-slate-400">{t.subtitle}</p>
             <div className="mt-5 flex flex-wrap gap-2 text-xs font-semibold text-slate-400">
               {t.workflow.map((step, index) => (
-                <span key={step} className="inline-flex items-center gap-2">
-                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">{step}</span>
+                <span key={step} className="inline-flex max-w-full min-w-0 items-center gap-2">
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 break-words">{step}</span>
                   {index < t.workflow.length - 1 ? <ArrowRight size={13} className="text-cyan" /> : null}
                 </span>
               ))}
             </div>
-            <div className="mt-6 grid gap-3 rounded-lg border border-cyan/20 bg-cyan/[0.06] p-3 sm:grid-cols-[1fr_auto]">
+            <div className="mt-6 grid min-w-0 gap-3 rounded-lg border border-cyan/20 bg-cyan/[0.06] p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
               <input
-                className="h-12 rounded-md border border-white/10 bg-ink/80 px-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan/60"
+                className="h-12 min-w-0 rounded-md border border-white/10 bg-ink/80 px-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan/60"
                 value={sourceUrl}
                 onChange={(event) => setSourceUrl(event.target.value)}
                 placeholder={t.placeholder}
@@ -174,21 +174,21 @@ export function StudioWorkspace({
                 {isRunning ? t.analyzing : t.analyze}
               </button>
             </div>
-            <p className="mt-3 text-sm text-slate-500">{t.supports}</p>
-            {notice ? <p className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">{notice}</p> : null}
+            <p className="mt-3 break-words text-sm text-slate-500">{t.supports}</p>
+            {notice ? <p className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100 break-words [overflow-wrap:anywhere]">{notice}</p> : null}
           </div>
 
           {resolveResult ? (
-            <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+            <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
               <h2 className="text-lg font-semibold text-white">{t.metadata}</h2>
-              <div className="mt-4 grid gap-3 sm:grid-cols-[140px_1fr]">
+              <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-[140px_minmax(0,1fr)]">
                 {resolveResult.thumbnail ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={resolveResult.thumbnail} alt={resolveResult.title || "Douyin thumbnail"} className="aspect-[3/4] w-full rounded-md border border-white/10 object-cover" />
                 ) : (
                   <div className="grid aspect-[3/4] place-items-center rounded-md border border-white/10 bg-white/[0.035] text-xs text-slate-500">{t.noCover}</div>
                 )}
-                <div className="space-y-2 text-sm leading-6 text-slate-300">
+                <div className="min-w-0 space-y-2 text-sm leading-6 text-slate-300">
                   <InfoRow label={t.metadataLabels.platform} value={resolveResult.platform || "douyin"} />
                   <InfoRow label={t.metadataLabels.title} value={resolveResult.title || "-"} />
                   <InfoRow label={t.metadataLabels.duration} value={resolveResult.duration ? `${resolveResult.duration}s` : "-"} />
@@ -200,19 +200,19 @@ export function StudioWorkspace({
           ) : null}
 
           {transcript ? (
-            <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+            <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
               <h2 className="text-lg font-semibold text-white">{t.transcript}</h2>
-              <p className="mt-4 whitespace-pre-wrap rounded-md border border-white/10 bg-white/[0.035] p-4 text-sm leading-7 text-slate-300">{transcript}</p>
+              <p className="mt-4 whitespace-pre-wrap rounded-md border border-white/10 bg-white/[0.035] p-4 text-sm leading-7 text-slate-300 break-words [overflow-wrap:anywhere]">{transcript}</p>
             </section>
           ) : null}
 
-          <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+          <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
               <FileText className="text-cyan" size={20} />
               {t.topic}
             </h2>
             {currentAnalysis ? (
-              <div className="mt-4 grid gap-3 text-sm leading-6 text-slate-300 sm:grid-cols-2">
+              <div className="mt-4 grid min-w-0 gap-3 text-sm leading-6 text-slate-300 sm:grid-cols-2">
                 <InfoRow label={t.topic} value={currentAnalysis.topic || "-"} />
                 <InfoRow label={t.hook} value={currentAnalysis.hook || "-"} />
                 <InfoRow label={t.selling} value={(currentAnalysis.selling_points || []).join(" / ") || "-"} />
@@ -222,7 +222,7 @@ export function StudioWorkspace({
             ) : hasStarted ? (
               <EmptyState message={analysisStatus === "error" ? analysisError || t.analysisUnavailable : t.linkResolvedNeedsScript} />
             ) : canShowDemo ? (
-              <div className="mt-4 grid gap-3 text-sm leading-6 text-slate-300 sm:grid-cols-2">
+              <div className="mt-4 grid min-w-0 gap-3 text-sm leading-6 text-slate-300 sm:grid-cols-2">
                 <InfoRow label={t.hook} value={t.sampleAnalysis.hook} />
                 <InfoRow label={t.pain} value={t.sampleAnalysis.pain} />
                 <InfoRow label={t.selling} value={t.sampleAnalysis.selling} />
@@ -239,7 +239,7 @@ export function StudioWorkspace({
             </Link>
           </section>
 
-          <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+          <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
             <h2 className="text-lg font-semibold text-white">{t.rewrites}</h2>
             <div className="mt-4 grid gap-3">
               {(rewriteVersions.length > 0
@@ -248,35 +248,33 @@ export function StudioWorkspace({
                   ? t.rewriteSamples
                   : []
               ).map(([title, script]) => (
-                <article key={title} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h3 className="font-semibold text-cyan">{title}</h3>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="inline-flex h-9 items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-slate-200 hover:bg-white/[0.06]"
-                        onClick={() => copyRewrite(title, script)}
-                      >
-                        <Copy size={14} />
-                        {copied === title ? t.copied : t.copy}
-                      </button>
-                      <button type="button" className="inline-flex h-9 items-center gap-2 rounded-md border border-cyan/25 px-3 text-xs font-semibold text-cyan hover:bg-cyan/10">
-                        {t.continue}
-                      </button>
-                      <button
-                        type="button"
-                        className="inline-flex h-9 items-center gap-2 rounded-md bg-cyan px-3 text-xs font-semibold text-ink hover:bg-cyan/90"
-                        onClick={() => {
-                          setSelectedScript(script);
-                          document.getElementById("avatar-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
-                        }}
-                      >
-                        {t.avatar}
-                        <ArrowRight size={14} />
-                      </button>
-                    </div>
+                <article key={title} className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] p-4">
+                  <h3 className="break-words font-semibold text-cyan [overflow-wrap:anywhere]">{title}</h3>
+                  <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300 [overflow-wrap:anywhere]">{script}</p>
+                  <div className="mt-4 flex max-w-full flex-wrap justify-start gap-2 sm:justify-end">
+                    <button
+                      type="button"
+                      className="inline-flex h-9 max-w-full items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-slate-200 hover:bg-white/[0.06]"
+                      onClick={() => copyRewrite(title, script)}
+                    >
+                      <Copy size={14} />
+                      <span className="truncate">{copied === title ? t.copied : t.copy}</span>
+                    </button>
+                    <button type="button" className="inline-flex h-9 max-w-full items-center gap-2 rounded-md border border-cyan/25 px-3 text-xs font-semibold text-cyan hover:bg-cyan/10">
+                      <span className="truncate">{t.continue}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 max-w-full items-center gap-2 rounded-md bg-cyan px-3 text-xs font-semibold text-ink hover:bg-cyan/90"
+                      onClick={() => {
+                        setSelectedScript(script);
+                        document.getElementById("avatar-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                    >
+                      <span className="truncate">{t.avatar}</span>
+                      <ArrowRight size={14} />
+                    </button>
                   </div>
-                  <p className="mt-3 text-sm leading-7 text-slate-300">{script}</p>
                 </article>
               ))}
               {rewriteVersions.length === 0 && !canShowDemo ? <EmptyState message={hasStarted ? t.rewritesUnavailable : t.empty} /> : null}
@@ -284,8 +282,8 @@ export function StudioWorkspace({
           </section>
         </section>
 
-        <aside className="space-y-5">
-          <section className="sticky top-24 rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+        <aside className="min-w-0 max-w-full space-y-5 overflow-hidden xl:w-[320px]">
+          <section className="rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow xl:sticky xl:top-24">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
               <Video className="text-cyan" size={20} />
               {t.preview}
@@ -307,7 +305,7 @@ export function StudioWorkspace({
                   <span className="grid size-7 shrink-0 place-items-center rounded-full border border-current/25 text-xs font-semibold">
                     {step.state === "running" ? <Loader2 className="animate-spin" size={15} /> : index + 1}
                   </span>
-                  <span className="flex-1">{step.label}</span>
+                  <span className="min-w-0 flex-1 break-words">{step.label}</span>
                   {step.state === "done" ? <CheckCircle2 size={16} /> : null}
                 </div>
               ))}
@@ -315,7 +313,7 @@ export function StudioWorkspace({
           </section>
         </aside>
       </div>
-      <section id="avatar-studio" className="mx-auto max-w-[1500px] px-4 pb-10 sm:px-6">
+      <section id="avatar-studio" className="mx-auto w-full max-w-[1500px] overflow-hidden px-4 pb-10 sm:px-6">
         <div className="mb-4">
           <h2 className="text-2xl font-semibold text-white">{t.avatarStudio}</h2>
           <p className="mt-2 text-sm leading-6 text-slate-400">{t.avatarStudioSubtitle}</p>
@@ -335,13 +333,13 @@ export function StudioWorkspace({
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-white/10 bg-white/[0.035] p-3">
-      <p className="text-xs font-semibold text-slate-500">{label}</p>
-      <p className="mt-1 text-slate-200">{value}</p>
+    <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-white/[0.035] p-3">
+      <p className="break-words text-xs font-semibold text-slate-500 [overflow-wrap:anywhere]">{label}</p>
+      <p className="mt-1 break-words text-slate-200 [overflow-wrap:anywhere]">{value}</p>
     </div>
   );
 }
 
 function EmptyState({ message }: { message: string }) {
-  return <p className="mt-4 rounded-md border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-slate-400">{message}</p>;
+  return <p className="mt-4 rounded-md border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-slate-400 break-words [overflow-wrap:anywhere]">{message}</p>;
 }

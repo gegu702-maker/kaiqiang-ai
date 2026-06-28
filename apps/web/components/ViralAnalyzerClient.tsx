@@ -241,8 +241,8 @@ export function ViralAnalyzerClient() {
   }
 
   return (
-    <main className="min-h-[calc(100vh-86px)] overflow-x-hidden bg-ink text-slate-100">
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:py-10">
+    <main className="min-h-[calc(100vh-86px)] w-full max-w-full overflow-x-hidden bg-ink text-slate-100">
+      <div className="mx-auto grid w-full max-w-7xl gap-6 overflow-hidden px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:py-10">
         <section className="min-w-0 max-w-full space-y-5 overflow-hidden">
           <div>
             <p className="inline-flex items-center gap-2 rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1 text-sm font-semibold text-cyan">
@@ -384,14 +384,14 @@ export function ViralAnalyzerClient() {
           ) : (
             <>
               {pipelineWarning ? (
-                <p className="rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100 break-words">{pipelineWarning}</p>
+                <p className="rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100 break-words [overflow-wrap:anywhere]">{pipelineWarning}</p>
               ) : null}
               {pipelineMetadata ? (
                 <div className="max-w-full overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-slate-300">
                   <div className="flex min-w-0 gap-3">
                     {pipelineMetadata.thumbnail ? <Image className="h-16 w-16 rounded-md object-cover" src={pipelineMetadata.thumbnail} alt="" width={64} height={64} unoptimized /> : null}
-                    <div className="min-w-0 break-words">
-                      {pipelineMetadata.title ? <p className="break-words font-semibold text-white">{pipelineMetadata.title}</p> : null}
+                    <div className="min-w-0 break-words [overflow-wrap:anywhere]">
+                      {pipelineMetadata.title ? <p className="break-words font-semibold text-white [overflow-wrap:anywhere]">{pipelineMetadata.title}</p> : null}
                       <p>平台：{pipelineMetadata.platform || "douyin"}</p>
                       {pipelineMetadata.duration ? <p>时长：{pipelineMetadata.duration}秒</p> : null}
                       {pipelineSourceType === "link_metadata_fallback" ? <p>分析来源：链接公开信息</p> : null}
@@ -401,7 +401,7 @@ export function ViralAnalyzerClient() {
                 </div>
               ) : null}
               {result.quota ? (
-                <p className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm text-slate-400 break-words">
+                <p className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm text-slate-400 break-words [overflow-wrap:anywhere]">
                   {t.quota}: {result.quota.monthly_limit === null ? `${result.quota.used} / ${t.customQuota}` : `${result.quota.used} / ${result.quota.monthly_limit}`}
                 </p>
               ) : null}
@@ -416,8 +416,8 @@ export function ViralAnalyzerClient() {
                 <div className="mt-4 grid gap-4">
                   {result.rewrites.map((rewrite, index) => (
                     <article key={`${rewrite.title}-${index}`} className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] p-4">
-                      <h3 className="break-words text-base font-semibold text-cyan">{rewrite.title}</h3>
-                      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300">{rewrite.script}</p>
+                      <h3 className="break-words text-base font-semibold text-cyan [overflow-wrap:anywhere]">{rewrite.title}</h3>
+                      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300 [overflow-wrap:anywhere]">{rewrite.script}</p>
                       <div className="mt-4 flex max-w-full flex-wrap justify-start gap-2 sm:justify-end">
                         <button
                           type="button"
@@ -450,8 +450,8 @@ export function ViralAnalyzerClient() {
 function ResultCard({ title, children }: { title: string; children: string }) {
   return (
     <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
-      <h2 className="break-words text-lg font-semibold text-white">{title}</h2>
-      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300">{children}</p>
+      <h2 className="break-words text-lg font-semibold text-white [overflow-wrap:anywhere]">{title}</h2>
+      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300 [overflow-wrap:anywhere]">{children}</p>
     </section>
   );
 }
@@ -459,10 +459,10 @@ function ResultCard({ title, children }: { title: string; children: string }) {
 function ListCard({ title, items }: { title: string; items: string[] }) {
   return (
     <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
-      <h2 className="break-words text-lg font-semibold text-white">{title}</h2>
+      <h2 className="break-words text-lg font-semibold text-white [overflow-wrap:anywhere]">{title}</h2>
       <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
         {items.map((item) => (
-          <div key={item} className="min-w-0 rounded-md border border-white/10 bg-white/[0.035] px-3 py-2 text-sm text-slate-300 break-words">
+          <div key={item} className="min-w-0 rounded-md border border-white/10 bg-white/[0.035] px-3 py-2 text-sm text-slate-300 break-words [overflow-wrap:anywhere]">
             {item}
           </div>
         ))}
