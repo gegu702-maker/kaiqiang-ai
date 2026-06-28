@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Sparkles, UploadCloud, WandSparkles } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -46,6 +47,9 @@ export function ViralAnalyzerClient() {
   const [videoFileName, setVideoFileName] = useState("");
   const [result, setResult] = useState<ViralAnalyzeResult | null>(null);
   const [linkCheck, setLinkCheck] = useState<VideoLinkResolveResult | null>(null);
+  const [pipelineMetadata, setPipelineMetadata] = useState<ViralPipelineResult["metadata"] | null>(null);
+  const [pipelineSourceType, setPipelineSourceType] = useState<string>("");
+  const [pipelineWarning, setPipelineWarning] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -91,6 +95,7 @@ export function ViralAnalyzerClient() {
       redirect_timeout: "短链跳转超时，请复制完整链接重试，或上传视频继续分析。",
       metadata_blocked: "链接可以识别，但平台可能限制视频读取。如失败，请上传视频或粘贴原文案继续分析。",
       not_downloadable: "链接可以识别，但视频下载受限，请上传视频或粘贴原文案继续分析。",
+      insufficient_metadata: "链接可识别，但可读取内容不足。请粘贴原文案或上传视频以获得完整拆解。",
       resolver_timeout: "链接检查超时，请稍后重试，或使用上传/粘贴方式。",
       unknown_error: "链接解析失败，请上传视频或粘贴原文案继续分析。",
       parse_failed: "页面可打开，但未能解析到视频信息，请上传视频或粘贴原文案继续分析。",
@@ -143,6 +148,9 @@ export function ViralAnalyzerClient() {
     setError("");
     setResult(null);
     setLinkCheck(null);
+    setPipelineMetadata(null);
+    setPipelineSourceType("");
+    setPipelineWarning("");
     setChecking(true);
     try {
       const accessToken = await getSessionToken();
@@ -162,6 +170,9 @@ export function ViralAnalyzerClient() {
     setError("");
     setResult(null);
     setLinkCheck(null);
+    setPipelineMetadata(null);
+    setPipelineSourceType("");
+    setPipelineWarning("");
     setLoading(true);
     try {
       const accessToken = await getSessionToken();
@@ -193,6 +204,9 @@ export function ViralAnalyzerClient() {
         if (!pipelineResult) {
           throw new Error(linkCheckCopy.pipelineEmpty);
         }
+        setPipelineMetadata(pipeline.metadata);
+        setPipelineSourceType(pipeline.source_type || "");
+        setPipelineWarning(pipeline.warning || "");
         setResult(pipelineResult);
         return;
       }
@@ -342,6 +356,15 @@ export function ViralAnalyzerClient() {
                     {linkCheck.redirect_ok === false ? linkCheckCopy.redirectFailed : linkCheckCopy.redirectOk} /{" "}
                     {linkCheck.supported_platform === false ? linkCheckCopy.platformUnsupported : `${linkCheckCopy.platform}: ${linkCheck.platform || "douyin"}`}
                   </p>
+                  {linkCheck.ok ? (
+                    <div className="mt-3 flex gap-3 text-xs text-lime/85">
+                      {linkCheck.thumbnail ? <Image className="h-14 w-14 rounded-md object-cover" src={linkCheck.thumbnail} alt="" width={56} height={56} unoptimized /> : null}
+                      <div className="min-w-0 space-y-1">
+                        {linkCheck.title ? <p className="truncate font-semibold text-lime">{linkCheck.title}</p> : null}
+                        {linkCheck.duration ? <p>时长：{linkCheck.duration}秒</p> : null}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {error ? <p className="rounded-md border border-rose-300/20 bg-rose-400/10 p-3 text-sm leading-6 text-rose-100">{error}</p> : null}
@@ -360,6 +383,23 @@ export function ViralAnalyzerClient() {
             </div>
           ) : (
             <>
+              {pipelineWarning ? (
+                <p className="rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">{pipelineWarning}</p>
+              ) : null}
+              {pipelineMetadata ? (
+                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-slate-300">
+                  <div className="flex gap-3">
+                    {pipelineMetadata.thumbnail ? <Image className="h-16 w-16 rounded-md object-cover" src={pipelineMetadata.thumbnail} alt="" width={64} height={64} unoptimized /> : null}
+                    <div className="min-w-0">
+                      {pipelineMetadata.title ? <p className="truncate font-semibold text-white">{pipelineMetadata.title}</p> : null}
+                      <p>平台：{pipelineMetadata.platform || "douyin"}</p>
+                      {pipelineMetadata.duration ? <p>时长：{pipelineMetadata.duration}秒</p> : null}
+                      {pipelineSourceType === "link_metadata_fallback" ? <p>分析来源：链接公开信息</p> : null}
+                      <p>视频下载：{pipelineMetadata.downloadable ? "可读取" : "受限"}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               {result.quota ? (
                 <p className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm text-slate-400">
                   {t.quota}: {result.quota.monthly_limit === null ? `${result.quota.used} / ${t.customQuota}` : `${result.quota.used} / ${result.quota.monthly_limit}`}

@@ -283,6 +283,7 @@ export type ViralLinkErrorCode =
   | "redirect_failed"
   | "redirect_timeout"
   | "not_downloadable"
+  | "insufficient_metadata"
   | "parse_failed"
   | "unsupported_page_structure"
   | "resolver_timeout"
@@ -297,6 +298,7 @@ export type ViralPipelineStatus =
   | "transcribing"
   | "analyzing"
   | "rewriting"
+  | "metadata_fallback"
   | "ready"
   | "failed";
 
@@ -331,4 +333,7 @@ export type ViralPipelineResult = {
   } | null;
   rewrites: ViralRewrite[];
   metadata: ViralPipelineMetadata;
+  source_type?: "video_asr" | "link_metadata_fallback" | string;
+  analysis_quality?: "full" | "partial" | string;
+  warning?: string;
 };

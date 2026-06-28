@@ -25,6 +25,7 @@ class ViralPipelineStatus(str, Enum):
     TRANSCRIBING = "transcribing"
     ANALYZING = "analyzing"
     REWRITING = "rewriting"
+    METADATA_FALLBACK = "metadata_fallback"
     READY = "ready"
     FAILED = "failed"
 
@@ -42,6 +43,8 @@ LANGUAGE_LABELS = {
 
 
 FALLBACK_OPTIONS = ["upload_video", "paste_text"]
+METADATA_FALLBACK_WARNING = "已基于链接可读取信息完成初步拆解。由于平台限制，未读取完整视频语音，建议补充原文案可提升准确度。"
+INSUFFICIENT_METADATA_MESSAGE = "链接可识别，但可读取内容不足。请粘贴原文案或上传视频以获得完整拆解。"
 
 
 def _failed(
@@ -77,6 +80,31 @@ def _analysis_payload(analysis: dict[str, Any]) -> dict[str, Any]:
         "structure": analysis.get("structure", []),
         "template": analysis.get("template", ""),
     }
+
+
+def _metadata_text(metadata: dict[str, Any]) -> str:
+    parts: list[str] = []
+    title = str(metadata.get("title") or "").strip()
+    description = str(metadata.get("description") or "").strip()
+    platform = str(metadata.get("platform") or "").strip()
+    duration = metadata.get("duration") or 0
+    webpage_url = str(metadata.get("webpage_url") or "").strip()
+    if title:
+        parts.append(f"标题：{title}")
+    if description and description != title:
+        parts.append(f"视频描述/分享文案：{description}")
+    if platform:
+        parts.append(f"平台：{platform}")
+    if duration:
+        parts.append(f"时长：{duration}秒")
+    if webpage_url:
+        parts.append(f"链接：{webpage_url}")
+    return "\n".join(parts).strip()
+
+
+def _has_enough_metadata_text(text: str) -> bool:
+    cjk_count = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+    return cjk_count >= 10 or len(text) >= 30
 
 
 def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
@@ -150,6 +178,58 @@ def _update_project_rewrites(supabase: Client, *, project_id: str, rewrites: lis
         pass
 
 
+async def _metadata_fallback_analysis(
+    supabase: Client,
+    *,
+    user_id: str,
+    email: str,
+    source_url: str,
+    metadata: dict[str, Any],
+    industry: str,
+    language: str,
+) -> dict[str, Any]:
+    transcript = _metadata_text(metadata)
+    if not _has_enough_metadata_text(transcript):
+        return _failed(
+            status=ViralPipelineStatus.METADATA_FALLBACK,
+            fallback_reason=INSUFFICIENT_METADATA_MESSAGE,
+            metadata=metadata,
+            error_code="insufficient_metadata",
+        )
+
+    analysis = await analyze_viral_script(
+        supabase,
+        user_id=user_id,
+        email=email,
+        source_url=str(metadata.get("webpage_url") or source_url),
+        raw_script=transcript,
+        industry=industry,
+        language=language,
+    )
+    rewrites = await _generate_nine_rewrites(transcript=transcript, analysis=analysis, language=language)
+    project_id = str(analysis.get("project_id") or uuid4())
+    _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
+    return {
+        "ok": True,
+        "success": True,
+        "status": ViralPipelineStatus.READY,
+        "failed_at": "",
+        "error_code": "",
+        "message": "",
+        "fallback_available": False,
+        "fallback_options": [],
+        "fallback_reason": "",
+        "project_id": project_id,
+        "transcript": transcript,
+        "analysis": _analysis_payload(analysis),
+        "rewrites": rewrites,
+        "metadata": metadata,
+        "source_type": "link_metadata_fallback",
+        "analysis_quality": "partial",
+        "warning": METADATA_FALLBACK_WARNING,
+    }
+
+
 async def run_viral_pipeline(
     supabase: Client,
     *,
@@ -173,6 +253,17 @@ async def run_viral_pipeline(
             "downloadable": resolved.get("downloadable", False),
         }
         if not resolved.get("ok") or not resolved.get("downloadable"):
+            if resolved.get("ok") and (resolved.get("error_code") == "not_downloadable" or not resolved.get("downloadable")):
+                metadata["downloadable"] = False
+                return await _metadata_fallback_analysis(
+                    supabase,
+                    user_id=user_id,
+                    email=email,
+                    source_url=source_url,
+                    metadata=metadata,
+                    industry=industry,
+                    language=language,
+                )
             return _failed(
                 status=status,
                 fallback_reason=resolved.get("message") or resolved.get("fallback_reason") or DOWNLOAD_FALLBACK,
@@ -193,11 +284,15 @@ async def run_viral_pipeline(
             }
         )
         if not downloaded.ok or not downloaded.video_path:
-            return _failed(
-                status=status,
-                fallback_reason=downloaded.fallback_reason or DOWNLOAD_FALLBACK,
+            metadata["downloadable"] = False
+            return await _metadata_fallback_analysis(
+                supabase,
+                user_id=user_id,
+                email=email,
+                source_url=source_url,
                 metadata=metadata,
-                error_code="not_downloadable",
+                industry=industry,
+                language=language,
             )
 
         status = ViralPipelineStatus.EXTRACTING_AUDIO
