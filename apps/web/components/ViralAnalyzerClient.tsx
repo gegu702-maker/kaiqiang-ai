@@ -395,7 +395,7 @@ export function ViralAnalyzerClient() {
                       <p>平台：{pipelineMetadata.platform || "douyin"}</p>
                       {pipelineMetadata.duration ? <p>时长：{pipelineMetadata.duration}秒</p> : null}
                       {pipelineSourceType === "link_metadata_fallback" ? <p>分析来源：链接公开信息</p> : null}
-                      <p>视频下载：{pipelineMetadata.downloadable ? "可读取" : "受限"}</p>
+                      <p>视频读取：{pipelineMetadata.downloadable ? "可用" : "受限，当前使用链接公开信息分析"}</p>
                     </div>
                   </div>
                 </div>

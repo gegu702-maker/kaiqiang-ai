@@ -41,6 +41,7 @@ export function StudioWorkspace({
   const [currentAnalysis, setCurrentAnalysis] = useState<StudioAnalysis | null>(null);
   const [rewriteVersions, setRewriteVersions] = useState<ViralRewrite[]>([]);
   const [transcript, setTranscript] = useState("");
+  const [analysisSourceType, setAnalysisSourceType] = useState("");
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>("idle");
   const [analysisError, setAnalysisError] = useState("");
   const [notice, setNotice] = useState("");
@@ -69,6 +70,7 @@ export function StudioWorkspace({
     setCurrentAnalysis(null);
     setRewriteVersions([]);
     setTranscript("");
+    setAnalysisSourceType("");
     setAnalysisError("");
     setAnalysisStatus("resolving");
     setActiveStep(0);
@@ -94,6 +96,7 @@ export function StudioWorkspace({
         session.access_token,
       );
       const metadata = result.metadata ?? {};
+      const isMetadataFallback = result.source_type === "link_metadata_fallback";
       setResolveResult({
         ok: result.ok,
         platform: metadata.platform || "douyin",
@@ -105,7 +108,8 @@ export function StudioWorkspace({
         downloadable: Boolean(metadata.downloadable),
         fallback_reason: result.fallback_reason || "",
       });
-      setTranscript(result.transcript || "");
+      setTranscript(isMetadataFallback ? "" : result.transcript || "");
+      setAnalysisSourceType(result.source_type || "");
       setActiveStep(3);
       if (!result.ok) {
         const message = result.fallback_reason || t.fallback;
@@ -118,7 +122,7 @@ export function StudioWorkspace({
       setRewriteVersions(result.rewrites || []);
       if (result.analysis) {
         setAnalysisStatus("ready");
-        setNotice("");
+        setNotice(result.warning || "");
       } else {
         setAnalysisStatus("needs_script");
         setNotice(t.linkResolvedNeedsScript);
@@ -192,8 +196,12 @@ export function StudioWorkspace({
                   <InfoRow label={t.metadataLabels.platform} value={resolveResult.platform || "douyin"} />
                   <InfoRow label={t.metadataLabels.title} value={resolveResult.title || "-"} />
                   <InfoRow label={t.metadataLabels.duration} value={resolveResult.duration ? `${resolveResult.duration}s` : "-"} />
-                  <InfoRow label={t.metadataLabels.downloadable} value={resolveResult.downloadable ? "true" : "false"} />
-                  <InfoRow label={t.metadataLabels.url} value={resolveResult.webpage_url || sourceUrl} />
+                  <InfoRow label="链接状态" value="已识别" />
+                  <InfoRow
+                    label="视频读取"
+                    value={resolveResult.downloadable ? "可用" : "受限，当前使用链接公开信息分析"}
+                  />
+                  {analysisSourceType === "link_metadata_fallback" ? <InfoRow label="分析来源" value="链接公开信息" /> : null}
                 </div>
               </div>
             </section>
