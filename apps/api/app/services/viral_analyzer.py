@@ -75,6 +75,13 @@ def _list_of_strings(value: Any, fallback: list[str]) -> list[str]:
     if isinstance(value, list):
         items = [str(item).strip() for item in value if str(item).strip()]
         return items or fallback
+    if isinstance(value, str):
+        parts = [
+            item.strip(" -•\t")
+            for item in value.replace("；", "\n").replace(";", "\n").replace("、", "\n").replace("/", "\n").splitlines()
+            if item.strip(" -•\t")
+        ]
+        return parts or ([value.strip()] if value.strip() else fallback)
     return fallback
 
 
@@ -91,14 +98,21 @@ def _rewrites(value: Any, fallback_topic: str, language: str) -> list[dict[str, 
             {"title": "Conversion version", "script": f"If you are still unsure about {fallback_topic}, do not rush the decision. The real difference comes from choosing the right method, not doing more work."},
             {"title": "Short video version", "script": f"Many people struggle with {fallback_topic} because the opening, pacing, and conversion point are not designed clearly enough."},
         ]
+    if isinstance(value, str):
+        value = [{"title": "基础版" if language == "zh" else "Base version", "script": value}]
     if not isinstance(value, list):
         return default
     normalized: list[dict[str, str]] = []
     for item in value:
+        if isinstance(item, str):
+            script = item.strip()
+            if script:
+                normalized.append({"title": f"版本{len(normalized) + 1}" if language == "zh" else f"Version {len(normalized) + 1}", "script": script})
+            continue
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title") or "").strip()
-        script = str(item.get("script") or "").strip()
+        title = str(item.get("title") or item.get("name") or item.get("version") or "").strip()
+        script = str(item.get("script") or item.get("content") or item.get("text") or item.get("copy") or "").strip()
         if title and script:
             normalized.append({"title": title, "script": script})
     if len(normalized) < 3:
@@ -182,6 +196,10 @@ async def analyze_viral_script(
     )
 
     topic = str(data.get("topic") or fallback_text["topic"]).strip()
+    rewrites_value = data.get("rewrites")
+    if rewrites_value is None:
+        rewrites_value = data.get("rewrite_versions") or data.get("rewriteVersions") or data.get("scripts")
+
     result = {
         "topic": topic,
         "hook": str(data.get("hook") or fallback_text["hook"]).strip(),
@@ -193,8 +211,8 @@ async def analyze_viral_script(
             data.get("structure"),
             fallback_text["structure"],
         ),
-        "template": str(data.get("template") or fallback_text["template"]).strip(),
-        "rewrites": _rewrites(data.get("rewrites"), topic, language),
+        "template": str(data.get("template") or data.get("template_formula") or fallback_text["template"]).strip(),
+        "rewrites": _rewrites(rewrites_value, topic, language),
     }
 
     try:

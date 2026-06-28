@@ -128,14 +128,21 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
 
 def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
     fallback = _fallback_rewrites(analysis, transcript)
+    if isinstance(value, str):
+        value = [{"title": "基础版", "script": value}]
     if not isinstance(value, list):
         return fallback
     normalized: list[dict[str, str]] = []
     for item in value:
+        if isinstance(item, str):
+            script = item.strip()
+            if script:
+                normalized.append({"title": f"版本{len(normalized) + 1}", "script": script})
+            continue
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title") or "").strip()
-        script = str(item.get("script") or "").strip()
+        title = str(item.get("title") or item.get("name") or item.get("version") or "").strip()
+        script = str(item.get("script") or item.get("content") or item.get("text") or item.get("copy") or "").strip()
         if title and script:
             normalized.append({"title": title, "script": script})
     existing = {item["title"] for item in normalized}
@@ -166,7 +173,7 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
         )
     except Exception:
         return _fallback_rewrites(analysis, transcript)
-    return _normalize_rewrites(data.get("rewrites"), analysis, transcript)
+    return _normalize_rewrites(data.get("rewrites") or data.get("rewrite_versions") or data.get("rewriteVersions") or data.get("scripts"), analysis, transcript)
 
 
 def _update_project_rewrites(supabase: Client, *, project_id: str, rewrites: list[dict[str, str]]) -> None:
