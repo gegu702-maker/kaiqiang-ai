@@ -227,8 +227,8 @@ export function ViralAnalyzerClient({
       insufficient_metadata: "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。",
       resolver_timeout: "链接检查超时，请稍后重试，或使用上传/粘贴方式。",
       unknown_error: "链接解析失败，请粘贴原文案继续分析。",
-      parse_failed: "页面可打开，但未能解析到视频信息，请粘贴原文案以获得完整拆解。",
-      unsupported_page_structure: "页面结构暂不支持自动读取，请粘贴原文案以获得完整拆解。",
+      parse_failed: "链接公开信息暂时不足。如粘贴内容包含分享文案，可直接开始拆解。",
+      unsupported_page_structure: "链接公开信息暂时不足。如粘贴内容包含分享文案，可直接开始拆解。",
     };
     if (code) return messages[code];
     return payload?.message || payload?.fallback_reason || linkCheckCopy.checkFailed;
@@ -322,13 +322,14 @@ export function ViralAnalyzerClient({
         setRunStage("checking");
         const payload = await checkVideoLink(linkCandidate, accessToken);
         setLinkCheck(payload);
-        if (!payload.ok) {
+        if (!payload.ok && payload.error_code === "non_douyin_url") {
           throw new Error(friendlyLinkMessage(payload));
         }
         setRunStage("pipeline");
         const pipeline = await runViralPipeline(
           {
             source_url: linkCandidate,
+            raw_input: sourceUrl.trim() || rawScript.trim() || linkCandidate,
             industry,
             language,
           },

@@ -232,6 +232,7 @@ export async function checkVideoLink(sourceUrl: string, accessToken?: string): P
 export async function runViralPipeline(
   payload: {
     source_url: string;
+    raw_input?: string;
     industry?: string;
     language?: Locale;
   },

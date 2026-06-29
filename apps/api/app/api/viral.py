@@ -27,6 +27,7 @@ class ViralLinkResolveRequest(BaseModel):
 
 class ViralPipelineRequest(BaseModel):
     source_url: str = Field(..., min_length=1, max_length=3000)
+    raw_input: str = Field(default="", max_length=6000)
     industry: str = "personal_brand"
     language: str = "zh"
 
@@ -91,6 +92,7 @@ async def run_viral_agent_pipeline(
                 source_url=payload.source_url,
                 industry=payload.industry,
                 language=payload.language,
+                raw_input=payload.raw_input,
             ),
             timeout=settings.viral_pipeline_timeout_seconds,
         )

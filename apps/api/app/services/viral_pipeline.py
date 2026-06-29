@@ -4,6 +4,7 @@ import shutil
 import tempfile
 from enum import Enum
 from pathlib import Path
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -44,7 +45,12 @@ LANGUAGE_LABELS = {
 
 FALLBACK_OPTIONS = ["upload_video", "paste_text"]
 METADATA_FALLBACK_WARNING = "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。"
+SHARE_TEXT_FALLBACK_WARNING = "已基于分享文案完成初步拆解。补充原始视频文案可提升准确度。"
 INSUFFICIENT_METADATA_MESSAGE = "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。"
+URL_RE = re.compile(r"https?://[^\s\"'<>，。；、]+", re.IGNORECASE)
+DOUYIN_COMMAND_RE = re.compile(
+    r"(?i)\b[a-z0-9]{2,}:/|复制打开抖音|打开抖音看看|打开看看|长按复制|复制此链接|到抖音|^\s*\d+(?:\.\d+)?\s*"
+)
 
 
 def _failed(
@@ -101,6 +107,17 @@ def build_metadata_analysis_text(metadata: dict[str, Any]) -> str:
 
 def _metadata_text(metadata: dict[str, Any]) -> str:
     return build_metadata_analysis_text(metadata)
+
+
+def extract_share_text_from_input(raw_input: str) -> str:
+    text = URL_RE.sub(" ", raw_input or "")
+    text = DOUYIN_COMMAND_RE.sub(" ", text)
+    text = text.replace("【", " ").replace("】", "：")
+    text = re.sub(r"[\[\]()<>{}]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s*#\s*", " #", text)
+    text = re.sub(r"[:：]\s*[:：]+", "：", text)
+    return text.strip(" ：，,。;；")
 
 
 def _has_enough_metadata_text(text: str) -> bool:
@@ -238,6 +255,58 @@ async def _metadata_fallback_analysis(
     }
 
 
+async def _share_text_fallback_analysis(
+    supabase: Client,
+    *,
+    user_id: str,
+    email: str,
+    source_url: str,
+    share_text: str,
+    metadata: dict[str, Any] | None,
+    industry: str,
+    language: str,
+) -> dict[str, Any]:
+    if not _has_enough_metadata_text(share_text):
+        return _failed(
+            status=ViralPipelineStatus.METADATA_FALLBACK,
+            fallback_reason=INSUFFICIENT_METADATA_MESSAGE,
+            metadata=metadata or {},
+            error_code="insufficient_metadata",
+        )
+
+    analysis = await analyze_viral_script(
+        supabase,
+        user_id=user_id,
+        email=email,
+        source_url=source_url,
+        raw_script=share_text,
+        industry=industry,
+        language=language,
+    )
+    rewrites = await _generate_nine_rewrites(transcript=share_text, analysis=analysis, language=language)
+    project_id = str(analysis.get("project_id") or uuid4())
+    _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
+    return {
+        "ok": True,
+        "success": True,
+        "status": ViralPipelineStatus.READY,
+        "failed_at": "",
+        "error_code": "",
+        "message": "",
+        "fallback_available": False,
+        "fallback_options": [],
+        "fallback_reason": "",
+        "project_id": project_id,
+        "transcript": share_text,
+        "analysis": _analysis_payload(analysis),
+        "rewrites": rewrites,
+        "metadata": metadata or {},
+        "source_type": "share_text_fallback",
+        "analysis_quality": "partial",
+        "warning": SHARE_TEXT_FALLBACK_WARNING,
+    }
+
+
 async def run_viral_pipeline(
     supabase: Client,
     *,
@@ -246,9 +315,31 @@ async def run_viral_pipeline(
     source_url: str,
     industry: str,
     language: str,
+    raw_input: str = "",
 ) -> dict[str, Any]:
     work_dir = Path(tempfile.mkdtemp(prefix="viral-agent-"))
     try:
+        share_text = extract_share_text_from_input(raw_input or source_url)
+        if _has_enough_metadata_text(share_text):
+            return await _share_text_fallback_analysis(
+                supabase,
+                user_id=user_id,
+                email=email,
+                source_url=source_url,
+                share_text=share_text,
+                metadata={
+                    "platform": "douyin" if "douyin" in source_url.lower() else "unknown",
+                    "title": share_text[:120],
+                    "description": share_text,
+                    "duration": 0,
+                    "thumbnail": "",
+                    "webpage_url": source_url,
+                    "downloadable": False,
+                },
+                industry=industry,
+                language=language,
+            )
+
         status = ViralPipelineStatus.RESOLVING_LINK
         resolved = await resolve_video_link(source_url)
         metadata = {
