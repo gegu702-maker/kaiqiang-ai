@@ -2,18 +2,14 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-export type Locale = "zh" | "en" | "ja" | "ko" | "es" | "fr" | "ru";
+export type Locale = "zh" | "en";
 
 export const DEFAULT_LOCALE: Locale = "zh";
+const STORAGE_KEY = "kaiqiang.locale";
 
 export const SUPPORTED_LOCALES: Array<{ code: Locale; label: string; nativeName: string }> = [
   { code: "zh", label: "中文", nativeName: "中文" },
   { code: "en", label: "EN", nativeName: "English" },
-  { code: "ja", label: "日本語", nativeName: "日本語" },
-  { code: "ko", label: "한국어", nativeName: "한국어" },
-  { code: "es", label: "ES", nativeName: "Español" },
-  { code: "fr", label: "FR", nativeName: "Français" },
-  { code: "ru", label: "RU", nativeName: "Русский" },
 ];
 
 export const SUPPORTED_LOCALE_CODES = SUPPORTED_LOCALES.map((locale) => locale.code);
@@ -21,6 +17,18 @@ type ContentLocale = "zh" | "en";
 
 export function isSupportedLocale(value: unknown): value is Locale {
   return typeof value === "string" && SUPPORTED_LOCALE_CODES.includes(value as Locale);
+}
+
+export function normalizeLocale(value: unknown): Locale {
+  if (typeof value !== "string") return DEFAULT_LOCALE;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "zh" || normalized === "zh-cn" || normalized === "zh_cn" || normalized === "中文") return "zh";
+  if (normalized === "en" || normalized === "en-us" || normalized === "en_us" || normalized === "english") return "en";
+  return DEFAULT_LOCALE;
+}
+
+function toStoredLocale(locale: Locale): "zh-CN" | "en-US" {
+  return locale === "en" ? "en-US" : "zh-CN";
 }
 
 type LanguageContextValue = {
@@ -36,9 +44,11 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const locale = toContentLocale(selectedLocale);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("kaiqiang.locale");
-    if (isSupportedLocale(saved)) {
-      setLocaleState(saved);
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    const safeLocale = normalizeLocale(saved);
+    setLocaleState(safeLocale);
+    if (saved !== toStoredLocale(safeLocale)) {
+      window.localStorage.setItem(STORAGE_KEY, toStoredLocale(safeLocale));
     }
   }, []);
 
@@ -47,9 +57,9 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       locale,
       selectedLocale,
       setLocale: (nextLocale: Locale) => {
-        const safeLocale = isSupportedLocale(nextLocale) ? nextLocale : DEFAULT_LOCALE;
+        const safeLocale = normalizeLocale(nextLocale);
         setLocaleState(safeLocale);
-        window.localStorage.setItem("kaiqiang.locale", safeLocale);
+        window.localStorage.setItem(STORAGE_KEY, toStoredLocale(safeLocale));
       },
     }),
     [locale, selectedLocale],

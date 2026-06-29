@@ -70,10 +70,10 @@ export default async function AccountPage() {
   const fullName = typeof session.user.user_metadata?.full_name === "string" ? session.user.user_metadata.full_name : "";
   const completedTasks = tasks.filter((task) => task.result_video_url);
   const quickLinks = [
-    { href: "/studio/avatar", label: "Avatar Studio", desc: "上传视频和音频生成数字人口播", icon: Sparkles, primary: true },
-    { href: "/pricing", label: "Pricing", desc: "查看套餐和升级选项", icon: CreditCard },
+    { href: "/studio/avatar", label: "数字人口播", desc: "上传视频和音频生成数字人口播", icon: Sparkles, primary: true },
+    { href: "/pricing", label: "套餐", desc: "查看套餐和升级选项", icon: CreditCard },
     { href: "/tasks", label: "历史任务", desc: "查看生成记录和下载结果", icon: History },
-    { href: "/studio/templates", label: "Templates", desc: "从官方模板开始生成", icon: LayoutTemplate },
+    { href: "/studio/templates", label: "模板库", desc: "从官方模板开始生成", icon: LayoutTemplate },
   ];
 
   return (
@@ -90,7 +90,7 @@ export default async function AccountPage() {
               )}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-medium text-cyan">Account Center</p>
+              <p className="text-sm font-medium text-cyan">账户中心</p>
               <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">账户与生成额度</h1>
               <p className="mt-3 truncate text-sm text-slate-400">{fullName ? `${fullName} · ` : ""}{session.user.email}</p>
               <div className="mt-4 flex flex-wrap gap-2">
