@@ -3,13 +3,24 @@
 import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Sparkles, UploadCloud, WandSparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { analyzeViralScript, checkVideoLink, runViralPipeline } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 import type { ViralAnalyzeResult, ViralIndustry, ViralLinkErrorCode, ViralPipelineResult, VideoLinkResolveResult } from "@/lib/types";
 
 type Locale = "zh" | "en";
+
+export type ViralAnalyzerWorkflowState = {
+  hasLink: boolean;
+  hasAnalysis: boolean;
+  hasRewrites: boolean;
+};
+
+export type SelectedViralScript = {
+  title: string;
+  script: string;
+};
 
 const SUPPORTED_LOCALES: Array<{ code: Locale; label: string }> = [
   { code: "zh", label: "中文" },
@@ -135,7 +146,17 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
   };
 }
 
-export function ViralAnalyzerClient({ variant = "standalone" }: { variant?: "standalone" | "workspace" }) {
+export function ViralAnalyzerClient({
+  variant = "standalone",
+  selectedScript,
+  onScriptSelect,
+  onWorkflowStateChange,
+}: {
+  variant?: "standalone" | "workspace";
+  selectedScript?: SelectedViralScript | null;
+  onScriptSelect?: (script: SelectedViralScript) => void;
+  onWorkflowStateChange?: (state: ViralAnalyzerWorkflowState) => void;
+}) {
   const supabase = useMemo(() => createClient(), []);
   const isWorkspace = variant === "workspace";
   const [language, setLanguage] = useState<Locale>("zh");
@@ -184,6 +205,14 @@ export function ViralAnalyzerClient({ variant = "standalone" }: { variant?: "sta
           pipelineReading: "正在读取视频",
           manualAnalyzing: "正在拆解文案",
         };
+
+  useEffect(() => {
+    onWorkflowStateChange?.({
+      hasLink: Boolean(linkCheck?.ok || pipelineMetadata || result),
+      hasAnalysis: Boolean(result),
+      hasRewrites: Boolean(result?.rewrites?.length),
+    });
+  }, [linkCheck, onWorkflowStateChange, pipelineMetadata, result]);
 
   function friendlyLinkMessage(payload?: Pick<VideoLinkResolveResult, "error_code" | "message" | "fallback_reason"> | null) {
     const code = payload?.error_code as ViralLinkErrorCode | undefined;
@@ -352,6 +381,10 @@ export function ViralAnalyzerClient({ variant = "standalone" }: { variant?: "sta
         ? `${script}\n\n继续优化方向：开头更强、痛点更具体、转化动作更明确。`
         : `${script}\n\nOptimize direction: stronger hook, sharper pain point, clearer conversion action.`;
     await copyScript(optimizedPrompt, index);
+  }
+
+  function handleUseScript(rewrite: SelectedViralScript) {
+    onScriptSelect?.(rewrite);
   }
 
   return (
@@ -557,13 +590,27 @@ export function ViralAnalyzerClient({ variant = "standalone" }: { variant?: "sta
                           <WandSparkles size={14} />
                           <span className="truncate">{t.optimize}</span>
                         </button>
-                        <Link
-                          className="inline-flex h-9 max-w-full items-center gap-2 rounded-md bg-cyan px-3 text-xs font-semibold text-ink hover:bg-cyan/90"
-                          href={`/studio/avatar?script_text=${encodeURIComponent(rewrite.script)}`}
-                        >
-                          <span className="truncate">{t.generate}</span>
-                          <ArrowRight size={14} />
-                        </Link>
+                        {isWorkspace ? (
+                          <button
+                            type="button"
+                            onClick={() => handleUseScript(rewrite)}
+                            className={[
+                              "inline-flex h-9 max-w-full items-center gap-2 rounded-md px-3 text-xs font-semibold transition",
+                              selectedScript?.script === rewrite.script ? "bg-lime text-ink" : "bg-cyan text-ink hover:bg-cyan/90",
+                            ].join(" ")}
+                          >
+                            <span className="truncate">{selectedScript?.script === rewrite.script ? "已选择" : t.generate}</span>
+                            <ArrowRight size={14} />
+                          </button>
+                        ) : (
+                          <Link
+                            className="inline-flex h-9 max-w-full items-center gap-2 rounded-md bg-cyan px-3 text-xs font-semibold text-ink hover:bg-cyan/90"
+                            href={`/studio/avatar?script_text=${encodeURIComponent(rewrite.script)}`}
+                          >
+                            <span className="truncate">{t.generate}</span>
+                            <ArrowRight size={14} />
+                          </Link>
+                        )}
                       </div>
                     </article>
                   ))}
