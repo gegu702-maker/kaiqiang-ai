@@ -32,6 +32,7 @@ class ViralPipelineStatus(str, Enum):
 
 
 REWRITE_TITLES = ["版本A", "版本B", "版本C", "老板IP版", "知识分享版", "成交转化版", "故事版", "直播版", "极简口播版"]
+MIN_REWRITE_CJK_CHARS = 80
 LANGUAGE_LABELS = {
     "zh": "中文",
     "en": "English",
@@ -125,6 +126,23 @@ def _has_enough_metadata_text(text: str) -> bool:
     return cjk_count >= 10 or len(text) >= 30
 
 
+def _cjk_len(value: str) -> int:
+    return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
+
+
+def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: str) -> str:
+    text = script.strip()
+    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS:
+        return text
+    opening = text or f"很多人看到{topic}，第一反应只是跟热点。"
+    return (
+        f"{opening} 但真正值得学习的，是它如何用一个反差问题抓住注意力，"
+        f"再把观众关心的痛点和线索讲清楚。围绕{topic}，你可以先抛出疑问，"
+        f"再补充一条有价值的信息，接着给出可延伸的判断，最后用一句行动号召收尾，"
+        f"引导用户评论、收藏或继续关注。{title}的可复用模板是：{template}"
+    )
+
+
 def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
     topic = str(analysis.get("topic") or "这个爆款视频").strip()
     template = str(analysis.get("template") or "先提出问题，再给出解决方法，最后明确行动。").strip()
@@ -141,7 +159,10 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
     ]
     if transcript and len(samples[-1]) < 30:
         samples[-1] = transcript[:180]
-    return [{"title": title, "script": script} for title, script in zip(REWRITE_TITLES, samples, strict=False)]
+    return [
+        {"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title)}
+        for title, script in zip(REWRITE_TITLES, samples, strict=False)
+    ]
 
 
 def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
@@ -155,14 +176,15 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
         if isinstance(item, str):
             script = item.strip()
             if script:
-                normalized.append({"title": f"版本{len(normalized) + 1}", "script": script})
+                title = f"版本{len(normalized) + 1}"
+                normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title)})
             continue
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or item.get("name") or item.get("version") or "").strip()
         script = str(item.get("script") or item.get("content") or item.get("text") or item.get("copy") or "").strip()
         if title and script:
-            normalized.append({"title": title, "script": script})
+            normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title)})
     existing = {item["title"] for item in normalized}
     normalized.extend(item for item in fallback if item["title"] not in existing)
     return normalized[:9]
