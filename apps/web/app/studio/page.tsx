@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { ViralAnalyzerClient } from "@/components/ViralAnalyzerClient";
+import { StudioWorkspace } from "@/components/StudioWorkspace";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function StudioPage() {
@@ -13,5 +13,5 @@ export default async function StudioPage() {
     redirect("/login?next=/studio");
   }
 
-  return <ViralAnalyzerClient />;
+  return <StudioWorkspace />;
 }

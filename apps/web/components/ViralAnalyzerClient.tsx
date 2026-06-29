@@ -13,7 +13,7 @@ type Locale = "zh" | "en";
 
 const SUPPORTED_LOCALES: Array<{ code: Locale; label: string }> = [
   { code: "zh", label: "中文" },
-  { code: "en", label: "English" },
+  { code: "en", label: "英文" },
 ];
 
 const industries: Array<{ value: ViralIndustry; labels: Record<Locale, string> }> = [
@@ -52,6 +52,7 @@ const analyzerCopy: Record<
     rewrites: string;
     copy: string;
     copied: string;
+    optimize: string;
     generate: string;
     quota: string;
     customQuota: string;
@@ -59,12 +60,12 @@ const analyzerCopy: Record<
 > = {
   zh: {
     eyebrow: "爆款拆解",
-    title: "Viral Script Analyzer",
+    title: "爆款脚本拆解器",
     subtitle: "粘贴爆款链接或原始文案，AI 自动拆解结构、卖点与改写方向。",
     url: "短视频链接",
     rawScript: "原始视频文案",
     upload: "上传视频文件",
-    uploadHint: "如果平台限制自动读取，可上传视频或粘贴原文案继续分析。",
+    uploadHint: "如视频读取受限，可上传视频或粘贴原文案继续分析。",
     industry: "行业/场景",
     language: "输出语言",
     start: "开始拆解",
@@ -81,37 +82,39 @@ const analyzerCopy: Record<
     rewrites: "原创改写版本",
     copy: "复制",
     copied: "已复制",
+    optimize: "继续优化",
     generate: "使用此文案",
     quota: "本月拆解次数",
     customQuota: "自定义",
   },
   en: {
-    eyebrow: "Viral Analyzer",
-    title: "Viral Script Analyzer",
-    subtitle: "Paste a viral link or source script, then get structure, angles, and rewrite directions.",
-    url: "Short-video link",
-    rawScript: "Original script",
-    upload: "Upload video file",
-    uploadHint: "If the platform blocks automatic reading, upload the video or paste the original script.",
-    industry: "Industry",
-    language: "Output language",
-    start: "Analyze",
-    analyzing: "Analyzing",
-    failedError: "Analysis failed. Please try again later.",
-    linkPlaceholder: "Douyin / TikTok / YouTube Shorts URL",
-    scriptPlaceholder: "Paste the original script. The system learns the structure and creates original rewrites.",
-    fallback: "The system reads links first. If video download is restricted, it will analyze public link metadata.",
-    topic: "Core Topic",
-    hook: "Golden Hook",
-    sellingPoints: "Viral Angles",
-    structure: "Script Structure",
-    template: "Reusable Template",
-    rewrites: "Original Rewrites",
-    copy: "Copy",
-    copied: "Copied",
-    generate: "Use this script",
-    quota: "Monthly analyses",
-    customQuota: "Custom",
+    eyebrow: "爆款拆解",
+    title: "爆款脚本拆解器",
+    subtitle: "粘贴爆款链接或原始文案，AI 自动拆解结构、卖点与改写方向。",
+    url: "短视频链接",
+    rawScript: "原始视频文案",
+    upload: "上传视频文件",
+    uploadHint: "如视频读取受限，可上传视频或粘贴原文案继续分析。",
+    industry: "行业/场景",
+    language: "输出语言",
+    start: "开始拆解",
+    analyzing: "拆解中",
+    failedError: "拆解失败，请稍后重试。",
+    linkPlaceholder: "抖音 / TikTok / YouTube Shorts 链接",
+    scriptPlaceholder: "粘贴原视频文案，系统会学习结构并生成原创改写，不会逐字复制。",
+    fallback: "优先读取链接；如视频下载受限，将基于链接公开信息先完成初步拆解。",
+    topic: "视频核心主题",
+    hook: "黄金开头",
+    sellingPoints: "爆点拆解",
+    structure: "文案结构",
+    template: "可复用模板",
+    rewrites: "原创改写版本",
+    copy: "复制",
+    copied: "已复制",
+    optimize: "继续优化",
+    generate: "使用此文案",
+    quota: "本月拆解次数",
+    customQuota: "自定义",
   },
 };
 
@@ -132,8 +135,9 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
   };
 }
 
-export function ViralAnalyzerClient() {
+export function ViralAnalyzerClient({ variant = "standalone" }: { variant?: "standalone" | "workspace" }) {
   const supabase = useMemo(() => createClient(), []);
+  const isWorkspace = variant === "workspace";
   const [language, setLanguage] = useState<Locale>("zh");
   const [industry, setIndustry] = useState<ViralIndustry>("ecommerce");
   const [sourceUrl, setSourceUrl] = useState("");
@@ -167,18 +171,18 @@ export function ViralAnalyzerClient() {
           manualAnalyzing: "正在拆解文案",
         }
       : {
-          checkLink: "Check link",
-          checkingLink: "Checking",
-          checkPassed: "This link can be read automatically. You can start analysis.",
-          checkFailed: "This link cannot be read automatically right now.",
-          loginError: "Please sign in before checking links.",
-          pipelineEmpty: "The link was read, but automatic analysis did not return a result. Upload the video or paste the original script to continue.",
-          redirectOk: "Redirect: OK",
-          redirectFailed: "Redirect: failed",
-          platformUnsupported: "Platform: unsupported",
-          platform: "Platform",
-          pipelineReading: "Reading video",
-          manualAnalyzing: "Analyzing script",
+          checkLink: "检查链接",
+          checkingLink: "检查中",
+          checkPassed: "链接可自动读取，可以开始分析。",
+          checkFailed: "链接暂时无法自动读取。",
+          loginError: "请先登录后再检查链接。",
+          pipelineEmpty: "链接已读取，但自动分析暂未返回拆解结果。请上传视频或粘贴原文案继续分析。",
+          redirectOk: "短链跳转：正常",
+          redirectFailed: "短链跳转：失败",
+          platformUnsupported: "平台：暂不支持",
+          platform: "平台",
+          pipelineReading: "正在读取视频",
+          manualAnalyzing: "正在拆解文案",
         };
 
   function friendlyLinkMessage(payload?: Pick<VideoLinkResolveResult, "error_code" | "message" | "fallback_reason"> | null) {
@@ -219,6 +223,14 @@ export function ViralAnalyzerClient() {
     });
   }
 
+  function friendlyError(error: unknown) {
+    const message = error instanceof Error ? error.message : "";
+    if (/DeepSeek returned invalid JSON|API request failed|unknown_error/i.test(message)) {
+      return "AI 拆解结果解析失败，请稍后重试，或粘贴原文案继续分析。";
+    }
+    return message || t.failedError;
+  }
+
   function loadingLabel() {
     if (runStage === "checking") return linkCheckCopy.checkingLink;
     if (runStage === "pipeline") return linkCheckCopy.pipelineReading;
@@ -254,7 +266,7 @@ export function ViralAnalyzerClient() {
         setError(friendlyLinkMessage(payload));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t.failedError);
+      setError(friendlyError(err));
     } finally {
       setChecking(false);
     }
@@ -321,7 +333,7 @@ export function ViralAnalyzerClient() {
       );
       setResult(payload);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t.failedError);
+      setError(friendlyError(err));
     } finally {
       setLoading(false);
       setRunStage("idle");
@@ -334,9 +346,23 @@ export function ViralAnalyzerClient() {
     window.setTimeout(() => setCopiedIndex(null), 1400);
   }
 
+  async function copyOptimizedScript(script: string, index: number) {
+    const optimizedPrompt =
+      language === "zh"
+        ? `${script}\n\n继续优化方向：开头更强、痛点更具体、转化动作更明确。`
+        : `${script}\n\nOptimize direction: stronger hook, sharper pain point, clearer conversion action.`;
+    await copyScript(optimizedPrompt, index);
+  }
+
   return (
-    <main className="min-h-[calc(100vh-86px)] w-full max-w-full overflow-x-hidden bg-ink text-slate-100">
-      <div className="mx-auto grid w-full max-w-7xl gap-6 overflow-hidden px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:py-10">
+    <section className={isWorkspace ? "w-full max-w-full overflow-x-hidden text-slate-100" : "min-h-[calc(100vh-86px)] w-full max-w-full overflow-x-hidden bg-ink text-slate-100"}>
+      <div
+        className={
+          isWorkspace
+            ? "grid w-full max-w-full gap-6 overflow-hidden lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]"
+            : "mx-auto grid w-full max-w-7xl gap-6 overflow-hidden px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:py-10"
+        }
+      >
         <section className="min-w-0 max-w-full space-y-5 overflow-hidden">
           <div>
             <p className="inline-flex items-center gap-2 rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1 text-sm font-semibold text-cyan">
@@ -391,7 +417,7 @@ export function ViralAnalyzerClient() {
                 {videoFileName ? <span className="mt-2 block truncate text-xs text-slate-500">{videoFileName}</span> : null}
               </label>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className={isWorkspace ? "grid gap-3" : "grid gap-3 sm:grid-cols-2"}>
                 <label className="block">
                   <span className="mb-2 block text-sm font-semibold text-white">{t.industry}</span>
                   <select
@@ -406,20 +432,22 @@ export function ViralAnalyzerClient() {
                     ))}
                   </select>
                 </label>
-                <label className="block">
-                  <span className="mb-2 block text-sm font-semibold text-white">{t.language}</span>
-                  <select
-                    className="h-11 w-full rounded-md border border-white/10 bg-ink/70 px-3 text-sm text-slate-100 outline-none focus:border-cyan/60"
-                    value={language}
-                    onChange={(event) => setLanguage(event.target.value as Locale)}
-                  >
-                    {SUPPORTED_LOCALES.map((item) => (
-                      <option key={item.code} value={item.code}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {isWorkspace ? null : (
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold text-white">{t.language}</span>
+                    <select
+                      className="h-11 w-full rounded-md border border-white/10 bg-ink/70 px-3 text-sm text-slate-100 outline-none focus:border-cyan/60"
+                      value={language}
+                      onChange={(event) => setLanguage(event.target.value as Locale)}
+                    >
+                      {SUPPORTED_LOCALES.map((item) => (
+                        <option key={item.code} value={item.code}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
               </div>
 
               <p className="rounded-md border border-amber-300/15 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100">{t.fallback}</p>
@@ -521,6 +549,14 @@ export function ViralAnalyzerClient() {
                           {copiedIndex === index ? <Check size={14} /> : <Copy size={14} />}
                           <span className="truncate">{copiedIndex === index ? t.copied : t.copy}</span>
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => copyOptimizedScript(rewrite.script, index)}
+                          className="inline-flex h-9 max-w-full items-center gap-2 rounded-md border border-cyan/25 px-3 text-xs font-semibold text-cyan hover:bg-cyan/10"
+                        >
+                          <WandSparkles size={14} />
+                          <span className="truncate">{t.optimize}</span>
+                        </button>
                         <Link
                           className="inline-flex h-9 max-w-full items-center gap-2 rounded-md bg-cyan px-3 text-xs font-semibold text-ink hover:bg-cyan/90"
                           href={`/studio/avatar?script_text=${encodeURIComponent(rewrite.script)}`}
@@ -537,7 +573,7 @@ export function ViralAnalyzerClient() {
           )}
         </section>
       </div>
-    </main>
+    </section>
   );
 }
 
