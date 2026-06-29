@@ -3,7 +3,7 @@
 import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Sparkles, UploadCloud, WandSparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { analyzeViralScript, checkVideoLink, runViralPipeline } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
@@ -149,11 +149,13 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
 export function ViralAnalyzerClient({
   variant = "standalone",
   selectedScript,
+  controlPanelFooter,
   onScriptSelect,
   onWorkflowStateChange,
 }: {
   variant?: "standalone" | "workspace";
   selectedScript?: SelectedViralScript | null;
+  controlPanelFooter?: ReactNode;
   onScriptSelect?: (script: SelectedViralScript) => void;
   onWorkflowStateChange?: (state: ViralAnalyzerWorkflowState) => void;
 }) {
@@ -392,7 +394,7 @@ export function ViralAnalyzerClient({
       <div
         className={
           isWorkspace
-            ? "grid w-full max-w-full gap-6 overflow-hidden lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]"
+            ? "grid w-full max-w-full grid-cols-1 gap-6 overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]"
             : "mx-auto grid w-full max-w-7xl gap-6 overflow-hidden px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:py-10"
         }
       >
@@ -525,6 +527,7 @@ export function ViralAnalyzerClient({
               {error ? <p className="rounded-md border border-rose-300/20 bg-rose-400/10 p-3 text-sm leading-6 text-rose-100">{error}</p> : null}
             </div>
           </div>
+          {isWorkspace && controlPanelFooter ? <div className="space-y-5">{controlPanelFooter}</div> : null}
         </section>
 
         <section className="min-w-0 max-w-full space-y-5 overflow-hidden">
