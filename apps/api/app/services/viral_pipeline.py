@@ -43,8 +43,8 @@ LANGUAGE_LABELS = {
 
 
 FALLBACK_OPTIONS = ["upload_video", "paste_text"]
-METADATA_FALLBACK_WARNING = "已基于链接可读取信息完成初步拆解。由于平台限制，未读取完整视频语音，建议补充原文案可提升准确度。"
-INSUFFICIENT_METADATA_MESSAGE = "链接可识别，但可读取内容不足。请粘贴原文案或上传视频以获得完整拆解。"
+METADATA_FALLBACK_WARNING = "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。"
+INSUFFICIENT_METADATA_MESSAGE = "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。"
 
 
 def _failed(
@@ -82,13 +82,12 @@ def _analysis_payload(analysis: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _metadata_text(metadata: dict[str, Any]) -> str:
+def build_metadata_analysis_text(metadata: dict[str, Any]) -> str:
     parts: list[str] = []
     title = str(metadata.get("title") or "").strip()
     description = str(metadata.get("description") or "").strip()
     platform = str(metadata.get("platform") or "").strip()
     duration = metadata.get("duration") or 0
-    webpage_url = str(metadata.get("webpage_url") or "").strip()
     if title:
         parts.append(f"标题：{title}")
     if description and description != title:
@@ -97,9 +96,11 @@ def _metadata_text(metadata: dict[str, Any]) -> str:
         parts.append(f"平台：{platform}")
     if duration:
         parts.append(f"时长：{duration}秒")
-    if webpage_url:
-        parts.append(f"链接：{webpage_url}")
     return "\n".join(parts).strip()
+
+
+def _metadata_text(metadata: dict[str, Any]) -> str:
+    return build_metadata_analysis_text(metadata)
 
 
 def _has_enough_metadata_text(text: str) -> bool:
@@ -259,6 +260,17 @@ async def run_viral_pipeline(
             "webpage_url": resolved.get("webpage_url", source_url),
             "downloadable": resolved.get("downloadable", False),
         }
+        metadata_transcript = _metadata_text(metadata)
+        if _has_enough_metadata_text(metadata_transcript):
+            return await _metadata_fallback_analysis(
+                supabase,
+                user_id=user_id,
+                email=email,
+                source_url=source_url,
+                metadata=metadata,
+                industry=industry,
+                language=language,
+            )
         if not resolved.get("ok") or not resolved.get("downloadable"):
             if resolved.get("ok") and (resolved.get("error_code") == "not_downloadable" or not resolved.get("downloadable")):
                 metadata["downloadable"] = False
@@ -306,16 +318,29 @@ async def run_viral_pipeline(
         try:
             audio_path = await extract_audio(downloaded.video_path, work_dir)
         except RuntimeError:
-            return _failed(status=status, fallback_reason="该视频暂不支持自动解析，请上传视频继续分析。", metadata=metadata, error_code="not_downloadable")
+            metadata["downloadable"] = False
+            return await _metadata_fallback_analysis(
+                supabase,
+                user_id=user_id,
+                email=email,
+                source_url=source_url,
+                metadata=metadata,
+                industry=industry,
+                language=language,
+            )
 
         status = ViralPipelineStatus.TRANSCRIBING
         asr = await transcribe_audio(audio_path, language)
         if not asr.ok:
-            return _failed(
-                status=status,
-                fallback_reason=asr.fallback_reason or "该视频暂不支持自动转写，请上传视频继续分析。",
+            metadata["downloadable"] = False
+            return await _metadata_fallback_analysis(
+                supabase,
+                user_id=user_id,
+                email=email,
+                source_url=source_url,
                 metadata=metadata,
-                error_code="not_downloadable",
+                industry=industry,
+                language=language,
             )
 
         status = ViralPipelineStatus.ANALYZING

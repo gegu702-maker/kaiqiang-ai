@@ -10,20 +10,20 @@ from urllib.parse import urlparse
 
 import httpx
 
-DOUYIN_FALLBACK = "当前抖音链接暂时无法自动解析，请粘贴视频文案或上传视频继续分析。"
+DOUYIN_FALLBACK = "当前抖音链接可读取内容不足，请粘贴原文案继续分析。"
 URL_RE = re.compile(r"https?://[^\s\"'<>，。；、]+", re.IGNORECASE)
 FALLBACK_OPTIONS = ["upload_video", "paste_text"]
 
 ERROR_MESSAGES = {
-    "metadata_blocked": "平台限制自动读取，请上传视频或粘贴原文案继续分析。",
+    "metadata_blocked": "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。",
     "redirect_failed": "短链跳转失败，请复制完整链接重试，或上传视频继续分析。",
     "redirect_timeout": "短链跳转超时，请复制完整链接重试，或上传视频继续分析。",
-    "not_downloadable": "该视频暂不支持自动读取，请上传视频或粘贴原文案继续分析。",
-    "parse_failed": "页面可打开，但未能解析到视频信息，请上传视频或粘贴原文案继续分析。",
-    "unsupported_page_structure": "页面结构暂不支持自动读取，请上传视频或粘贴原文案继续分析。",
+    "not_downloadable": "链接可识别，可基于公开信息分析。",
+    "parse_failed": "页面可打开，但未能解析到视频信息，请粘贴原文案以获得完整拆解。",
+    "unsupported_page_structure": "页面结构暂不支持自动读取，请粘贴原文案以获得完整拆解。",
     "resolver_timeout": "链接检查超时，请稍后重试，或使用上传/粘贴方式。",
     "non_douyin_url": "请输入抖音 / TikTok / YouTube Shorts 链接，或直接上传视频。",
-    "unknown_error": "链接解析失败，请上传视频或粘贴原文案继续分析。",
+    "unknown_error": "链接解析失败，请粘贴原文案继续分析。",
 }
 ROUTER_DATA_RE = re.compile(r"window\._ROUTER_DATA\s*=\s*(\{.*?\})\s*</script>", re.DOTALL)
 SHARE_HEADERS = {
@@ -159,11 +159,8 @@ def _metadata_from_router_data(url: str, data: dict[str, Any]) -> dict[str, Any]
     play_url = _first_url(video.get("play_addr"))
     cover_url = _first_url(video.get("cover"))
     duration_ms = int(video.get("duration") or 0)
-    downloadable = bool(play_url)
     if not item.get("aweme_id") and not item.get("desc") and not video:
         return _fallback(webpage_url=url, error_code="parse_failed")
-    if not downloadable:
-        return _fallback(webpage_url=url, error_code="not_downloadable")
 
     return ResolvedVideoLink(
         ok=True,
@@ -173,7 +170,7 @@ def _metadata_from_router_data(url: str, data: dict[str, Any]) -> dict[str, Any]
         duration=round(duration_ms / 1000) if duration_ms else 0,
         thumbnail=cover_url,
         webpage_url=url,
-        downloadable=True,
+        downloadable=bool(play_url),
         fallback_reason="",
     ).to_dict()
 
@@ -270,7 +267,7 @@ async def resolve_video_link(source_url: str) -> dict[str, Any]:
     metadata = await asyncio.to_thread(_metadata_with_ytdlp, expanded_url)
     if metadata.get("ok"):
         return metadata
-    if metadata.get("error_code") in {"unknown_error", "parse_failed", "metadata_blocked"}:
+    if metadata.get("error_code") in {"unknown_error", "parse_failed", "metadata_blocked", "not_downloadable"}:
         return await _metadata_from_share_page(expanded_url)
     return metadata
 
@@ -299,14 +296,14 @@ async def check_video_link(source_url: str) -> dict[str, Any]:
         return {**payload, "redirect_ok": redirect_ok, "supported_platform": False, "next_step": payload["message"]}
 
     payload = await asyncio.to_thread(_metadata_with_ytdlp, expanded_url)
-    if not payload.get("ok") and payload.get("error_code") in {"unknown_error", "parse_failed", "metadata_blocked"}:
+    if not payload.get("ok") and payload.get("error_code") in {"unknown_error", "parse_failed", "metadata_blocked", "not_downloadable"}:
         payload = await _metadata_from_share_page(expanded_url)
     if payload.get("ok"):
         return {
             **payload,
             "redirect_ok": redirect_ok,
             "supported_platform": True,
-            "next_step": "链接可自动读取，可以开始分析。",
+            "next_step": "链接可识别，可基于公开信息分析。",
         }
     return {
         **payload,

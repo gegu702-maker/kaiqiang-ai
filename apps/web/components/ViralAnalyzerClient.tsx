@@ -76,7 +76,7 @@ const analyzerCopy: Record<
     url: "短视频链接",
     rawScript: "原始视频文案",
     upload: "上传视频文件",
-    uploadHint: "如视频读取受限，可上传视频或粘贴原文案继续分析。",
+    uploadHint: "如需更完整拆解，可上传视频或补充原文案。",
     industry: "行业/场景",
     language: "输出语言",
     start: "开始拆解",
@@ -105,7 +105,7 @@ const analyzerCopy: Record<
     url: "短视频链接",
     rawScript: "原始视频文案",
     upload: "上传视频文件",
-    uploadHint: "如视频读取受限，可上传视频或粘贴原文案继续分析。",
+    uploadHint: "如需更完整拆解，可上传视频或补充原文案。",
     industry: "行业/场景",
     language: "输出语言",
     start: "开始拆解",
@@ -113,7 +113,7 @@ const analyzerCopy: Record<
     failedError: "拆解失败，请稍后重试。",
     linkPlaceholder: "抖音 / TikTok / YouTube Shorts 链接",
     scriptPlaceholder: "粘贴原视频文案，系统会学习结构并生成原创改写，不会逐字复制。",
-    fallback: "优先读取链接；如视频下载受限，将基于链接公开信息先完成初步拆解。",
+    fallback: "优先基于链接公开信息完成初步拆解；如可读取视频语音，会进一步增强分析。",
     topic: "视频核心主题",
     hook: "黄金开头",
     sellingPoints: "爆点拆解",
@@ -182,10 +182,10 @@ export function ViralAnalyzerClient({
       ? {
           checkLink: "检查链接",
           checkingLink: "检查中",
-          checkPassed: "链接可自动读取，可以开始分析。",
+          checkPassed: "链接可识别，可基于公开信息分析。",
           checkFailed: "链接暂时无法自动读取。",
           loginError: "请先登录后再检查链接。",
-          pipelineEmpty: "链接已读取，但自动分析暂未返回拆解结果。请上传视频或粘贴原文案继续分析。",
+          pipelineEmpty: "链接已读取，但自动分析暂未返回拆解结果。请粘贴原文案继续分析。",
           redirectOk: "短链跳转：正常",
           redirectFailed: "短链跳转：失败",
           platformUnsupported: "平台：暂不支持",
@@ -196,10 +196,10 @@ export function ViralAnalyzerClient({
       : {
           checkLink: "检查链接",
           checkingLink: "检查中",
-          checkPassed: "链接可自动读取，可以开始分析。",
+          checkPassed: "链接可识别，可基于公开信息分析。",
           checkFailed: "链接暂时无法自动读取。",
           loginError: "请先登录后再检查链接。",
-          pipelineEmpty: "链接已读取，但自动分析暂未返回拆解结果。请上传视频或粘贴原文案继续分析。",
+          pipelineEmpty: "链接已读取，但自动分析暂未返回拆解结果。请粘贴原文案继续分析。",
           redirectOk: "短链跳转：正常",
           redirectFailed: "短链跳转：失败",
           platformUnsupported: "平台：暂不支持",
@@ -222,13 +222,13 @@ export function ViralAnalyzerClient({
       non_douyin_url: "请输入抖音 / TikTok / YouTube Shorts 链接，或直接上传视频。",
       redirect_failed: "短链跳转失败，请复制完整链接重试，或上传视频继续分析。",
       redirect_timeout: "短链跳转超时，请复制完整链接重试，或上传视频继续分析。",
-      metadata_blocked: "链接可以识别，但平台可能限制视频读取。如失败，请上传视频或粘贴原文案继续分析。",
-      not_downloadable: "链接可以识别，但视频下载受限，请上传视频或粘贴原文案继续分析。",
-      insufficient_metadata: "链接可识别，但可读取内容不足。请粘贴原文案或上传视频以获得完整拆解。",
+      metadata_blocked: "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。",
+      not_downloadable: "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。",
+      insufficient_metadata: "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。",
       resolver_timeout: "链接检查超时，请稍后重试，或使用上传/粘贴方式。",
-      unknown_error: "链接解析失败，请上传视频或粘贴原文案继续分析。",
-      parse_failed: "页面可打开，但未能解析到视频信息，请上传视频或粘贴原文案继续分析。",
-      unsupported_page_structure: "页面结构暂不支持自动读取，请上传视频或粘贴原文案继续分析。",
+      unknown_error: "链接解析失败，请粘贴原文案继续分析。",
+      parse_failed: "页面可打开，但未能解析到视频信息，请粘贴原文案以获得完整拆解。",
+      unsupported_page_structure: "页面结构暂不支持自动读取，请粘贴原文案以获得完整拆解。",
     };
     if (code) return messages[code];
     return payload?.message || payload?.fallback_reason || linkCheckCopy.checkFailed;
@@ -239,10 +239,10 @@ export function ViralAnalyzerClient({
       payload.error_code === "not_downloadable" &&
       (payload.failed_at === "downloading_video" || payload.failed_at === "resolving_link")
     ) {
-      return "链接可以识别，但视频下载受限，请上传视频或粘贴原文案继续分析。";
+      return "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。";
     }
     if (payload.failed_at === "transcribing") {
-      return "视频读取成功，但语音转文字失败，请上传更清晰的视频或粘贴原文案继续分析。";
+      return "视频读取成功，但语音转文字失败。已优先使用链接公开信息拆解，补充原文案可提升准确度。";
     }
     if (payload.failed_at === "analyzing") {
       return "文案提取成功，但拆解失败，请稍后重试或粘贴文案继续分析。";
