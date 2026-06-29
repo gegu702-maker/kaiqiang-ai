@@ -15,7 +15,7 @@ from app.services.asr_service import transcribe_audio
 from app.services.llm_provider import LLMProvider
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio
 from app.services.video_link_resolver import resolve_video_link
-from app.services.viral_analyzer import analyze_viral_script, is_script_polluted, sanitize_rewrite_script
+from app.services.viral_analyzer import analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, sanitize_rewrite_script
 
 
 class ViralPipelineStatus(str, Enum):
@@ -130,17 +130,68 @@ def _cjk_len(value: str) -> int:
     return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
 
 
-def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: str) -> str:
+PIPELINE_CTA_POOL = [
+    "想看我继续拆这个方向，评论区留一个“继续”。",
+    "你觉得这背后是机会还是风险？评论区聊聊。",
+    "先别急着跟风，收藏起来，下次判断热点时再看。",
+    "关注我，下一条拆它背后的商业逻辑。",
+    "你还想拆哪个热门视频？把链接发我。",
+    "如果你也在做内容，这个角度可以直接拿去改。",
+    "看到这里，你已经比大多数人多想了一层。",
+    "这类热点别只看热闹，关键是看它背后的机会。",
+    "把你的行业发在评论区，我帮你换成能拍的选题。",
+]
+
+
+def _pipeline_cta(index: int) -> str:
+    return PIPELINE_CTA_POOL[index % len(PIPELINE_CTA_POOL)]
+
+
+def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: str, index: int = 0) -> str:
     text = sanitize_rewrite_script(script)
     if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text):
         return text
-    opening = text or f"很多人看到{topic}，第一反应只是跟热点。"
-    return (
-        f"{opening} 但真正值得关注的不是表面的热闹，而是{topic}背后那条容易被忽略的线索。"
-        "普通人看结果，懂内容的人会先问：为什么这件事现在被讨论？它和用户有什么关系？"
-        "把这个问题讲清楚，再补充一个有价值的判断，最后引导大家继续关注后续变化。"
-        "如果你也想看懂这类热点，先收藏，下一条继续拆。"
-    )
+    topic_text = topic or "这个热点"
+    styles = [
+        (
+            f"你有没有发现，{topic_text}真正抓人的不是事件本身，而是它背后的反常识线索。"
+            "先把悬念抛给观众，再补一个关键判断，让大家知道为什么现在值得看懂。"
+        ),
+        (
+            f"如果你经常追热点却不知道怎么做内容，{topic_text}可以换成一个普通人视角。"
+            "先说大家最容易忽略的痛点，再把影响讲明白，最后给一个能马上复用的表达角度。"
+        ),
+        (
+            f"{topic_text}最值得关注的是机会信号。"
+            "表面看是一个新闻点，往深一层看，是注意力、产业变化和内容选题之间的连接。"
+        ),
+        (
+            f"站在老板视角看，{topic_text}不是单纯热点，而是一次判断趋势的练习。"
+            "别急着看热闹，先看谁的位置变了，谁的机会变多了，谁需要重新调整打法。"
+        ),
+        (
+            f"把{topic_text}讲成知识口播，可以先讲背景，再讲反差，最后讲它对普通人的启发。"
+            "这样观众听到的不只是消息，而是一套以后还能复用的判断方法。"
+        ),
+        (
+            f"这条内容可以讲成一个转折故事：大家一开始只看到{topic_text}的表面，"
+            "但越拆越会发现，真正推动讨论的是藏在细节里的变化。"
+        ),
+        (
+            f"家人们先别划走，{topic_text}这件事表面像新闻，其实很适合拆成一个互动话题。"
+            "我们先看矛盾点，再看谁会受到影响，最后看你能不能把它改成自己的选题。"
+        ),
+        (
+            f"一句话拆{topic_text}：别只看结论，要看它为什么在这个时间点被讨论。"
+            "开头用反差抓人，中间补关键线索，结尾给观众一个参与判断的理由。"
+        ),
+        (
+            f"如果你想把{topic_text}改成能带来咨询的口播，别急着堆信息。"
+            "先指出观众正在错过什么，再给一个清晰判断，最后把下一步行动说具体。"
+        ),
+    ]
+    opening = text or styles[index % len(styles)]
+    return f"{opening}这类内容好用的地方，是既能承接热点流量，也能展示你的专业判断。{_pipeline_cta(index)}"
 
 
 def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
@@ -160,8 +211,8 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
     if transcript and len(samples[-1]) < 30:
         samples[-1] = transcript[:180]
     return [
-        {"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title)}
-        for title, script in zip(REWRITE_TITLES, samples, strict=False)
+        {"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title, index=index)}
+        for index, (title, script) in enumerate(zip(REWRITE_TITLES, samples, strict=False))
     ]
 
 
@@ -177,17 +228,24 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
             script = item.strip()
             if script:
                 title = f"版本{len(normalized) + 1}"
-                normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title)})
+                normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title, index=len(normalized))})
             continue
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or item.get("name") or item.get("version") or "").strip()
         script = str(item.get("script") or item.get("content") or item.get("text") or item.get("copy") or "").strip()
         if title and script:
-            normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title)})
+            normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title, index=len(normalized))})
     existing = {item["title"] for item in normalized}
     normalized.extend(item for item in fallback if item["title"] not in existing)
-    return normalized[:9]
+    return dedupe_and_diversify_rewrites(
+        normalized,
+        topic=str(analysis.get("topic") or "这个爆款视频"),
+        hook=str(analysis.get("hook") or "先用一个反差问题抓住注意力。"),
+        template=str(analysis.get("template") or ""),
+        language="zh",
+        limit=9,
+    )
 
 
 async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], language: str) -> list[dict[str, str]]:
@@ -202,6 +260,10 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
             "适合数字人口播",
             "避免承诺绝对收益",
             "每个版本都要有明确口播节奏",
+            "每个版本必须使用不同角度：悬念揭秘、用户痛点、机会提醒、老板视角、知识分享、故事版、直播口吻、极简强钩子、成交转化等",
+            "每条文案开头和结尾不能重复，CTA 不能完全相同",
+            "同一批文案中“下一条继续拆”最多出现 1 次，“先收藏”最多出现 1 次，不要每条都以“关注我”结尾",
+            "不要重复“普通人看结果，懂内容的人会先问”这类固定句式",
             "script 只能写最终口播成稿，禁止出现模板说明、结构说明、可复用模板、括号结构或版本解释",
             "不要写“可复用模板是”“这个版本适合”“建议用户”“（疑问/反常识开头）+”等生成策略说明",
             "输出严格 JSON，不要 markdown",
