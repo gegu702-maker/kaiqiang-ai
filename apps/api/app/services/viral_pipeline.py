@@ -15,7 +15,7 @@ from app.services.asr_service import transcribe_audio
 from app.services.llm_provider import LLMProvider
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio
 from app.services.video_link_resolver import resolve_video_link
-from app.services.viral_analyzer import analyze_viral_script
+from app.services.viral_analyzer import analyze_viral_script, is_script_polluted, sanitize_rewrite_script
 
 
 class ViralPipelineStatus(str, Enum):
@@ -131,15 +131,15 @@ def _cjk_len(value: str) -> int:
 
 
 def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: str) -> str:
-    text = script.strip()
-    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS:
+    text = sanitize_rewrite_script(script)
+    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text):
         return text
     opening = text or f"很多人看到{topic}，第一反应只是跟热点。"
     return (
-        f"{opening} 但真正值得学习的，是它如何用一个反差问题抓住注意力，"
-        f"再把观众关心的痛点和线索讲清楚。围绕{topic}，你可以先抛出疑问，"
-        f"再补充一条有价值的信息，接着给出可延伸的判断，最后用一句行动号召收尾，"
-        f"引导用户评论、收藏或继续关注。{title}的可复用模板是：{template}"
+        f"{opening} 但真正值得关注的不是表面的热闹，而是{topic}背后那条容易被忽略的线索。"
+        "普通人看结果，懂内容的人会先问：为什么这件事现在被讨论？它和用户有什么关系？"
+        "把这个问题讲清楚，再补充一个有价值的判断，最后引导大家继续关注后续变化。"
+        "如果你也想看懂这类热点，先收藏，下一条继续拆。"
     )
 
 
@@ -155,7 +155,7 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
         f"如果你正在找更稳定的短视频转化方法，可以先从{topic}这个方向入手，把痛点讲透，把方案讲清楚。",
         f"一开始我也以为爆款靠灵感，后来才明白，像{topic}这样的内容，真正厉害的是先制造问题，再给答案。",
         f"今天直接拆重点：{topic}为什么容易吸引人？因为它先让你意识到问题，再告诉你下一步怎么做。",
-        f"{topic}，一句话说清楚：{template}",
+        f"如果只用一句话拆{topic}，我会提醒你别只看标题。真正重要的是它背后的反差、线索和后续变化，这些才是观众愿意听完并继续互动的原因。",
     ]
     if transcript and len(samples[-1]) < 30:
         samples[-1] = transcript[:180]
@@ -202,6 +202,8 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
             "适合数字人口播",
             "避免承诺绝对收益",
             "每个版本都要有明确口播节奏",
+            "script 只能写最终口播成稿，禁止出现模板说明、结构说明、可复用模板、括号结构或版本解释",
+            "不要写“可复用模板是”“这个版本适合”“建议用户”“（疑问/反常识开头）+”等生成策略说明",
             "输出严格 JSON，不要 markdown",
         ],
         "schema": {"rewrites": [{"title": "版本标题", "script": "原创口播稿"}]},

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -40,6 +41,29 @@ MIN_REWRITE_CJK_CHARS = 80
 MIN_REWRITE_COUNT = 3
 MIN_SELLING_POINTS = 4
 MIN_STRUCTURE_ITEMS = 5
+POLLUTION_PATTERNS = (
+    "可复用模板",
+    "可套用模板",
+    "模板是",
+    "结构是",
+    "这个版本适合",
+    "建议用户",
+    "分析如下",
+    "字段",
+    "JSON",
+    "+（",
+    "+【",
+    "（开头",
+    "（痛点",
+    "（行动号召",
+    "【热点事件】",
+)
+SCRIPT_PREFIX_RE = re.compile(r"^\s*(?:script|文案|口播文案|正文|版本[A-ZＡ-Ｚ]?)\s*[:：]\s*", re.IGNORECASE)
+TEMPLATE_BLOCK_RE = re.compile(
+    r"(?:可复用模板是|可套用模板是|模板是|该版本的模板|这个版本适合|建议用户|分析：|结构：|可套用模板：|可复用模板：).*",
+    re.DOTALL,
+)
+BRACKET_TEMPLATE_RE = re.compile(r"(?:[（(【\\[][^）)】\\]]{0,24}(?:开头|热点事件|痛点|行动号召|信息增量|案例|类比)[^）)】\\]]*[）)】\\]]\s*\+?)+")
 
 
 def _count_monthly_analyses(supabase: Client, *, user_id: str) -> int:
@@ -94,6 +118,20 @@ def _cjk_len(value: str) -> int:
     return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
 
 
+def sanitize_rewrite_script(script: str) -> str:
+    text = str(script or "").strip()
+    text = SCRIPT_PREFIX_RE.sub("", text)
+    text = TEMPLATE_BLOCK_RE.sub("", text)
+    text = BRACKET_TEMPLATE_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" ：:，,。；;")
+
+
+def is_script_polluted(script: str) -> bool:
+    text = str(script or "")
+    return any(pattern in text for pattern in POLLUTION_PATTERNS) or bool(BRACKET_TEMPLATE_RE.search(text))
+
+
 def _extend_unique(items: list[str], fallback: list[str], min_count: int) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -109,23 +147,22 @@ def _extend_unique(items: list[str], fallback: list[str], min_count: int) -> lis
 
 
 def _expand_rewrite_script(script: str, *, topic: str, hook: str, template: str, language: str, variant: str) -> str:
-    text = script.strip()
+    text = sanitize_rewrite_script(script)
     if language != "zh":
-        if len(text.split()) >= 70:
+        if len(text.split()) >= 70 and not is_script_polluted(text):
             return text
         return (
             f"{text} Start with the key contrast around {topic}, explain why the audience should care, "
-            f"turn the idea into a practical takeaway, and close with a clear next step. "
-            f"Use this reusable structure: {template}."
+            "turn the idea into a practical takeaway, and close with a clear next step viewers can act on."
         ).strip()
-    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS:
+    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text):
         return text
     opening = text or hook or f"很多人看到{topic}，第一反应只是跟热点。"
     expansion = (
-        f"{opening} 但真正值得拆的不是表面的热闹，而是它先用一个反差把注意力抓住，"
-        f"再把用户关心的问题讲清楚。围绕{topic}，你可以先抛出疑问，再补充关键线索，"
-        f"接着给出可延伸的判断，最后提醒观众关注后续变化或结合自己的场景行动。"
-        f"{variant}可以复用的结构是：{template}"
+        f"{opening} 真正值得关注的不是表面的热闹，而是{topic}背后隐藏的反差和信号。"
+        "普通人可能只看结论，但做内容的人要把关键线索讲清楚：发生了什么，为什么现在值得关注，"
+        "这件事可能带来哪些变化。先别急着下判断，把这些线索看懂，再决定下一步怎么跟进。"
+        "关注我，下一条继续拆给你看。"
     )
     return expansion.strip()
 
@@ -145,7 +182,7 @@ def _default_rewrites(topic: str, hook: str, template: str, language: str) -> li
         ),
         (
             "版本B：强钩子口播版",
-            f"很多人看到{topic}，只会复述新闻，但爆款不会停在信息表面。它会先制造一个疑问：为什么这件事值得现在关注？再把问题、线索和影响讲清楚，最后提醒观众把这个结构用到自己的内容里。",
+            f"很多人看到{topic}，只会复述新闻，但真正能吸引人的内容不会停在表面。它会先制造一个疑问：为什么这件事值得现在关注？再把问题、线索和影响讲清楚，最后提醒观众继续关注后续变化。",
         ),
         (
             "版本C：转化引导版",
@@ -284,6 +321,9 @@ async def analyze_viral_script(
             "selling_points 至少 4 条，structure 至少 5 条",
             "rewrites 必须至少 3 条，每条 script 不少于 80 个中文字符，建议 100-180 字",
             "每条 rewrite.script 必须包含开头钩子、问题/反差、信息价值、行动号召",
+            "rewrite.title 只写版本名称；rewrite.script 只能写最终口播成稿，必须是可以直接朗读给观众听的正文",
+            "rewrite.script 禁止出现模板说明、分析说明、结构说明、可复用模板、版本解释、括号结构、字段名、JSON 残留",
+            "rewrite.script 禁止出现“可复用模板是”“这个版本适合”“建议用户”“（疑问/反常识开头）+”等生成策略说明",
             "不允许只输出标题或一句短句，不允许输出“信息不足无法分析”",
             "如果输入来自短视频分享文案或链接公开信息，仍必须基于已有信息做初步拆解并完整输出结构",
             "不要编造具体数据；未知内容用“可能、可关注、可延伸”等表达",
@@ -298,9 +338,9 @@ async def analyze_viral_script(
             "structure": ["开头钩子：...", "问题放大：...", "解决方案/信息增量：...", "证明/案例：...", "行动号召：..."],
             "template": "可复用模板公式",
             "rewrites": [
-                {"title": "版本A：稳健拆解版", "script": "100-180 字原创口播稿，包含钩子、问题/反差、信息价值、行动号召"},
-                {"title": "版本B：强钩子口播版", "script": "100-180 字原创口播稿，包含钩子、问题/反差、信息价值、行动号召"},
-                {"title": "版本C：转化引导版", "script": "100-180 字原创口播稿，包含钩子、问题/反差、信息价值、行动号召"},
+                {"title": "版本A：稳健拆解版", "script": "直接对观众说的 100-180 字原创口播成稿，不包含模板说明"},
+                {"title": "版本B：强钩子口播版", "script": "直接对观众说的 100-180 字原创口播成稿，不包含结构说明"},
+                {"title": "版本C：转化引导版", "script": "直接对观众说的 100-180 字原创口播成稿，不包含版本解释"},
             ],
         },
     }

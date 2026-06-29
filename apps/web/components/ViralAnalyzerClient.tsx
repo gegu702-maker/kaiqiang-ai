@@ -262,6 +262,10 @@ export function ViralAnalyzerClient({
     return message || t.failedError;
   }
 
+  function isPollutedRewrite(script: string) {
+    return /可复用模板|可套用模板|模板是|结构是|这个版本适合|建议用户|分析如下|JSON|字段|\+（|\+【|（开头|（痛点|（行动号召|【热点事件】/i.test(script);
+  }
+
   function loadingLabel() {
     if (runStage === "checking") return linkCheckCopy.checkingLink;
     if (runStage === "pipeline") return linkCheckCopy.pipelineReading;
@@ -575,8 +579,18 @@ export function ViralAnalyzerClient({
                 <div className="mt-4 grid gap-4">
                   {result.rewrites.map((rewrite, index) => (
                     <article key={`${rewrite.title}-${index}`} className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] p-4">
+                      {(() => {
+                        const polluted = isPollutedRewrite(rewrite.script);
+                        return (
+                          <>
                       <h3 className="break-words text-base font-semibold text-cyan [overflow-wrap:anywhere]">{rewrite.title}</h3>
-                      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300 [overflow-wrap:anywhere]">{rewrite.script}</p>
+                      {polluted ? (
+                        <p className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">
+                          该版本文案格式异常，请点击继续优化或重新生成。
+                        </p>
+                      ) : (
+                        <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300 [overflow-wrap:anywhere]">{rewrite.script}</p>
+                      )}
                       <div className="mt-4 flex max-w-full flex-wrap justify-start gap-2 sm:justify-end">
                         <button
                           type="button"
@@ -598,9 +612,14 @@ export function ViralAnalyzerClient({
                           <button
                             type="button"
                             onClick={() => handleUseScript(rewrite)}
+                            disabled={polluted}
                             className={[
                               "inline-flex h-9 max-w-full items-center gap-2 rounded-md px-3 text-xs font-semibold transition",
-                              selectedScript?.script === rewrite.script ? "bg-lime text-ink" : "bg-cyan text-ink hover:bg-cyan/90",
+                              polluted
+                                ? "cursor-not-allowed bg-slate-700 text-slate-400"
+                                : selectedScript?.script === rewrite.script
+                                  ? "bg-lime text-ink"
+                                  : "bg-cyan text-ink hover:bg-cyan/90",
                             ].join(" ")}
                           >
                             <span className="truncate">{selectedScript?.script === rewrite.script ? "已选择" : t.generate}</span>
@@ -616,6 +635,9 @@ export function ViralAnalyzerClient({
                           </Link>
                         )}
                       </div>
+                          </>
+                        );
+                      })()}
                     </article>
                   ))}
                 </div>
