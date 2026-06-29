@@ -73,27 +73,62 @@ COMMON_CTA_RE = re.compile(
 )
 SCRIPT_PUNCT_RE = re.compile(r"[\s，。！？、；：,.!?;:\"'“”‘’（）()\[\]【】《》<>-]+")
 
-CTA_POOL = [
-    "想看我继续拆这个方向，评论区留一个“继续”。",
-    "你觉得这背后是机会还是风险？评论区聊聊。",
-    "先别急着跟风，收藏起来，下次判断热点时再看。",
-    "关注我，下一条拆它背后的商业逻辑。",
-    "你还想拆哪个热门视频？把链接发我。",
-    "如果你也在做内容，这个角度可以直接拿去改。",
-    "看到这里，你已经比大多数人多想了一层。",
-    "这类热点别只看热闹，关键是看它背后的机会。",
-    "把你的行业发在评论区，我帮你换成能拍的选题。",
+FINAL_REWRITE_LIMIT = 3
+REWRITE_STRATEGIES = [
+    {
+        "title": "版本A：热点反差版",
+        "style": "suspense",
+        "opening": "反常识开头",
+        "logic": "信息差",
+        "ending": "观点讨论",
+        "cta": "你觉得真正的重点在哪里？评论区说说你的判断。",
+    },
+    {
+        "title": "版本B：用户痛点版",
+        "style": "pain_point",
+        "opening": "朋友提醒开头",
+        "logic": "内容创作方法",
+        "ending": "行动建议",
+        "cta": "如果你也在做内容，把这个拆法先记下来，下一次热点就能直接套用。",
+    },
+    {
+        "title": "版本C：商业机会版",
+        "style": "opportunity",
+        "opening": "老板视角开头",
+        "logic": "供应链机会",
+        "ending": "行业后续",
+        "cta": "后面如果产业链继续有新变化，我会再单独拆给你看。",
+    },
+    {
+        "title": "版本D：故事口吻版",
+        "style": "story",
+        "opening": "故事开头",
+        "logic": "认知升级",
+        "ending": "转发提醒",
+        "cta": "把这条转给那个总爱只看热闹的朋友，让他也换个角度看。",
+    },
+    {
+        "title": "版本E：直播互动版",
+        "style": "live_stream",
+        "opening": "直播开头",
+        "logic": "风险提醒",
+        "ending": "留言互动",
+        "cta": "你想让我从哪个行业继续拆？直接把方向打在评论里。",
+    },
 ]
-STYLE_KEYS = [
-    "suspense",
-    "pain_point",
-    "opportunity",
-    "boss_view",
-    "knowledge",
-    "story",
-    "live_stream",
-    "minimal",
-    "conversion",
+CTA_POOL = [str(item["cta"]) for item in REWRITE_STRATEGIES]
+STYLE_KEYS = [str(item["style"]) for item in REWRITE_STRATEGIES]
+OVERUSED_PHRASE_BUCKETS = [
+    ("generic_value", ("这类内容好用的地方", "承接热点流量", "展示你的专业判断")),
+    ("surface_heat", ("真正值得关注的不是表面的热闹", "不是表面的热闹")),
+    ("ordinary_people", ("普通人看结果", "懂内容的人会先问")),
+    ("valuable_judgement", ("把这个问题讲清楚，再补充一个有价值的判断",)),
+    ("continue_comment", ("想看我继续拆这个方向", "评论区留一个", "留一个“继续”", "留一个继续")),
+    ("opportunity_risk", ("这背后是机会还是风险",)),
+    ("save_later", ("先收藏", "下次判断热点时再看")),
+    ("dont_follow", ("别急着跟风",)),
+    ("detail_chance", ("机会藏在细节里",)),
+    ("listing_news", ("别只盯着上市新闻",)),
 ]
 
 
@@ -175,6 +210,11 @@ def rewrite_similarity(left: str, right: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+def _strategy_for_index(index: int) -> dict[str, str]:
+    strategy = REWRITE_STRATEGIES[index % len(REWRITE_STRATEGIES)]
+    return {key: str(value) for key, value in strategy.items()}
+
+
 def _style_for_index(index: int, title: str = "") -> str:
     title_text = str(title or "")
     if any(key in title_text for key in ("痛点", "普通人")):
@@ -191,11 +231,70 @@ def _style_for_index(index: int, title: str = "") -> str:
         return "live_stream"
     if "极简" in title_text:
         return "minimal"
-    return STYLE_KEYS[index % len(STYLE_KEYS)]
+    return _strategy_for_index(index)["style"]
 
 
 def _cta_for_index(index: int) -> str:
-    return CTA_POOL[index % len(CTA_POOL)]
+    return _strategy_for_index(index)["cta"]
+
+
+def _phrase_buckets(script: str) -> set[str]:
+    text = str(script or "")
+    buckets: set[str] = set()
+    for bucket, phrases in OVERUSED_PHRASE_BUCKETS:
+        if any(phrase in text for phrase in phrases):
+            buckets.add(bucket)
+    return buckets
+
+
+def extract_script_signature(script: str) -> str:
+    text = str(script or "")
+    if any(word in text[:45] for word in ("家人们", "直播间", "别划走")):
+        opening = "直播开头"
+    elif any(word in text[:60] for word in ("朋友", "昨天", "有人问")):
+        opening = "故事开头"
+    elif any(word in text[:60] for word in ("你有没有发现", "你以为", "不是")):
+        opening = "反常识开头"
+    elif "如果你是老板" in text[:80]:
+        opening = "老板视角开头"
+    elif any(word in text[:60] for word in ("如果你", "很多人做内容", "经常看热点", "第一反应就是复述")):
+        opening = "朋友提醒开头"
+    elif any(word in text[:80] for word in ("老板", "创业者", "产业链", "供应链")):
+        opening = "老板视角开头"
+    elif any(word in text[:60] for word in ("怎么", "拆成", "讲成")):
+        opening = "教学开头"
+    else:
+        opening = "新闻播报开头"
+
+    if any(word in text for word in ("做内容", "选题", "涨粉", "口播", "拆法", "能拍", "互动的角度")):
+        logic = "内容创作方法"
+    elif any(word in text for word in ("没说", "隐藏", "线索没有被明说", "信息差", "反差")):
+        logic = "信息差"
+    elif any(word in text for word in ("供应链", "产业链", "招股书", "商业", "供应关系")):
+        logic = "供应链机会"
+    elif any(word in text for word in ("风险", "别急", "先别")):
+        logic = "风险提醒"
+    elif any(word in text for word in ("机会", "红利", "变化")):
+        logic = "投资机会"
+    elif any(word in text for word in ("普通人", "痛点", "错过")):
+        logic = "用户痛点"
+    else:
+        logic = "认知升级"
+
+    tail = text[-60:]
+    if any(word in tail for word in ("评论", "聊聊", "判断")):
+        ending = "观点讨论"
+    elif any(word in tail for word in ("收藏", "记下来", "套用")):
+        ending = "行动建议"
+    elif any(word in tail for word in ("关注", "后续", "新变化")):
+        ending = "行业后续"
+    elif any(word in tail for word in ("转给", "朋友")):
+        ending = "转发提醒"
+    elif any(word in tail for word in ("方向打在", "留言")):
+        ending = "留言互动"
+    else:
+        ending = "行动建议"
+    return f"{opening}|{logic}|{ending}"
 
 
 def _trim_common_cta(script: str) -> str:
@@ -215,6 +314,7 @@ def _script_with_unique_cta(script: str, index: int) -> str:
 
 
 def _compose_diverse_script(*, topic: str, hook: str, template: str, language: str, style: str, seed: str, index: int) -> str:
+    strategy = _strategy_for_index(index)
     if language != "zh":
         base = (
             f"{seed or hook or topic} Start from a clear contrast, explain why {topic} matters, "
@@ -226,32 +326,37 @@ def _compose_diverse_script(*, topic: str, hook: str, template: str, language: s
     hook_text = sanitize_rewrite_script(seed) or hook or f"{topic_text}真正值得关注的地方，可能不是你第一眼看到的热闹。"
     lines = {
         "suspense": (
-            f"你有没有发现，{topic_text}最值得拆的不是热搜本身，而是它背后那条反常识线索。"
-            f"{hook_text} 先把悬念抛出来，再告诉观众为什么这件事突然值得关注，最后把可能影响讲清楚。"
+            f"你以为{topic_text}只是一个普通热点？其实它真正抓人的地方，是表面信息和隐藏线索之间的反差。"
+            f"{hook_text} 这类开头适合先制造冲突，再把观众带到一个问题里：大家看到的是结果，但更值得讨论的是哪些线索没有被明说。"
+            "把这个反差讲透，观众才会愿意留下来判断。"
         ),
         "pain_point": (
-            f"如果你经常看热点，却不知道怎么把它变成自己的内容，{topic_text}就是一个很好的样本。"
-            "别只复述发生了什么，要先说普通人最容易忽略的痛点，再给出一个能马上拿去用的判断。"
+            f"很多人做内容，看到{topic_text}第一反应就是复述新闻，但这样很难做出差异。"
+            "更好的做法，是把热点翻译成用户听得懂的问题：它和我有什么关系，我能从里面借到什么选题。"
+            "你先抓住这个痛点，再把信息拆成一个能拍、能讲、能互动的角度。"
         ),
         "opportunity": (
-            f"{topic_text}真正有价值的地方，是它可能释放出的机会信号。"
-            "表面看是一个新闻点，往深一层看，是用户注意力、产业变化和内容选题之间的连接。"
+            f"如果你是老板或行业观察者，{topic_text}不该只当成一条新闻看。"
+            "真正要看的，是它背后可能牵动哪条产业链，哪些供应关系会被重新定价，普通人又能从哪里读到机会和风险。"
+            "把商业逻辑讲出来，这条内容就不只是追热点。"
         ),
         "boss_view": (
-            f"站在老板或创业者视角看，{topic_text}不只是一个热点，而是一次判断趋势的练习。"
-            "你要看的不是谁赢谁输，而是谁在供应链、流量入口和用户认知里拿到了新位置。"
+            f"站在经营者视角看，{topic_text}更像是一道趋势判断题。"
+            "你要看的不是谁上了热搜，而是谁掌握了资源、渠道和用户认知。"
+            "当这些位置发生变化，真正有准备的人会先调整选题、产品和合作方向。"
         ),
         "knowledge": (
-            f"把{topic_text}拆成一个知识点，其实很简单：先讲背景，再讲反差，最后讲它为什么会影响普通人的判断。"
-            "这样观众听到的不只是消息，而是一套以后还能复用的分析方法。"
+            f"把{topic_text}讲成知识口播，可以分三步：先交代背景，再解释矛盾，最后给一个判断方法。"
+            "这样观众听到的不只是消息，而是以后遇到类似热点时也能复用的一套分析路径。"
         ),
         "story": (
-            f"这条内容可以讲成一个转折故事：一开始大家只看到{topic_text}的表面热闹，"
-            "但越往后看，越会发现真正推动讨论的是隐藏在细节里的变化。"
+            f"昨天有个朋友问我：{topic_text}这种事，和普通人到底有什么关系？"
+            "我告诉他，关系可能不在新闻本身，而在它提醒我们：很多机会一开始都藏在不起眼的变化里。"
+            "你把这个转折讲出来，内容就会更像故事。"
         ),
         "live_stream": (
-            f"家人们先别急着刷过去，{topic_text}这件事表面像新闻，实际很适合拆成一个能互动的话题。"
-            "我们先看矛盾点，再看谁会受到影响，最后看你能不能把它改成自己的选题。"
+            f"家人们，这个消息先别只看热闹，{topic_text}里面有一个很适合互动的点。"
+            "我们先看谁被影响，再看谁可能受益，最后看你所在的行业能不能借这个话题做一条内容。"
         ),
         "minimal": (
             f"一句话拆{topic_text}：别只看结论，要看它为什么在这个时间点被讨论。"
@@ -263,8 +368,7 @@ def _compose_diverse_script(*, topic: str, hook: str, template: str, language: s
         ),
     }
     body = lines.get(style, lines["suspense"])
-    value = "这类内容好用的地方，是既能承接热点流量，也能把你的专业判断展示出来。"
-    return _script_with_unique_cta(f"{body}{value}", index)
+    return f"{body}{strategy['cta']}"
 
 
 def _extend_unique(items: list[str], fallback: list[str], min_count: int) -> list[str]:
@@ -300,11 +404,14 @@ def dedupe_and_diversify_rewrites(
     hook: str,
     template: str,
     language: str,
-    limit: int = 9,
+    limit: int = FINAL_REWRITE_LIMIT,
 ) -> list[dict[str, str]]:
     diversified: list[dict[str, str]] = []
+    seen_signatures: set[str] = set()
     for index, item in enumerate(rewrites):
-        title = str(item.get("title") or (f"版本{index + 1}" if language == "zh" else f"Version {index + 1}")).strip()
+        strategy = _strategy_for_index(index)
+        incoming_title = str(item.get("title") or "").strip()
+        title = strategy["title"] if language == "zh" and index < len(REWRITE_STRATEGIES) else incoming_title or f"Version {index + 1}"
         script = _expand_rewrite_script(
             str(item.get("script") or ""),
             topic=topic,
@@ -314,27 +421,36 @@ def dedupe_and_diversify_rewrites(
             variant=title,
             index=index,
         )
-        if is_script_polluted(script) or _cjk_len(script) < MIN_REWRITE_CJK_CHARS:
+        signature = extract_script_signature(script)
+        if (
+            is_script_polluted(script)
+            or _cjk_len(script) < MIN_REWRITE_CJK_CHARS
+            or _phrase_buckets(script)
+            or signature in seen_signatures
+        ):
             script = _compose_diverse_script(
                 topic=topic,
                 hook=hook,
                 template=template,
                 language=language,
-                style=_style_for_index(index, title),
+                style=strategy["style"],
                 seed="",
                 index=index,
             )
-        if any(rewrite_similarity(script, previous["script"]) > 0.65 for previous in diversified):
+            signature = extract_script_signature(script)
+        if any(rewrite_similarity(script, previous["script"]) > 0.60 for previous in diversified) or signature in seen_signatures:
             script = _compose_diverse_script(
                 topic=topic,
                 hook=hook,
                 template=template,
                 language=language,
-                style=_style_for_index(index + 3, title),
+                style=strategy["style"],
                 seed="",
                 index=index,
             )
+            signature = extract_script_signature(script)
         diversified.append({"title": title, "script": script})
+        seen_signatures.add(signature)
         if len(diversified) >= limit:
             break
     return diversified
@@ -381,7 +497,7 @@ def _rewrites(value: Any, fallback_topic: str, language: str, *, hook: str = "",
             hook=fallback_hook,
             template=fallback_template,
             language=language,
-            limit=MIN_REWRITE_COUNT,
+            limit=FINAL_REWRITE_LIMIT,
         )
     normalized: list[dict[str, str]] = []
     for item in value:
@@ -405,7 +521,7 @@ def _rewrites(value: Any, fallback_topic: str, language: str, *, hook: str = "",
         hook=fallback_hook,
         template=fallback_template,
         language=language,
-        limit=MIN_REWRITE_COUNT,
+        limit=FINAL_REWRITE_LIMIT,
     )
 
 
@@ -495,10 +611,11 @@ async def analyze_viral_script(
             "rewrites 必须至少 3 条，每条 script 不少于 80 个中文字符，建议 100-180 字",
             "每条 rewrite.script 必须包含开头钩子、问题/反差、信息价值、行动号召",
             "rewrites 之间必须明显差异化：版本A偏悬念揭秘/反常识，版本B偏用户痛点/普通人视角，版本C偏机会提醒/行动建议",
-            "如果输出更多版本，可使用直播口吻、老板视角、知识分享、故事版、极简强钩子、成交转化等不同角度",
+            "只输出 3 条高质量版本即可：版本A热点反差版、版本B用户痛点版、版本C商业机会版",
             "每条文案的开头、结尾、语气不能重复；同一批文案中“下一条继续拆”最多出现 1 次，“先收藏”最多出现 1 次",
             "不要每条都用“关注我”结尾，不要连续多条使用相同 CTA，不要重复“普通人看结果，懂内容的人会先问”这类固定句式",
-            "至少一条像新闻解读，一条像朋友提醒，一条像知识科普；有更多版本时可加入老板/创业者视角或直播间口吻",
+            "不要重复使用“这类内容好用的地方”“既能承接热点流量，也能展示你的专业判断”“想看我继续拆这个方向”等句式骨架",
+            "版本A面向泛用户，用热点反差和观点讨论收尾；版本B面向内容创作者，用痛点和应用建议收尾；版本C面向老板/行业观察者，用产业链机会和后续观察收尾",
             "rewrite.title 只写版本名称；rewrite.script 只能写最终口播成稿，必须是可以直接朗读给观众听的正文",
             "rewrite.script 禁止出现模板说明、分析说明、结构说明、可复用模板、版本解释、括号结构、字段名、JSON 残留",
             "rewrite.script 禁止出现“可复用模板是”“这个版本适合”“建议用户”“（疑问/反常识开头）+”等生成策略说明",

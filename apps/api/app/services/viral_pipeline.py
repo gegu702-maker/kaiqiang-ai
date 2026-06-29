@@ -15,7 +15,7 @@ from app.services.asr_service import transcribe_audio
 from app.services.llm_provider import LLMProvider
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio
 from app.services.video_link_resolver import resolve_video_link
-from app.services.viral_analyzer import analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, sanitize_rewrite_script
+from app.services.viral_analyzer import FINAL_REWRITE_LIMIT, analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, sanitize_rewrite_script
 
 
 class ViralPipelineStatus(str, Enum):
@@ -31,7 +31,7 @@ class ViralPipelineStatus(str, Enum):
     FAILED = "failed"
 
 
-REWRITE_TITLES = ["版本A", "版本B", "版本C", "老板IP版", "知识分享版", "成交转化版", "故事版", "直播版", "极简口播版"]
+REWRITE_TITLES = ["版本A：热点反差版", "版本B：用户痛点版", "版本C：商业机会版"]
 MIN_REWRITE_CJK_CHARS = 80
 LANGUAGE_LABELS = {
     "zh": "中文",
@@ -131,15 +131,9 @@ def _cjk_len(value: str) -> int:
 
 
 PIPELINE_CTA_POOL = [
-    "想看我继续拆这个方向，评论区留一个“继续”。",
-    "你觉得这背后是机会还是风险？评论区聊聊。",
-    "先别急着跟风，收藏起来，下次判断热点时再看。",
-    "关注我，下一条拆它背后的商业逻辑。",
-    "你还想拆哪个热门视频？把链接发我。",
-    "如果你也在做内容，这个角度可以直接拿去改。",
-    "看到这里，你已经比大多数人多想了一层。",
-    "这类热点别只看热闹，关键是看它背后的机会。",
-    "把你的行业发在评论区，我帮你换成能拍的选题。",
+    "你觉得真正的重点在哪里？评论区说说你的判断。",
+    "如果你也在做内容，把这个拆法先记下来，下一次热点就能直接套用。",
+    "后面如果产业链继续有新变化，我会再单独拆给你看。",
 ]
 
 
@@ -191,7 +185,7 @@ def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: s
         ),
     ]
     opening = text or styles[index % len(styles)]
-    return f"{opening}这类内容好用的地方，是既能承接热点流量，也能展示你的专业判断。{_pipeline_cta(index)}"
+    return f"{opening}{_pipeline_cta(index)}"
 
 
 def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
@@ -210,10 +204,18 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
     ]
     if transcript and len(samples[-1]) < 30:
         samples[-1] = transcript[:180]
-    return [
+    rewrites = [
         {"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title, index=index)}
         for index, (title, script) in enumerate(zip(REWRITE_TITLES, samples, strict=False))
     ]
+    return dedupe_and_diversify_rewrites(
+        rewrites,
+        topic=topic,
+        hook=str(analysis.get("hook") or "先用一个反差问题抓住注意力。"),
+        template=template,
+        language="zh",
+        limit=FINAL_REWRITE_LIMIT,
+    )
 
 
 def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
@@ -244,7 +246,7 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
         hook=str(analysis.get("hook") or "先用一个反差问题抓住注意力。"),
         template=str(analysis.get("template") or ""),
         language="zh",
-        limit=9,
+        limit=FINAL_REWRITE_LIMIT,
     )
 
 
@@ -260,10 +262,12 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
             "适合数字人口播",
             "避免承诺绝对收益",
             "每个版本都要有明确口播节奏",
-            "每个版本必须使用不同角度：悬念揭秘、用户痛点、机会提醒、老板视角、知识分享、故事版、直播口吻、极简强钩子、成交转化等",
+            "只生成 3 条高质量版本：版本A热点反差版、版本B用户痛点版、版本C商业机会版",
+            "每个版本必须使用不同骨架：热点反差、用户痛点、商业机会",
             "每条文案开头和结尾不能重复，CTA 不能完全相同",
             "同一批文案中“下一条继续拆”最多出现 1 次，“先收藏”最多出现 1 次，不要每条都以“关注我”结尾",
             "不要重复“普通人看结果，懂内容的人会先问”这类固定句式",
+            "不要重复使用“这类内容好用的地方”“既能承接热点流量，也能展示你的专业判断”“想看我继续拆这个方向”“评论区留一个继续”等句式骨架",
             "script 只能写最终口播成稿，禁止出现模板说明、结构说明、可复用模板、括号结构或版本解释",
             "不要写“可复用模板是”“这个版本适合”“建议用户”“（疑问/反常识开头）+”等生成策略说明",
             "输出严格 JSON，不要 markdown",
