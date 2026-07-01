@@ -18,8 +18,10 @@ from app.services.video_link_resolver import resolve_video_link
 from app.services.viral_analyzer import (
     FINAL_REWRITE_LIMIT,
     analyze_viral_script,
+    bound_script_to_source,
     dedupe_and_diversify_rewrites,
     is_script_polluted,
+    natural_source_clause,
     normalize_source_video_core,
     smooth_spoken_script,
     source_core_brief,
@@ -173,14 +175,20 @@ def _append_pipeline_cta(script: str, index: int) -> str:
 
 
 def _spoken_clause(text: str) -> str:
-    value = smooth_spoken_script(text)
-    value = re.sub(r"^表面是[^，。！？!?]+，背后是", "", value)
-    value = re.sub(r"^如果\s*", "", value)
-    return value.strip(" ：:，,。；; ")
+    return natural_source_clause(text)
 
 
-def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: str, source_core: dict[str, Any] | None = None, index: int = 0) -> str:
-    text = smooth_spoken_script(script)
+def _expand_pipeline_rewrite(
+    script: str,
+    *,
+    topic: str,
+    template: str,
+    title: str,
+    source_core: dict[str, Any] | None = None,
+    transcript: str = "",
+    index: int = 0,
+) -> str:
+    text = smooth_spoken_script(bound_script_to_source(script, source_core, transcript=transcript, topic=topic, template=template))
     if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text):
         return text
     topic_text = topic or "这个热点"
@@ -224,7 +232,7 @@ def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: s
             "先指出观众正在错过什么，再给一个清晰判断，最后把下一步行动说具体。"
         ),
     ]
-    opening = text or styles[index % len(styles)]
+    opening = text or bound_script_to_source(styles[index % len(styles)], source_core, transcript=transcript, topic=topic, template=template)
     return _append_pipeline_cta(opening, index)
 
 
@@ -238,15 +246,15 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
         hook=str(analysis.get("hook") or ""),
         template=template,
     )
-    core_event = smooth_spoken_script(str(source_core.get("core_event") or topic))
+    core_event = natural_source_clause(str(source_core.get("core_event") or topic))
     core_conflict = _spoken_clause(str(source_core.get("core_conflict") or str(analysis.get("hook") or topic)))
     causal_chain = _spoken_clause(str(source_core.get("causal_chain") or core_conflict))
-    business_implication = smooth_spoken_script(str(source_core.get("business_implication") or template))
-    audience_takeaway = smooth_spoken_script(str(source_core.get("audience_takeaway") or business_implication))
+    business_implication = natural_source_clause(str(source_core.get("business_implication") or template))
+    audience_takeaway = natural_source_clause(str(source_core.get("audience_takeaway") or business_implication))
     samples = [
         f"今天换个更好懂的角度，聊聊{topic}。表面看是{core_event}，往下看是{core_conflict}。{causal_chain}，所以重点是{audience_takeaway}。",
         f"很多人看见{topic}就只看标题，但这样很容易错过后面的风险和机会。更该注意的是{audience_takeaway}。先把{core_conflict}说清楚，观众才知道该关注哪里。",
-        f"如果你从商业角度看{topic}，重点不是复述消息，而是看{business_implication}。顺着{causal_chain}往下拆，哪一段产业链承压，哪一段可能受益，就会更清楚。",
+        f"如果你从商业角度看{topic}，重点不是复述消息，而是看{business_implication}。{causal_chain}。再看哪一段产业链承压，哪一段可能受益，就会更清楚。",
         f"我做内容越久越发现，爆款不是靠运气。像{topic}这种内容，背后都有一套可复制的表达节奏。",
         f"一个视频为什么能火？关键不是句子多漂亮，而是它有没有把{topic}讲成一个用户愿意听完的问题。",
         f"如果你正在找更稳定的短视频转化方法，可以先从{topic}这个方向入手，把痛点讲透，把方案讲清楚。",
@@ -257,7 +265,7 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
     if transcript and len(samples[-1]) < 30:
         samples[-1] = transcript[:180]
     rewrites = [
-        {"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title, source_core=source_core, index=index)}
+        {"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title, source_core=source_core, transcript=transcript, index=index)}
         for index, (title, script) in enumerate(zip(REWRITE_TITLES, samples, strict=False))
     ]
     return dedupe_and_diversify_rewrites(
@@ -290,14 +298,14 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
             script = item.strip()
             if script:
                 title = f"版本{len(normalized) + 1}"
-                normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title, source_core=source_core, index=len(normalized))})
+                normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title, source_core=source_core, transcript=transcript, index=len(normalized))})
             continue
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or item.get("name") or item.get("version") or "").strip()
         script = str(item.get("script") or item.get("content") or item.get("text") or item.get("copy") or "").strip()
         if title and script:
-            normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title, source_core=source_core, index=len(normalized))})
+            normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title, source_core=source_core, transcript=transcript, index=len(normalized))})
     existing = {item["title"] for item in normalized}
     normalized.extend(item for item in fallback if item["title"] not in existing)
     return dedupe_and_diversify_rewrites(
@@ -331,6 +339,10 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
             "适合数字人口播",
             "必须先围绕 source_video_core 改写，不能只围绕标题或表层热点发挥",
             "必须保留原视频的核心事件、核心矛盾、关键因果链、行业/商业判断和观众应该关注的重点",
+            "最终文案只能使用 transcript、metadata、analysis 和 source_video_core 已有信息，不能新增没有来源支撑的具体事实、实体、供应链环节或投资判断",
+            "如果来源没有明确出现，不要写政府合同、私人融资、不锈钢壳、发动机、地面设施等具体环节",
+            "没有来源支撑的推测必须保守表达，可以用“可能、值得关注、需要进一步验证、观察角度”，不要写成确定事实",
+            "禁止过度确定判断，例如“未来的金矿、一定受益、根本不需要上市、必然影响、确定机会”",
             "最终 script 是直接展示给用户的口播稿，禁止出现“原视频、这个视频、视频里、这条视频、原文、素材、文案主线、主线是、想提醒的是、不是停在”等说明参考来源的词",
             "不要使用箭头链条表达，例如 A → B → C",
             "不要写成研究报告摘要，要像真人直接对镜头讲",

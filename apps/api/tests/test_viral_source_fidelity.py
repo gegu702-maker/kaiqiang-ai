@@ -23,6 +23,19 @@ FINAL_SCRIPT_FORBIDDEN_PHRASES = (
     "不是停在",
     "→",
 )
+UNSUPPORTED_FACT_PHRASES = (
+    "政府合同",
+    "私人融资",
+    "不锈钢壳",
+    "发动机",
+    "地面设施",
+    "根本不需要上市",
+    "未来的金矿",
+    "一定受益",
+    "必然影响",
+    "技术壁垒",
+    "vs.",
+)
 
 
 SPACEX_TRANSCRIPT = (
@@ -30,6 +43,11 @@ SPACEX_TRANSCRIPT = (
     "但原视频真正想讲的不是真假消息本身。"
     "它继续往下拆：如果 SpaceX 未来资本化，供应链会先承压，关键材料、发动机和卫星制造的技术量产都会被放大。"
     "这里还牵涉地缘政治和出口限制，所以风险不只是公司估值，而是产业链谁能供货、谁能替代、谁能拿到新机会。"
+)
+BOUNDED_SPACEX_TRANSCRIPT = (
+    "SpaceX 上市和纳斯达克传闻最近被反复讨论。"
+    "更值得关注的是，如果资本化预期升温，供应链风险、关键材料、技术依赖、产能和成本压力可能被放大。"
+    "地缘风险也会影响产业链判断，所以这更适合作为观察风险和机会的角度。"
 )
 
 
@@ -51,6 +69,24 @@ def _spacex_analysis():
     }
 
 
+def _bounded_spacex_analysis():
+    return {
+        "topic": "SpaceX 上市传闻",
+        "hook": "表面看是 SpaceX 上市和纳斯达克消息，往下看是供应链风险和产业链机会。",
+        "selling_points": ["上市传闻", "供应链风险", "关键材料", "产业链机会"],
+        "structure": ["核心事件", "供应链风险", "技术依赖", "产能成本", "地缘风险", "产业链机会"],
+        "template": "先讲 SpaceX 上市传闻，再讲供应链风险，最后讲关键材料、技术依赖、产能成本、地缘风险和产业链机会。",
+        "source_video_core": {
+            "core_event": "SpaceX 上市和纳斯达克传闻",
+            "core_conflict": "表面是上市消息，背后是供应链风险、关键材料、技术依赖、产能和成本压力",
+            "key_entities": ["SpaceX", "纳斯达克", "供应链", "关键材料", "技术依赖", "地缘风险", "产业链"],
+            "causal_chain": "如果资本化预期升温，供应链、关键材料、技术依赖、产能和成本压力可能被放大",
+            "business_implication": "产业链里的风险和机会值得继续观察",
+            "audience_takeaway": "别只看上市传闻真假，要把它当作观察供应链风险和产业链机会的角度",
+        },
+    }
+
+
 def _cta_count(script: str) -> int:
     return sum(len(pattern.findall(script)) for pattern in CTA_PATTERNS)
 
@@ -63,6 +99,11 @@ def _assert_clean_spoken_script(script: str) -> None:
     assert _cta_count(script) <= 1
     assert "互动你觉得" not in script
     assert "判断 我更想提醒" not in script
+
+
+def _assert_no_unsupported_facts(script: str) -> None:
+    for phrase in UNSUPPORTED_FACT_PHRASES:
+        assert phrase not in script
 
 
 def _assert_spacex_core_present(script: str) -> None:
@@ -111,3 +152,35 @@ def test_spacex_normalize_rewrites_replaces_surface_level_scripts():
 
     assert "标题党" not in rewrites[0]["script"]
     assert any(term in rewrites[2]["script"] for term in ("产业链", "供应链", "关键材料", "技术量产"))
+
+
+def test_spacex_rewrites_do_not_add_unsupported_specific_facts():
+    rewrites = _normalize_rewrites(
+        [
+            {
+                "title": "版本A：热点反差版",
+                "script": "SpaceX 根本不需要上市，它靠政府合同和私人融资就能撑起项目，这才是反差。",
+            },
+            {
+                "title": "版本B：用户痛点版",
+                "script": "普通人只看上市 vs. 不上市，会错过不锈钢壳、发动机和地面设施这些细节。",
+            },
+            {
+                "title": "版本C：商业机会版",
+                "script": "造不锈钢壳的公司才是未来的金矿，相关公司一定受益，技术壁垒会必然影响估值。",
+            },
+        ],
+        _bounded_spacex_analysis(),
+        BOUNDED_SPACEX_TRANSCRIPT,
+    )
+
+    assert [item["title"] for item in rewrites] == REWRITE_TITLES
+    assert len(rewrites) == 3
+    for item in rewrites:
+        script = item["script"]
+        _assert_clean_spoken_script(script)
+        _assert_no_unsupported_facts(script)
+        assert "SpaceX" in script
+        assert any(term in script for term in ("上市", "纳斯达克", "传闻"))
+        assert any(term in script for term in ("供应链", "产业链"))
+        assert any(term in script for term in ("风险", "机会"))

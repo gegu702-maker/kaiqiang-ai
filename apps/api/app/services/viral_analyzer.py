@@ -169,6 +169,22 @@ AWKWARD_SPOKEN_REPLACEMENTS = (
     ("想提醒的是", "要注意的是"),
     ("不是停在", "别只看"),
 )
+UNSUPPORTED_FACT_PHRASES = (
+    "政府合同",
+    "私人融资",
+    "不锈钢壳",
+    "发动机",
+    "地面设施",
+)
+OVERCONFIDENT_FACT_REPLACEMENTS = (
+    ("根本不需要上市", "不能只看上市传闻"),
+    ("未来的金矿", "值得关注的机会"),
+    ("一定受益", "可能受益"),
+    ("必然影响", "可能影响"),
+    ("确定机会", "值得关注的机会"),
+    ("技术壁垒", "技术依赖"),
+    ("vs.", "和"),
+)
 
 
 def _count_monthly_analyses(supabase: Client, *, user_id: str) -> int:
@@ -315,6 +331,68 @@ def source_core_brief(source_core: dict[str, Any], *, topic: str = "") -> str:
     return smooth_spoken_script("。".join(part for part in parts if part))
 
 
+def _source_support_text(
+    source_core: dict[str, Any] | None,
+    *,
+    transcript: str = "",
+    topic: str = "",
+    hook: str = "",
+    template: str = "",
+) -> str:
+    core = normalize_source_video_core(source_core or {}, transcript=transcript, topic=topic, hook=hook, template=template)
+    parts: list[str] = [transcript, topic, hook, template]
+    for value in core.values():
+        if isinstance(value, list):
+            parts.extend(str(item) for item in value)
+        else:
+            parts.append(str(value or ""))
+    return "\n".join(part for part in parts if part)
+
+
+def _drop_unsupported_fact_sentences(text: str, unsupported_phrases: tuple[str, ...]) -> str:
+    if not unsupported_phrases:
+        return text
+    parts = re.split(r"([。！？!?；;])", text)
+    kept: list[str] = []
+    for index in range(0, len(parts), 2):
+        sentence = parts[index]
+        punct = parts[index + 1] if index + 1 < len(parts) else ""
+        if sentence and any(phrase in sentence for phrase in unsupported_phrases):
+            continue
+        kept.append(f"{sentence}{punct}")
+    cleaned = "".join(kept).strip()
+    if cleaned:
+        return cleaned
+    value = text
+    for phrase in unsupported_phrases:
+        value = value.replace(phrase, "")
+    return value
+
+
+def bound_script_to_source(
+    script: str,
+    source_core: dict[str, Any] | None = None,
+    *,
+    transcript: str = "",
+    topic: str = "",
+    hook: str = "",
+    template: str = "",
+) -> str:
+    text = str(script or "")
+    if not text:
+        return ""
+    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    for source, target in OVERCONFIDENT_FACT_REPLACEMENTS:
+        if source not in support_text:
+            text = text.replace(source, target)
+    unsupported = tuple(phrase for phrase in UNSUPPORTED_FACT_PHRASES if phrase in text and phrase not in support_text)
+    text = _drop_unsupported_fact_sentences(text, unsupported)
+    text = re.sub(r"[，,]\s*[，,。；;]", "，", text)
+    text = re.sub(r"。{2,}", "。", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" ：:，,。；; ")
+
+
 def _source_core_terms(source_core: dict[str, Any] | None) -> list[str]:
     if not source_core:
         return []
@@ -380,6 +458,14 @@ def smooth_spoken_script(script: str) -> str:
     text = re.sub(r"\s+([。！？!?])", r"\1", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip(" ：:，,。；;")
+
+
+def natural_source_clause(text: str) -> str:
+    value = smooth_spoken_script(text)
+    value = re.sub(r"^表面(?:看)?是[^，。！？!?]+[，,](?:往下看才是|背后是|后面是|其实是)", "", value)
+    value = re.sub(r"^如果\s*", "", value)
+    value = re.sub(r"^一旦\s*", "", value)
+    return value.strip(" ：:，,。；; ")
 
 
 def is_script_polluted(script: str) -> bool:
@@ -524,16 +610,16 @@ def _compose_diverse_script(
     topic_text = topic or "这个热点"
     core = normalize_source_video_core(source_core or {}, transcript=seed, topic=topic, hook=hook, template=template)
     core_event = smooth_spoken_script(str(core.get("core_event") or topic_text))
-    core_conflict = smooth_spoken_script(str(core.get("core_conflict") or hook or core_event))
-    causal_chain = smooth_spoken_script(str(core.get("causal_chain") or core_conflict))
-    business_implication = smooth_spoken_script(str(core.get("business_implication") or template or core_conflict))
-    audience_takeaway = smooth_spoken_script(str(core.get("audience_takeaway") or business_implication))
+    core_conflict = natural_source_clause(str(core.get("core_conflict") or hook or core_event))
+    causal_chain = natural_source_clause(str(core.get("causal_chain") or core_conflict))
+    business_implication = natural_source_clause(str(core.get("business_implication") or template or core_conflict))
+    audience_takeaway = natural_source_clause(str(core.get("audience_takeaway") or business_implication))
     hook_text = smooth_spoken_script(_trim_common_cta(seed)) or smooth_spoken_script(hook) or f"{topic_text}有一个容易被忽略的点。"
     lines = {
         "suspense": (
             f"你以为{topic_text}只是一个普通热点？先别急着下结论。"
             f"表面看是{core_event}，往下看才是{core_conflict}。"
-            f"把{causal_chain}讲清楚，观众才会知道该看风险还是机会。"
+            f"{causal_chain}，这才是观众需要判断的风险和机会。"
         ),
         "pain_point": (
             f"如果你只看{topic_text}的标题，很容易把重点看浅。"
@@ -543,7 +629,7 @@ def _compose_diverse_script(
         "opportunity": (
             f"如果你是老板或者行业观察者，{topic_text}别只当成一条新闻刷过去。"
             f"商业上更该看{business_implication}。"
-            f"沿着{causal_chain}往下看，哪一段产业链承压，哪一段可能有新机会，就会更清楚。"
+            f"{causal_chain}。再看哪一段产业链承压，哪一段可能有新机会，就会更清楚。"
         ),
         "boss_view": (
             f"站在经营者视角看，{topic_text}更像一道趋势题。"
@@ -574,7 +660,16 @@ def _compose_diverse_script(
         ),
     }
     body = lines.get(style, lines["suspense"])
-    return smooth_spoken_script(_join_sentences(body, strategy["cta"]))
+    return smooth_spoken_script(
+        bound_script_to_source(
+            _join_sentences(body, strategy["cta"]),
+            core,
+            transcript=seed,
+            topic=topic,
+            hook=hook,
+            template=template,
+        )
+    )
 
 
 def _extend_unique(items: list[str], fallback: list[str], min_count: int) -> list[str]:
@@ -602,7 +697,7 @@ def _expand_rewrite_script(
     index: int = 0,
     source_core: dict[str, Any] | None = None,
 ) -> str:
-    text = smooth_spoken_script(script)
+    text = smooth_spoken_script(bound_script_to_source(script, source_core, topic=topic, hook=hook, template=template))
     style = _style_for_index(index, variant)
     if language != "zh":
         if len(text.split()) >= 70 and not is_script_polluted(text):
@@ -842,6 +937,10 @@ async def analyze_viral_script(
             "版本A的反差要来自原视频内部矛盾，例如表面事件和背后供应链/技术/商业风险的反差",
             "版本B的用户痛点要绑定原视频主线，说明只看标题会错过哪些真实风险或机会",
             "版本C必须保留原视频里的商业/行业判断，例如供应链、关键材料、技术量产、地缘政治或产业链机会",
+            "所有最终文案只能使用 raw_script、metadata、analysis 和 source_video_core 已有信息，不能新增没有来源支撑的具体事实、实体、供应链环节或投资判断",
+            "如果来源没有明确出现，不要写政府合同、私人融资、不锈钢壳、发动机、地面设施等具体环节",
+            "没有来源支撑的推测必须保守表达，可以用“可能、值得关注、需要进一步验证、观察角度”，不要写成确定事实",
+            "禁止过度确定判断，例如“未来的金矿、一定受益、根本不需要上市、必然影响、确定机会”",
             "selling_points 至少 4 条，structure 至少 5 条",
             "rewrites 必须至少 3 条，每条 script 不少于 80 个中文字符，建议 100-180 字",
             "每条 rewrite.script 必须包含开头钩子、问题/反差、信息价值、行动号召",
