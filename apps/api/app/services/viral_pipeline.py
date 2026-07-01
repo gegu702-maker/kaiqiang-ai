@@ -188,16 +188,16 @@ def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: s
     styles = [
         (
             f"你有没有发现，{topic_text}让人停下来的地方，往往不是事件本身。"
-            f"原视频主线是{core_text or topic_text}。"
+            f"表面看是{topic_text}，往下看是{core_text or topic_text}。"
             "反差不在标题真假，而在表面事件和后面风险机会之间的连接。"
         ),
         (
             f"如果你经常追热点，却不知道怎么把{topic_text}拍成自己的内容，可以先换到用户视角。"
-            f"别急着讲结论，先把原视频里这条线讲清楚：{core_text or topic_text}。"
+            f"别急着讲结论，先把这条线讲清楚：{core_text or topic_text}。"
         ),
         (
             f"{topic_text}不只是一个新闻点，也可能是一个机会信号。"
-            f"商业判断要沿着原视频主线看：{core_text or topic_text}。"
+            f"商业判断要沿着这条线看：{core_text or topic_text}。"
         ),
         (
             f"站在老板视角看，{topic_text}不是单纯热点，而是一次判断趋势的练习。"
@@ -244,8 +244,8 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
     business_implication = smooth_spoken_script(str(source_core.get("business_implication") or template))
     audience_takeaway = smooth_spoken_script(str(source_core.get("audience_takeaway") or business_implication))
     samples = [
-        f"今天换个更好懂的角度，聊聊{topic}。原视频不是停在标题真假，而是从{core_event}讲到{core_conflict}。{causal_chain}，所以重点是{audience_takeaway}。",
-        f"很多人看见{topic}就只看标题，但这样很容易错过原视频的主线。它真正想提醒的是{audience_takeaway}。先把{core_conflict}说清楚，观众才知道该关注哪里。",
+        f"今天换个更好懂的角度，聊聊{topic}。表面看是{core_event}，往下看是{core_conflict}。{causal_chain}，所以重点是{audience_takeaway}。",
+        f"很多人看见{topic}就只看标题，但这样很容易错过后面的风险和机会。更该注意的是{audience_takeaway}。先把{core_conflict}说清楚，观众才知道该关注哪里。",
         f"如果你从商业角度看{topic}，重点不是复述消息，而是看{business_implication}。顺着{causal_chain}往下拆，哪一段产业链承压，哪一段可能受益，就会更清楚。",
         f"我做内容越久越发现，爆款不是靠运气。像{topic}这种内容，背后都有一套可复制的表达节奏。",
         f"一个视频为什么能火？关键不是句子多漂亮，而是它有没有把{topic}讲成一个用户愿意听完的问题。",
@@ -331,6 +331,9 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
             "适合数字人口播",
             "必须先围绕 source_video_core 改写，不能只围绕标题或表层热点发挥",
             "必须保留原视频的核心事件、核心矛盾、关键因果链、行业/商业判断和观众应该关注的重点",
+            "最终 script 是直接展示给用户的口播稿，禁止出现“原视频、这个视频、视频里、这条视频、原文、素材、文案主线、主线是、想提醒的是、不是停在”等说明参考来源的词",
+            "不要使用箭头链条表达，例如 A → B → C",
+            "不要写成研究报告摘要，要像真人直接对镜头讲",
             "版本A的反差来自原视频内部矛盾，不要歪成单纯真假消息、标题党或辟谣",
             "版本B必须把用户痛点绑定原视频主线，说明只看标题会错过什么风险或机会",
             "版本C必须体现原视频里的商业机会或产业链判断",

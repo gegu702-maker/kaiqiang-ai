@@ -10,6 +10,19 @@ CTA_PATTERNS = (
 )
 
 HARD_PHRASES = ("行动号召", "信息价值", "模板说明", "真正")
+FINAL_SCRIPT_FORBIDDEN_PHRASES = (
+    "原视频",
+    "这个视频",
+    "视频里",
+    "这条视频",
+    "原文",
+    "素材",
+    "文案主线",
+    "主线是",
+    "想提醒的是",
+    "不是停在",
+    "→",
+)
 
 
 SPACEX_TRANSCRIPT = (
@@ -44,6 +57,8 @@ def _cta_count(script: str) -> int:
 
 def _assert_clean_spoken_script(script: str) -> None:
     for phrase in HARD_PHRASES:
+        assert phrase not in script
+    for phrase in FINAL_SCRIPT_FORBIDDEN_PHRASES:
         assert phrase not in script
     assert _cta_count(script) <= 1
     assert "互动你觉得" not in script
