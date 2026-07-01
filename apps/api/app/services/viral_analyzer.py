@@ -42,6 +42,14 @@ MIN_REWRITE_CJK_CHARS = 80
 MIN_REWRITE_COUNT = 3
 MIN_SELLING_POINTS = 4
 MIN_STRUCTURE_ITEMS = 5
+SOURCE_CORE_FIELDS = (
+    "core_event",
+    "core_conflict",
+    "key_entities",
+    "causal_chain",
+    "business_implication",
+    "audience_takeaway",
+)
 POLLUTION_PATTERNS = (
     "可复用模板",
     "可套用模板",
@@ -195,6 +203,127 @@ def _list_of_strings(value: Any, fallback: list[str]) -> list[str]:
         ]
         return parts or ([value.strip()] if value.strip() else fallback)
     return fallback
+
+
+def _split_source_sentences(text: str) -> list[str]:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not normalized:
+        return []
+    parts = re.split(r"[。！？!?；;\n]+", normalized)
+    return [part.strip(" ：:，,。；;") for part in parts if part.strip(" ：:，,。；;")]
+
+
+def _pick_source_sentence(sentences: list[str], terms: tuple[str, ...], fallback: str) -> str:
+    for sentence in sentences:
+        if any(term in sentence for term in terms):
+            return sentence
+    return fallback
+
+
+def _extract_key_entities(text: str) -> list[str]:
+    entities: list[str] = []
+    known_terms = (
+        "SpaceX",
+        "纳斯达克",
+        "供应链",
+        "产业链",
+        "关键材料",
+        "技术量产",
+        "地缘政治",
+        "AI",
+        "特斯拉",
+        "马斯克",
+    )
+    for term in known_terms:
+        if term in text and term not in entities:
+            entities.append(term)
+    for match in re.findall(r"[A-Za-z][A-Za-z0-9.&+-]{1,}", text):
+        if match not in entities:
+            entities.append(match)
+    return entities[:8]
+
+
+def normalize_source_video_core(value: Any, *, transcript: str = "", topic: str = "", hook: str = "", template: str = "") -> dict[str, Any]:
+    source_text = "\n".join(str(part or "") for part in (topic, hook, template, transcript)).strip()
+    sentences = _split_source_sentences(source_text)
+    fallback_topic = topic or "这个视频"
+
+    if not isinstance(value, dict):
+        value = {}
+
+    core_event = str(value.get("core_event") or "").strip() or _pick_source_sentence(
+        sentences,
+        ("上市", "传闻", "消息", "发布", "融资", "纳斯达克", "招股书", "SpaceX"),
+        fallback_topic,
+    )
+    core_conflict = str(value.get("core_conflict") or "").strip() or _pick_source_sentence(
+        sentences,
+        ("风险", "矛盾", "卡住", "限制", "真假", "供应链", "地缘政治", "量产"),
+        hook or core_event,
+    )
+    causal_chain = str(value.get("causal_chain") or "").strip() or _pick_source_sentence(
+        sentences,
+        ("因为", "导致", "带来", "影响", "如果", "一旦", "供应链", "技术量产"),
+        core_conflict,
+    )
+    business_implication = str(value.get("business_implication") or "").strip() or _pick_source_sentence(
+        sentences,
+        ("机会", "产业链", "供应链", "商业", "材料", "量产", "订单", "公司"),
+        template or core_conflict,
+    )
+    audience_takeaway = str(value.get("audience_takeaway") or "").strip() or _pick_source_sentence(
+        sentences,
+        ("关注", "重点", "别只看", "风险", "机会", "判断"),
+        business_implication or core_conflict,
+    )
+    key_entities = _list_of_strings(value.get("key_entities"), _extract_key_entities(source_text))
+    return {
+        "core_event": core_event,
+        "core_conflict": core_conflict,
+        "key_entities": key_entities,
+        "causal_chain": causal_chain,
+        "business_implication": business_implication,
+        "audience_takeaway": audience_takeaway,
+    }
+
+
+def source_core_brief(source_core: dict[str, Any], *, topic: str = "") -> str:
+    core = normalize_source_video_core(source_core, topic=topic)
+    entities = "、".join(_list_of_strings(core.get("key_entities"), []))
+    parts = [
+        str(core.get("core_event") or topic or "").strip(),
+        str(core.get("core_conflict") or "").strip(),
+        str(core.get("causal_chain") or "").strip(),
+        str(core.get("business_implication") or "").strip(),
+        str(core.get("audience_takeaway") or "").strip(),
+        entities,
+    ]
+    return smooth_spoken_script("。".join(part for part in parts if part))
+
+
+def _source_core_terms(source_core: dict[str, Any] | None) -> list[str]:
+    if not source_core:
+        return []
+    core = normalize_source_video_core(source_core)
+    terms: list[str] = []
+    for value in core.values():
+        if isinstance(value, list):
+            candidates = value
+        else:
+            candidates = re.split(r"[，。！？、；：\s/]+", str(value or ""))
+        for candidate in candidates:
+            text = str(candidate).strip()
+            if len(text) >= 2 and text not in terms:
+                terms.append(text)
+    return terms[:16]
+
+
+def _script_matches_source_core(script: str, source_core: dict[str, Any] | None) -> bool:
+    terms = _source_core_terms(source_core)
+    if not terms:
+        return True
+    hits = sum(1 for term in terms if term in script)
+    return hits >= min(3, len(terms))
 
 
 def _cjk_len(value: str) -> int:
@@ -357,7 +486,17 @@ def _script_with_unique_cta(script: str, index: int) -> str:
     return smooth_spoken_script(_join_sentences(text, cta))
 
 
-def _compose_diverse_script(*, topic: str, hook: str, template: str, language: str, style: str, seed: str, index: int) -> str:
+def _compose_diverse_script(
+    *,
+    topic: str,
+    hook: str,
+    template: str,
+    language: str,
+    style: str,
+    seed: str,
+    index: int,
+    source_core: dict[str, Any] | None = None,
+) -> str:
     strategy = _strategy_for_index(index)
     if language != "zh":
         base = (
@@ -367,22 +506,28 @@ def _compose_diverse_script(*, topic: str, hook: str, template: str, language: s
         return base.strip()
 
     topic_text = topic or "这个热点"
+    core = normalize_source_video_core(source_core or {}, transcript=seed, topic=topic, hook=hook, template=template)
+    core_event = smooth_spoken_script(str(core.get("core_event") or topic_text))
+    core_conflict = smooth_spoken_script(str(core.get("core_conflict") or hook or core_event))
+    causal_chain = smooth_spoken_script(str(core.get("causal_chain") or core_conflict))
+    business_implication = smooth_spoken_script(str(core.get("business_implication") or template or core_conflict))
+    audience_takeaway = smooth_spoken_script(str(core.get("audience_takeaway") or business_implication))
     hook_text = smooth_spoken_script(_trim_common_cta(seed)) or smooth_spoken_script(hook) or f"{topic_text}有一个容易被忽略的点。"
     lines = {
         "suspense": (
             f"你以为{topic_text}只是一个普通热点？先别急着下结论。"
-            f"{_with_sentence_end(hook_text)}大家都在看结果，但我更想看中间没说透的那条线。"
-            "把这条线讲清楚，观众才会愿意留下来判断。"
+            f"这条原视频的主线是{core_event}，反差在于{core_conflict}。"
+            f"把{causal_chain}讲清楚，观众才会知道该看风险还是机会。"
         ),
         "pain_point": (
-            f"如果你也在做内容，看到{topic_text}，千万别只把新闻复述一遍。"
-            "用户更想听的是：这件事和我有什么关系？我能从里面借到什么选题？"
-            "你先把这个问题讲明白，再给一个能马上开拍的角度，内容就会自然很多。"
+            f"如果你只看{topic_text}的标题，很容易把重点看浅。"
+            f"原视频更想提醒的是{audience_takeaway}。"
+            f"你做内容时先把{core_conflict}说清楚，再讲它怎么影响普通人的判断。"
         ),
         "opportunity": (
             f"如果你是老板或者行业观察者，{topic_text}别只当成一条新闻刷过去。"
-            "更值得看的，是谁的需求变了，谁的供给跟不上，哪一段链条可能先出现新机会。"
-            "把这些话讲清楚，你的内容就不是蹭热点，而是在帮观众做判断。"
+            f"商业上更该看{business_implication}。"
+            f"沿着{causal_chain}往下看，哪一段产业链承压，哪一段可能有新机会，就会更清楚。"
         ),
         "boss_view": (
             f"站在经营者视角看，{topic_text}更像一道趋势题。"
@@ -430,16 +575,26 @@ def _extend_unique(items: list[str], fallback: list[str], min_count: int) -> lis
     return normalized
 
 
-def _expand_rewrite_script(script: str, *, topic: str, hook: str, template: str, language: str, variant: str, index: int = 0) -> str:
+def _expand_rewrite_script(
+    script: str,
+    *,
+    topic: str,
+    hook: str,
+    template: str,
+    language: str,
+    variant: str,
+    index: int = 0,
+    source_core: dict[str, Any] | None = None,
+) -> str:
     text = smooth_spoken_script(script)
     style = _style_for_index(index, variant)
     if language != "zh":
         if len(text.split()) >= 70 and not is_script_polluted(text):
             return text
-        return _compose_diverse_script(topic=topic, hook=hook, template=template, language=language, style=style, seed=text, index=index)
-    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text):
+        return _compose_diverse_script(topic=topic, hook=hook, template=template, language=language, style=style, seed=text, index=index, source_core=source_core)
+    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text) and _script_matches_source_core(text, source_core):
         return _script_with_unique_cta(text, index)
-    return _compose_diverse_script(topic=topic, hook=hook, template=template, language=language, style=style, seed=text, index=index)
+    return _compose_diverse_script(topic=topic, hook=hook, template=template, language=language, style=style, seed=text, index=index, source_core=source_core)
 
 
 def dedupe_and_diversify_rewrites(
@@ -449,6 +604,7 @@ def dedupe_and_diversify_rewrites(
     hook: str,
     template: str,
     language: str,
+    source_core: dict[str, Any] | None = None,
     limit: int = FINAL_REWRITE_LIMIT,
 ) -> list[dict[str, str]]:
     diversified: list[dict[str, str]] = []
@@ -465,6 +621,7 @@ def dedupe_and_diversify_rewrites(
             language=language,
             variant=title,
             index=index,
+            source_core=source_core,
         )
         signature = extract_script_signature(script)
         if (
@@ -481,6 +638,7 @@ def dedupe_and_diversify_rewrites(
                 style=strategy["style"],
                 seed="",
                 index=index,
+                source_core=source_core,
             )
             signature = extract_script_signature(script)
         if any(rewrite_similarity(script, previous["script"]) > 0.60 for previous in diversified) or signature in seen_signatures:
@@ -492,6 +650,7 @@ def dedupe_and_diversify_rewrites(
                 style=strategy["style"],
                 seed="",
                 index=index,
+                source_core=source_core,
             )
             signature = extract_script_signature(script)
         diversified.append({"title": title, "script": script})
@@ -501,7 +660,7 @@ def dedupe_and_diversify_rewrites(
     return diversified
 
 
-def _default_rewrites(topic: str, hook: str, template: str, language: str) -> list[dict[str, str]]:
+def _default_rewrites(topic: str, hook: str, template: str, language: str, source_core: dict[str, Any] | None = None) -> list[dict[str, str]]:
     if language != "zh":
         base = [
             ("Version A: Steady analysis", f"{hook} The real value of this topic is not the headline itself, but the contrast behind it. Explain what changed, why it matters, what viewers can learn, and invite them to follow the next update."),
@@ -512,27 +671,27 @@ def _default_rewrites(topic: str, hook: str, template: str, language: str) -> li
     base = [
         (
             "版本A：稳健拆解版",
-            f"{hook} 这条内容别只学{topic}本身，更要学它怎么把热点讲成一个让人愿意听下去的问题。开头先抛反差，中间补一条关键线索，最后给出你的判断，观众才会觉得这不是在复述新闻。",
+            f"{hook} 这条内容别只看{topic}本身，更要看原视频怎么把事件、矛盾和后面的行业判断连起来。先讲清核心事件，再讲因果链，观众才会知道该看风险还是机会。",
         ),
         (
             "版本B：强钩子口播版",
-            f"很多人看到{topic}，第一反应就是照着讲一遍，但这样很难留下观众。你可以先问一句：为什么这件事现在值得关注？再把问题、线索和影响讲清楚，结尾给一个能评论的判断。",
+            f"很多人看到{topic}，第一反应就是照着讲一遍，但这样很难留下观众。你可以先问一句：只看标题会错过什么？再把原视频里的风险、线索和影响讲清楚。",
         ),
         (
             "版本C：转化引导版",
-            f"如果你也想做{topic}这类内容，别急着照搬标题。先用一句话讲出反差，再说清楚观众为什么要关心，接着给一个你的判断，最后把下一步动作说具体，让用户愿意评论或收藏。",
+            f"如果你也想做{topic}这类内容，别急着照搬标题。先说事件，再说矛盾，接着把原视频里的商业判断讲出来，让观众知道哪条产业链可能有风险和机会。",
         ),
     ]
     return [
-        {"title": title, "script": _expand_rewrite_script(script, topic=topic, hook=hook, template=template, language=language, variant=title, index=index)}
+        {"title": title, "script": _expand_rewrite_script(script, topic=topic, hook=hook, template=template, language=language, variant=title, index=index, source_core=source_core)}
         for index, (title, script) in enumerate(base)
     ]
 
 
-def _rewrites(value: Any, fallback_topic: str, language: str, *, hook: str = "", template: str = "") -> list[dict[str, str]]:
+def _rewrites(value: Any, fallback_topic: str, language: str, *, hook: str = "", template: str = "", source_core: dict[str, Any] | None = None) -> list[dict[str, str]]:
     fallback_hook = hook or "先用一个反差问题抓住注意力。"
     fallback_template = template or "开头钩子 + 问题放大 + 信息价值 + 行动号召"
-    default = _default_rewrites(fallback_topic, fallback_hook, fallback_template, language)
+    default = _default_rewrites(fallback_topic, fallback_hook, fallback_template, language, source_core)
     if isinstance(value, str):
         value = [{"title": "基础版" if language == "zh" else "Base version", "script": value}]
     if not isinstance(value, list):
@@ -542,6 +701,7 @@ def _rewrites(value: Any, fallback_topic: str, language: str, *, hook: str = "",
             hook=fallback_hook,
             template=fallback_template,
             language=language,
+            source_core=source_core,
             limit=FINAL_REWRITE_LIMIT,
         )
     normalized: list[dict[str, str]] = []
@@ -566,6 +726,7 @@ def _rewrites(value: Any, fallback_topic: str, language: str, *, hook: str = "",
         hook=fallback_hook,
         template=fallback_template,
         language=language,
+        source_core=source_core,
         limit=FINAL_REWRITE_LIMIT,
     )
 
@@ -578,6 +739,13 @@ def validate_viral_analysis_payload(payload: dict[str, Any], *, language: str) -
         or payload.get("template_formula")
         or ("开头钩子 + 问题放大 + 信息价值 + 行动号召" if language == "zh" else "Hook + Problem + Value + CTA")
     ).strip()
+    source_core = normalize_source_video_core(
+        payload.get("source_video_core") or payload.get("sourceVideoCore"),
+        transcript=str(payload.get("raw_script") or payload.get("transcript") or ""),
+        topic=topic,
+        hook=hook,
+        template=template,
+    )
     default_points = (
         ["热点自带关注", "反差制造好奇", "问题指向明确", "结尾便于互动"]
         if language == "zh"
@@ -593,13 +761,14 @@ def validate_viral_analysis_payload(payload: dict[str, Any], *, language: str) -
     rewrites_value = payload.get("rewrites")
     if rewrites_value is None:
         rewrites_value = payload.get("rewrite_versions") or payload.get("rewriteVersions") or payload.get("scripts")
-    normalized_rewrites = _rewrites(rewrites_value, topic, language, hook=hook, template=template)
+    normalized_rewrites = _rewrites(rewrites_value, topic, language, hook=hook, template=template, source_core=source_core)
     return {
         "topic": topic,
         "hook": hook,
         "selling_points": selling_points,
         "structure": structure,
         "template": template,
+        "source_video_core": source_core,
         "rewrites": normalized_rewrites,
     }
 
@@ -651,7 +820,12 @@ async def analyze_viral_script(
             "学习爆款结构，但不要逐字复制原文案",
             "分析黄金开头、痛点、反差、好奇心、利益点、情绪点、信任背书",
             "生成适合数字人口播的原创口播稿",
-            "必须完整输出 topic、hook、selling_points、structure、template、rewrites",
+            "必须先识别 source_video_core，再完整输出 topic、hook、selling_points、structure、template、rewrites",
+            "source_video_core 必须包含 core_event、core_conflict、key_entities、causal_chain、business_implication、audience_takeaway",
+            "改写必须围绕原视频主线展开，不能只抓标题、表层热点或单一真假辟谣角度发挥",
+            "版本A的反差要来自原视频内部矛盾，例如表面事件和背后供应链/技术/商业风险的反差",
+            "版本B的用户痛点要绑定原视频主线，说明只看标题会错过哪些真实风险或机会",
+            "版本C必须保留原视频里的商业/行业判断，例如供应链、关键材料、技术量产、地缘政治或产业链机会",
             "selling_points 至少 4 条，structure 至少 5 条",
             "rewrites 必须至少 3 条，每条 script 不少于 80 个中文字符，建议 100-180 字",
             "每条 rewrite.script 必须包含开头钩子、问题/反差、信息价值、行动号召",
@@ -677,6 +851,14 @@ async def analyze_viral_script(
             "selling_points": ["痛点", "反差", "好奇心", "利益点", "情绪点", "信任背书"],
             "structure": ["开头钩子：...", "问题放大：...", "解决方案/信息增量：...", "证明/案例：...", "行动号召：..."],
             "template": "可复用模板公式",
+            "source_video_core": {
+                "core_event": "原视频讨论的核心事件",
+                "core_conflict": "原视频里的核心矛盾",
+                "key_entities": ["公司", "行业", "供应链", "材料", "国家/地区", "用户群体"],
+                "causal_chain": "原视频的关键因果链",
+                "business_implication": "原视频给出的商业或行业判断",
+                "audience_takeaway": "观众应该带走的真实重点",
+            },
             "rewrites": [
                 {"title": "版本A：稳健拆解版", "script": "直接对观众说的 100-180 字原创口播成稿，不包含模板说明"},
                 {"title": "版本B：强钩子口播版", "script": "直接对观众说的 100-180 字原创口播成稿，不包含结构说明"},
@@ -701,6 +883,8 @@ async def analyze_viral_script(
             "selling_points": data.get("selling_points") or fallback_text["selling_points"],
             "structure": data.get("structure") or fallback_text["structure"],
             "template": data.get("template") or data.get("template_formula") or fallback_text["template"],
+            "raw_script": raw_script,
+            "source_video_core": data.get("source_video_core") or data.get("sourceVideoCore"),
             "rewrites": data.get("rewrites") or data.get("rewrite_versions") or data.get("rewriteVersions") or data.get("scripts"),
         },
         language=language,
