@@ -20,7 +20,9 @@ from app.services.viral_analyzer import (
     analyze_viral_script,
     bound_script_to_source,
     dedupe_and_diversify_rewrites,
+    is_surface_only_script,
     is_script_polluted,
+    known_source_themes,
     natural_source_clause,
     normalize_source_video_core,
     smooth_spoken_script,
@@ -189,23 +191,34 @@ def _expand_pipeline_rewrite(
     index: int = 0,
 ) -> str:
     text = smooth_spoken_script(bound_script_to_source(script, source_core, transcript=transcript, topic=topic, template=template))
-    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text):
+    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text) and not is_surface_only_script(text, source_core, transcript=transcript, topic=topic, template=template):
         return text
     topic_text = topic or "这个热点"
-    core_text = source_core_brief(source_core or {}, topic=topic_text)
+    core = normalize_source_video_core(source_core or {}, transcript=transcript, topic=topic_text, template=template)
+    core_event = natural_source_clause(str(core.get("core_event") or topic_text))
+    core_conflict = natural_source_clause(str(core.get("core_conflict") or source_core_brief(source_core or {}, topic=topic_text)))
+    causal_chain = natural_source_clause(str(core.get("causal_chain") or core_conflict))
+    business_implication = natural_source_clause(str(core.get("business_implication") or core_conflict))
+    audience_takeaway = natural_source_clause(str(core.get("audience_takeaway") or business_implication))
+    detail_theme = next(
+        (term for term in known_source_themes(source_core, transcript=transcript, topic=topic_text, template=template) if term in ("关键材料", "技术量产", "技术依赖", "地缘政治", "产能", "成本压力")),
+        "产业链变化",
+    )
     styles = [
         (
-            f"你有没有发现，{topic_text}让人停下来的地方，往往不是事件本身。"
-            f"表面看是{topic_text}，往下看是{core_text or topic_text}。"
-            "反差不在标题真假，而在表面事件和后面风险机会之间的连接。"
+            f"你以为{topic_text}只是在聊消息真假？其实更该往下看。"
+            f"表面是{core_event}，背后是{core_conflict}。"
+            "这些压力一旦被放大，供应链和产业链里的风险机会才是重点。"
         ),
         (
-            f"如果你经常追热点，却不知道怎么把{topic_text}拍成自己的内容，可以先换到用户视角。"
-            f"别急着讲结论，先把这条线讲清楚：{core_text or topic_text}。"
+            f"如果你经常追{topic_text}这种热点，最容易踩的坑就是只看标题。"
+            f"更该注意的是{audience_takeaway}。"
+            f"把{detail_theme}这层产业链关系说清楚，观众才知道风险和机会在哪里。"
         ),
         (
-            f"{topic_text}不只是一个新闻点，也可能是一个机会信号。"
-            f"商业判断要沿着这条线看：{core_text or topic_text}。"
+            f"从商业角度看，{topic_text}不能只当成一条消息刷过去。"
+            f"更值得看的是{business_implication}。"
+            f"再看{detail_theme}带来的压力，哪一段产业链可能被重新关注。"
         ),
         (
             f"站在老板视角看，{topic_text}不是单纯热点，而是一次判断趋势的练习。"
@@ -251,10 +264,14 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
     causal_chain = _spoken_clause(str(source_core.get("causal_chain") or core_conflict))
     business_implication = natural_source_clause(str(source_core.get("business_implication") or template))
     audience_takeaway = natural_source_clause(str(source_core.get("audience_takeaway") or business_implication))
+    detail_theme = next(
+        (term for term in known_source_themes(source_core, transcript=transcript, topic=topic, template=template) if term in ("关键材料", "技术量产", "技术依赖", "地缘政治", "产能", "成本压力")),
+        "产业链变化",
+    )
     samples = [
-        f"今天换个更好懂的角度，聊聊{topic}。表面看是{core_event}，往下看是{core_conflict}。{causal_chain}，所以重点是{audience_takeaway}。",
-        f"很多人看见{topic}就只看标题，但这样很容易错过后面的风险和机会。更该注意的是{audience_takeaway}。先把{core_conflict}说清楚，观众才知道该关注哪里。",
-        f"如果你从商业角度看{topic}，重点不是复述消息，而是看{business_implication}。{causal_chain}。再看哪一段产业链承压，哪一段可能受益，就会更清楚。",
+        f"今天换个更好懂的角度，聊聊{topic}。表面看是{core_event}，往下看是{core_conflict}。这些压力一旦被放大，重点就变成{audience_takeaway}。",
+        f"很多人看见{topic}就只看标题，但这样很容易错过后面的风险和机会。更该注意的是{audience_takeaway}。先把{detail_theme}这层产业链关系说清楚，观众才知道该关注哪里。",
+        f"如果你从商业角度看{topic}，重点不是复述消息，而是看{business_implication}。再看{detail_theme}带来的压力，哪一段产业链可能受益，就会更清楚。",
         f"我做内容越久越发现，爆款不是靠运气。像{topic}这种内容，背后都有一套可复制的表达节奏。",
         f"一个视频为什么能火？关键不是句子多漂亮，而是它有没有把{topic}讲成一个用户愿意听完的问题。",
         f"如果你正在找更稳定的短视频转化方法，可以先从{topic}这个方向入手，把痛点讲透，把方案讲清楚。",
@@ -340,9 +357,12 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
             "必须先围绕 source_video_core 改写，不能只围绕标题或表层热点发挥",
             "必须保留原视频的核心事件、核心矛盾、关键因果链、行业/商业判断和观众应该关注的重点",
             "最终文案只能使用 transcript、metadata、analysis 和 source_video_core 已有信息，不能新增没有来源支撑的具体事实、实体、供应链环节或投资判断",
+            "如果 transcript、metadata、analysis 或 source_video_core 已经出现“供应链、产业链、风险、机会、技术依赖、关键材料、产能、成本压力”等主题，最终 script 必须保留这些已知主题",
+            "不要因为保守而退回只讲招股书缺失、官方文件空白、信息真假或市场猜测",
             "如果来源没有明确出现，不要写政府合同、私人融资、不锈钢壳、发动机、地面设施等具体环节",
             "没有来源支撑的推测必须保守表达，可以用“可能、值得关注、需要进一步验证、观察角度”，不要写成确定事实",
             "禁止过度确定判断，例如“未来的金矿、一定受益、根本不需要上市、必然影响、确定机会”",
+            "禁止箭头链条表达，例如“上市传闻→招股书未披露→市场猜测”，也不要写“差异分析、实质性进展待确认、市场猜测和不确定性、正式文件最靠谱”等报告腔",
             "最终 script 是直接展示给用户的口播稿，禁止出现“原视频、这个视频、视频里、这条视频、原文、素材、文案主线、主线是、想提醒的是、不是停在”等说明参考来源的词",
             "不要使用箭头链条表达，例如 A → B → C",
             "不要写成研究报告摘要，要像真人直接对镜头讲",

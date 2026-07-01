@@ -185,6 +185,30 @@ OVERCONFIDENT_FACT_REPLACEMENTS = (
     ("技术壁垒", "技术依赖"),
     ("vs.", "和"),
 )
+KNOWN_THEME_TERMS = (
+    "供应链",
+    "产业链",
+    "风险",
+    "机会",
+    "技术依赖",
+    "关键材料",
+    "产能",
+    "成本压力",
+)
+SURFACE_ONLY_PHRASES = (
+    "招股书缺失",
+    "正式文件最靠谱",
+    "官方文件空白",
+    "信息真假",
+    "市场猜测",
+)
+REPORT_TONE_REPLACEMENTS = (
+    ("差异分析", "换个角度看"),
+    ("实质性进展待确认", "还需要继续观察"),
+    ("市场猜测和不确定性", "供应链和产业链里的风险机会"),
+    ("正式文件最靠谱", "别只看文件进度"),
+    ("官方文件空白", "公开信息还不够完整"),
+)
 
 
 def _count_monthly_analyses(supabase: Client, *, user_id: str) -> int:
@@ -349,6 +373,59 @@ def _source_support_text(
     return "\n".join(part for part in parts if part)
 
 
+def known_source_themes(
+    source_core: dict[str, Any] | None,
+    *,
+    transcript: str = "",
+    topic: str = "",
+    hook: str = "",
+    template: str = "",
+) -> list[str]:
+    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    return [term for term in KNOWN_THEME_TERMS if term in support_text]
+
+
+def script_preserves_known_themes(
+    script: str,
+    source_core: dict[str, Any] | None,
+    *,
+    transcript: str = "",
+    topic: str = "",
+    hook: str = "",
+    template: str = "",
+) -> bool:
+    themes = known_source_themes(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    if not themes:
+        return True
+    text = str(script or "")
+    has_chain = not any(term in themes for term in ("供应链", "产业链")) or any(term in text for term in ("供应链", "产业链"))
+    has_risk_or_opportunity = not any(term in themes for term in ("风险", "机会")) or any(term in text for term in ("风险", "机会"))
+    specific_theme_hits = sum(1 for term in themes if term in text)
+    return has_chain and has_risk_or_opportunity and specific_theme_hits >= min(3, len(themes))
+
+
+def is_surface_only_script(
+    script: str,
+    source_core: dict[str, Any] | None,
+    *,
+    transcript: str = "",
+    topic: str = "",
+    hook: str = "",
+    template: str = "",
+) -> bool:
+    text = str(script or "")
+    has_report_tone = any(phrase in text for phrase in (*SURFACE_ONLY_PHRASES, "差异分析", "实质性进展待确认", "正式文件最靠谱", "官方文件空白"))
+    has_arrow_chain = "→" in text or "->" in text or bool(re.search(r"[\u4e00-\u9fffA-Za-z0-9]—[\u4e00-\u9fffA-Za-z0-9]", text))
+    return has_arrow_chain or has_report_tone or not script_preserves_known_themes(
+        text,
+        source_core,
+        transcript=transcript,
+        topic=topic,
+        hook=hook,
+        template=template,
+    )
+
+
 def _drop_unsupported_fact_sentences(text: str, unsupported_phrases: tuple[str, ...]) -> str:
     if not unsupported_phrases:
         return text
@@ -385,6 +462,10 @@ def bound_script_to_source(
     for source, target in OVERCONFIDENT_FACT_REPLACEMENTS:
         if source not in support_text:
             text = text.replace(source, target)
+    for source, target in REPORT_TONE_REPLACEMENTS:
+        text = text.replace(source, target)
+    text = text.replace("→", "，").replace("->", "，")
+    text = re.sub(r"(?<=[\u4e00-\u9fffA-Za-z0-9])—(?=[\u4e00-\u9fffA-Za-z0-9])", "，", text)
     unsupported = tuple(phrase for phrase in UNSUPPORTED_FACT_PHRASES if phrase in text and phrase not in support_text)
     text = _drop_unsupported_fact_sentences(text, unsupported)
     text = re.sub(r"[，,]\s*[，,。；;]", "，", text)
@@ -614,22 +695,27 @@ def _compose_diverse_script(
     causal_chain = natural_source_clause(str(core.get("causal_chain") or core_conflict))
     business_implication = natural_source_clause(str(core.get("business_implication") or template or core_conflict))
     audience_takeaway = natural_source_clause(str(core.get("audience_takeaway") or business_implication))
+    support_text = _source_support_text(core, transcript=seed, topic=topic, hook=hook, template=template)
+    detail_theme = next(
+        (term for term in ("关键材料", "技术量产", "技术依赖", "地缘政治", "产能", "成本压力") if term in support_text),
+        "产业链变化",
+    )
     hook_text = smooth_spoken_script(_trim_common_cta(seed)) or smooth_spoken_script(hook) or f"{topic_text}有一个容易被忽略的点。"
     lines = {
         "suspense": (
             f"你以为{topic_text}只是一个普通热点？先别急着下结论。"
             f"表面看是{core_event}，往下看才是{core_conflict}。"
-            f"{causal_chain}，这才是观众需要判断的风险和机会。"
+            "这些压力一旦被放大，观众真正要判断的就是风险和机会。"
         ),
         "pain_point": (
             f"如果你只看{topic_text}的标题，很容易把重点看浅。"
             f"更该注意的是{audience_takeaway}。"
-            f"你做内容时先把{core_conflict}说清楚，再讲它怎么影响普通人的判断。"
+            f"你做内容时先把{detail_theme}这层产业链关系说清楚，再讲它怎么影响普通人的判断。"
         ),
         "opportunity": (
             f"如果你是老板或者行业观察者，{topic_text}别只当成一条新闻刷过去。"
             f"商业上更该看{business_implication}。"
-            f"{causal_chain}。再看哪一段产业链承压，哪一段可能有新机会，就会更清楚。"
+            f"再看{detail_theme}带来的压力，哪一段产业链可能被重新关注，机会就会更清楚。"
         ),
         "boss_view": (
             f"站在经营者视角看，{topic_text}更像一道趋势题。"
@@ -703,7 +789,12 @@ def _expand_rewrite_script(
         if len(text.split()) >= 70 and not is_script_polluted(text):
             return text
         return _compose_diverse_script(topic=topic, hook=hook, template=template, language=language, style=style, seed=text, index=index, source_core=source_core)
-    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text) and _script_matches_source_core(text, source_core):
+    if (
+        _cjk_len(text) >= MIN_REWRITE_CJK_CHARS
+        and not is_script_polluted(text)
+        and _script_matches_source_core(text, source_core)
+        and not is_surface_only_script(text, source_core, topic=topic, hook=hook, template=template)
+    ):
         return _script_with_unique_cta(text, index)
     return _compose_diverse_script(topic=topic, hook=hook, template=template, language=language, style=style, seed=text, index=index, source_core=source_core)
 
@@ -938,9 +1029,12 @@ async def analyze_viral_script(
             "版本B的用户痛点要绑定原视频主线，说明只看标题会错过哪些真实风险或机会",
             "版本C必须保留原视频里的商业/行业判断，例如供应链、关键材料、技术量产、地缘政治或产业链机会",
             "所有最终文案只能使用 raw_script、metadata、analysis 和 source_video_core 已有信息，不能新增没有来源支撑的具体事实、实体、供应链环节或投资判断",
+            "如果 raw_script、metadata、analysis 或 source_video_core 已经出现“供应链、产业链、风险、机会、技术依赖、关键材料、产能、成本压力”等主题，最终 rewrites 必须保留这些已知主题",
+            "不要因为保守而退回只讲招股书缺失、官方文件空白、信息真假或市场猜测",
             "如果来源没有明确出现，不要写政府合同、私人融资、不锈钢壳、发动机、地面设施等具体环节",
             "没有来源支撑的推测必须保守表达，可以用“可能、值得关注、需要进一步验证、观察角度”，不要写成确定事实",
             "禁止过度确定判断，例如“未来的金矿、一定受益、根本不需要上市、必然影响、确定机会”",
+            "禁止箭头链条表达，例如“上市传闻→招股书未披露→市场猜测”，也不要写“差异分析、实质性进展待确认、市场猜测和不确定性、正式文件最靠谱”等报告腔",
             "selling_points 至少 4 条，structure 至少 5 条",
             "rewrites 必须至少 3 条，每条 script 不少于 80 个中文字符，建议 100-180 字",
             "每条 rewrite.script 必须包含开头钩子、问题/反差、信息价值、行动号召",

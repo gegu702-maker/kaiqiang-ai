@@ -22,6 +22,14 @@ FINAL_SCRIPT_FORBIDDEN_PHRASES = (
     "想提醒的是",
     "不是停在",
     "→",
+    "->",
+)
+REPORT_TONE_PHRASES = (
+    "差异分析",
+    "实质性进展待确认",
+    "市场猜测和不确定性",
+    "正式文件最靠谱",
+    "官方文件空白",
 )
 UNSUPPORTED_FACT_PHRASES = (
     "政府合同",
@@ -96,6 +104,9 @@ def _assert_clean_spoken_script(script: str) -> None:
         assert phrase not in script
     for phrase in FINAL_SCRIPT_FORBIDDEN_PHRASES:
         assert phrase not in script
+    for phrase in REPORT_TONE_PHRASES:
+        assert phrase not in script
+    assert not re.search(r"[\u4e00-\u9fffA-Za-z0-9]—[\u4e00-\u9fffA-Za-z0-9]", script)
     assert _cta_count(script) <= 1
     assert "互动你觉得" not in script
     assert "判断 我更想提醒" not in script
@@ -184,3 +195,40 @@ def test_spacex_rewrites_do_not_add_unsupported_specific_facts():
         assert any(term in script for term in ("上市", "纳斯达克", "传闻"))
         assert any(term in script for term in ("供应链", "产业链"))
         assert any(term in script for term in ("风险", "机会"))
+
+
+def test_spacex_rewrites_stay_conservative_without_losing_known_themes():
+    rewrites = _normalize_rewrites(
+        [
+            {
+                "title": "版本A：热点反差版",
+                "script": "SpaceX上市传闻→招股书未披露→引发市场猜测和不确定性。差异分析看，实质性进展待确认。",
+            },
+            {
+                "title": "版本B：用户痛点版",
+                "script": "普通人别被消息带着跑，官方文件空白的时候，正式文件最靠谱，先别判断。",
+            },
+            {
+                "title": "版本C：商业机会版",
+                "script": "商业上先看招股书缺失和信息真假，市场猜测还很多，暂时没有必要展开机会。",
+            },
+        ],
+        _bounded_spacex_analysis(),
+        BOUNDED_SPACEX_TRANSCRIPT,
+    )
+
+    assert [item["title"] for item in rewrites] == REWRITE_TITLES
+    assert len(rewrites) == 3
+    for item in rewrites:
+        script = item["script"]
+        _assert_clean_spoken_script(script)
+        _assert_no_unsupported_facts(script)
+        assert "SpaceX" in script
+        assert any(term in script for term in ("上市", "纳斯达克", "传闻"))
+        assert any(term in script for term in ("供应链", "产业链"))
+        assert any(term in script for term in ("风险", "机会"))
+
+    assert any(term in rewrites[0]["script"] for term in ("供应链", "产业链"))
+    assert "正式文件最靠谱" not in rewrites[1]["script"]
+    assert any(term in rewrites[1]["script"] for term in ("错过", "观察", "关注", "风险", "机会"))
+    assert any(term in rewrites[2]["script"] for term in ("商业", "产业链", "机会", "重新关注"))
