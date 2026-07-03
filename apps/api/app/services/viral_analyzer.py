@@ -80,7 +80,7 @@ COMMON_CTA_RE = re.compile(
     r"先收藏[。！!]*|"
     r"你觉得(?:真正)?的?重点在哪里？评论区说说你的判断[。！!]*|"
     r"如果你也在做内容，把这个拆法先记下来，下一次热点就能直接套用[。！!]*|"
-    r"后面如果产业链继续有新变化，我会再单独拆给你看[。！!]*"
+    r"后面如果(?:产业链|这个方向|这类内容)继续有新变化，我会再单独拆给你看[。！!]*"
 )
 SCRIPT_PUNCT_RE = re.compile(r"[\s，。！？、；：,.!?;:\"'“”‘’（）()\[\]【】《》<>-]+")
 
@@ -106,9 +106,9 @@ REWRITE_STRATEGIES = [
         "title": "版本C：商业机会版",
         "style": "opportunity",
         "opening": "老板视角开头",
-        "logic": "供应链机会",
+        "logic": "商业机会",
         "ending": "行业后续",
-        "cta": "后面如果产业链继续有新变化，我会再单独拆给你看。",
+        "cta": "后面如果这个方向继续有新变化，我会再单独拆给你看。",
     },
     {
         "title": "版本D：故事口吻版",
@@ -191,10 +191,25 @@ KNOWN_THEME_TERMS = (
     "风险",
     "机会",
     "技术依赖",
+    "技术量产",
+    "地缘政治",
     "关键材料",
     "产能",
     "成本压力",
+    "电商",
+    "带货",
+    "情感共鸣",
+    "消费者心理",
+    "用户需求",
+    "内容转化",
+    "信任",
+    "品牌表达",
+    "产品故事",
+    "情绪价值",
 )
+SUPPLY_CHAIN_THEME_TERMS = ("供应链", "产业链", "关键材料", "技术依赖", "技术量产", "地缘政治", "产能", "成本压力")
+ECOMMERCE_THEME_TERMS = ("电商", "带货", "情感共鸣", "消费者心理", "用户需求", "内容转化", "信任", "品牌表达", "产品故事", "情绪价值", "转化")
+GROWTH_THEME_TERMS = ("个人成长", "走出困境", "困境", "初心", "人群痛点", "服务", "课程", "内容产品")
 SURFACE_ONLY_PHRASES = (
     "招股书缺失",
     "正式文件最靠谱",
@@ -205,7 +220,7 @@ SURFACE_ONLY_PHRASES = (
 REPORT_TONE_REPLACEMENTS = (
     ("差异分析", "换个角度看"),
     ("实质性进展待确认", "还需要继续观察"),
-    ("市场猜测和不确定性", "供应链和产业链里的风险机会"),
+    ("市场猜测和不确定性", "后面的风险和机会"),
     ("正式文件最靠谱", "别只看文件进度"),
     ("官方文件空白", "公开信息还不够完整"),
 )
@@ -385,6 +400,63 @@ def known_source_themes(
     return [term for term in KNOWN_THEME_TERMS if term in support_text]
 
 
+def source_theme_domain(
+    source_core: dict[str, Any] | None,
+    *,
+    transcript: str = "",
+    topic: str = "",
+    hook: str = "",
+    template: str = "",
+) -> str:
+    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    if any(term in support_text for term in SUPPLY_CHAIN_THEME_TERMS):
+        return "supply_chain"
+    if any(term in support_text for term in ECOMMERCE_THEME_TERMS):
+        return "commerce_emotion"
+    if any(term in support_text for term in GROWTH_THEME_TERMS):
+        return "growth"
+    return "general"
+
+
+def source_detail_theme(
+    source_core: dict[str, Any] | None,
+    *,
+    transcript: str = "",
+    topic: str = "",
+    hook: str = "",
+    template: str = "",
+) -> str:
+    themes = known_source_themes(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    if domain == "supply_chain":
+        return next((term for term in ("关键材料", "技术量产", "技术依赖", "地缘政治", "产能", "成本压力", "供应链", "产业链") if term in support_text), "供应链变化")
+    if domain == "commerce_emotion":
+        return next((term for term in themes if term in ("情感共鸣", "消费者心理", "用户需求", "信任", "内容转化", "品牌表达", "情绪价值")), "用户心理")
+    if domain == "growth":
+        return next((term for term in themes if term in ("走出困境", "初心", "人群痛点", "服务", "内容产品")), "人群痛点")
+    return next((term for term in themes if term not in SUPPLY_CHAIN_THEME_TERMS), "用户需求")
+
+
+def source_opportunity_clause(
+    source_core: dict[str, Any] | None,
+    *,
+    transcript: str = "",
+    topic: str = "",
+    hook: str = "",
+    template: str = "",
+) -> str:
+    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    detail = source_detail_theme(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    if domain == "supply_chain":
+        return f"再看{detail}带来的压力，哪一段产业链可能被重新关注，机会就会更清楚"
+    if domain == "commerce_emotion":
+        return f"再看{detail}怎么建立用户信任，内容转化和品牌表达的机会就会更清楚"
+    if domain == "growth":
+        return f"再看这些痛点怎么变成服务、课程或内容产品，机会就会更清楚"
+    return "再看用户真正关心什么，内容角度和转化机会就会更清楚"
+
+
 def script_preserves_known_themes(
     script: str,
     source_core: dict[str, Any] | None,
@@ -398,10 +470,12 @@ def script_preserves_known_themes(
     if not themes:
         return True
     text = str(script or "")
-    has_chain = not any(term in themes for term in ("供应链", "产业链")) or any(term in text for term in ("供应链", "产业链"))
+    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    has_chain = domain != "supply_chain" or any(term in text for term in ("供应链", "产业链"))
+    has_commerce = domain != "commerce_emotion" or any(term in text for term in ("情感共鸣", "消费者心理", "用户需求", "信任", "内容转化", "品牌表达", "情绪价值", "转化"))
     has_risk_or_opportunity = not any(term in themes for term in ("风险", "机会")) or any(term in text for term in ("风险", "机会"))
     specific_theme_hits = sum(1 for term in themes if term in text)
-    return has_chain and has_risk_or_opportunity and specific_theme_hits >= min(3, len(themes))
+    return has_chain and has_commerce and has_risk_or_opportunity and specific_theme_hits >= min(3, len(themes))
 
 
 def is_surface_only_script(
@@ -466,6 +540,9 @@ def bound_script_to_source(
         text = text.replace(source, target)
     text = text.replace("→", "，").replace("->", "，")
     text = re.sub(r"(?<=[\u4e00-\u9fffA-Za-z0-9])—(?=[\u4e00-\u9fffA-Za-z0-9])", "，", text)
+    if source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template) != "supply_chain":
+        unsupported_theme_phrases = tuple(phrase for phrase in SUPPLY_CHAIN_THEME_TERMS if phrase in text and phrase not in support_text)
+        text = _drop_unsupported_fact_sentences(text, unsupported_theme_phrases)
     unsupported = tuple(phrase for phrase in UNSUPPORTED_FACT_PHRASES if phrase in text and phrase not in support_text)
     text = _drop_unsupported_fact_sentences(text, unsupported)
     text = re.sub(r"[，,]\s*[，,。；;]", "，", text)
@@ -695,27 +772,24 @@ def _compose_diverse_script(
     causal_chain = natural_source_clause(str(core.get("causal_chain") or core_conflict))
     business_implication = natural_source_clause(str(core.get("business_implication") or template or core_conflict))
     audience_takeaway = natural_source_clause(str(core.get("audience_takeaway") or business_implication))
-    support_text = _source_support_text(core, transcript=seed, topic=topic, hook=hook, template=template)
-    detail_theme = next(
-        (term for term in ("关键材料", "技术量产", "技术依赖", "地缘政治", "产能", "成本压力") if term in support_text),
-        "产业链变化",
-    )
+    detail_theme = source_detail_theme(core, transcript=seed, topic=topic, hook=hook, template=template)
+    opportunity_clause = source_opportunity_clause(core, transcript=seed, topic=topic, hook=hook, template=template)
     hook_text = smooth_spoken_script(_trim_common_cta(seed)) or smooth_spoken_script(hook) or f"{topic_text}有一个容易被忽略的点。"
     lines = {
         "suspense": (
             f"你以为{topic_text}只是一个普通热点？先别急着下结论。"
             f"表面看是{core_event}，往下看才是{core_conflict}。"
-            "这些压力一旦被放大，观众真正要判断的就是风险和机会。"
+            f"{detail_theme}一旦被放大，观众真正要判断的就是后面的变化。"
         ),
         "pain_point": (
             f"如果你只看{topic_text}的标题，很容易把重点看浅。"
             f"更该注意的是{audience_takeaway}。"
-            f"你做内容时先把{detail_theme}这层产业链关系说清楚，再讲它怎么影响普通人的判断。"
+            f"你做内容时先把{detail_theme}说清楚，再讲它怎么影响普通人的判断。"
         ),
         "opportunity": (
             f"如果你是老板或者行业观察者，{topic_text}别只当成一条新闻刷过去。"
             f"商业上更该看{business_implication}。"
-            f"再看{detail_theme}带来的压力，哪一段产业链可能被重新关注，机会就会更清楚。"
+            f"{opportunity_clause}。"
         ),
         "boss_view": (
             f"站在经营者视角看，{topic_text}更像一道趋势题。"
@@ -881,7 +955,7 @@ def _default_rewrites(topic: str, hook: str, template: str, language: str, sourc
         ),
         (
             "版本C：转化引导版",
-            f"如果你也想做{topic}这类内容，别急着照搬标题。先说事件，再说矛盾，接着把商业判断讲出来，让观众知道哪条产业链可能有风险和机会。",
+            f"如果你也想做{topic}这类内容，别急着照搬标题。先说事件，再说矛盾，接着把商业判断讲出来，让观众知道哪里有需求和机会。",
         ),
     ]
     return [
@@ -1025,11 +1099,13 @@ async def analyze_viral_script(
             "必须先识别 source_video_core，再完整输出 topic、hook、selling_points、structure、template、rewrites",
             "source_video_core 必须包含 core_event、core_conflict、key_entities、causal_chain、business_implication、audience_takeaway",
             "改写必须围绕原视频主线展开，不能只抓标题、表层热点或单一真假辟谣角度发挥",
-            "版本A的反差要来自原视频内部矛盾，例如表面事件和背后供应链/技术/商业风险的反差",
+            "版本A的反差要来自原视频内部矛盾，例如表面事件和背后真实风险、用户心理或商业变化的反差",
             "版本B的用户痛点要绑定原视频主线，说明只看标题会错过哪些真实风险或机会",
-            "版本C必须保留原视频里的商业/行业判断，例如供应链、关键材料、技术量产、地缘政治或产业链机会",
+            "版本C必须保留原视频里的商业/行业判断；供应链类才写产业链机会，电商内容类写用户信任、情绪价值、内容转化或品牌表达",
             "所有最终文案只能使用 raw_script、metadata、analysis 和 source_video_core 已有信息，不能新增没有来源支撑的具体事实、实体、供应链环节或投资判断",
             "如果 raw_script、metadata、analysis 或 source_video_core 已经出现“供应链、产业链、风险、机会、技术依赖、关键材料、产能、成本压力”等主题，最终 rewrites 必须保留这些已知主题",
+            "如果当前来源没有供应链、产业链、关键材料、技术依赖、产能、成本压力，不得把这些词写进最终文案",
+            "电商/带货/情感共鸣/消费者心理类内容应围绕情感共鸣、用户需求、信任、内容转化、品牌表达和情绪价值，不要套用产业链话术",
             "不要因为保守而退回只讲招股书缺失、官方文件空白、信息真假或市场猜测",
             "如果来源没有明确出现，不要写政府合同、私人融资、不锈钢壳、发动机、地面设施等具体环节",
             "没有来源支撑的推测必须保守表达，可以用“可能、值得关注、需要进一步验证、观察角度”，不要写成确定事实",
@@ -1043,7 +1119,7 @@ async def analyze_viral_script(
             "每条文案的开头、结尾、语气不能重复；同一批文案中“下一条继续拆”最多出现 1 次，“先收藏”最多出现 1 次",
             "不要每条都用“关注我”结尾，不要连续多条使用相同 CTA，不要重复“普通人看结果，懂内容的人会先问”这类固定句式",
             "不要重复使用“这类内容好用的地方”“既能承接热点流量，也能展示你的专业判断”“想看我继续拆这个方向”等句式骨架",
-            "版本A面向泛用户，用热点反差和观点讨论收尾；版本B面向内容创作者，用痛点和应用建议收尾；版本C面向老板/行业观察者，用产业链机会和后续观察收尾",
+            "版本A面向泛用户，用热点反差和观点讨论收尾；版本B面向内容创作者，用痛点和应用建议收尾；版本C面向老板/行业观察者，用当前主题对应的商业机会和后续观察收尾",
             "rewrite.title 只写版本名称；rewrite.script 只能写最终口播成稿，必须是可以直接朗读给观众听的正文",
             "rewrite.script 禁止出现模板说明、分析说明、结构说明、可复用模板、版本解释、括号结构、字段名、JSON 残留",
             "rewrite.script 禁止出现“可复用模板是”“这个版本适合”“建议用户”“（疑问/反常识开头）+”等生成策略说明",
