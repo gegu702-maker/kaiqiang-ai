@@ -188,14 +188,28 @@ OVERCONFIDENT_FACT_REPLACEMENTS = (
 KNOWN_THEME_TERMS = (
     "供应链",
     "产业链",
+    "链条",
+    "关键环节",
+    "供应商",
     "风险",
     "机会",
+    "风险机会",
+    "商业隐忧",
+    "线索指向",
     "技术依赖",
     "技术量产",
     "地缘政治",
     "关键材料",
     "产能",
     "成本压力",
+    "成长",
+    "自我改变",
+    "逆袭",
+    "困境",
+    "野心",
+    "执行",
+    "目标",
+    "学习",
     "电商",
     "带货",
     "情感共鸣",
@@ -208,8 +222,24 @@ KNOWN_THEME_TERMS = (
     "情绪价值",
 )
 SUPPLY_CHAIN_THEME_TERMS = ("供应链", "产业链", "关键材料", "技术依赖", "技术量产", "地缘政治", "产能", "成本压力")
+SUPPLY_CHAIN_EVIDENCE_TERMS = (
+    "供应链",
+    "产业链",
+    "链条",
+    "关键环节",
+    "供应商",
+    "风险机会",
+    "商业隐忧",
+    "线索指向",
+    "关键材料",
+    "技术依赖",
+    "技术量产",
+    "地缘政治",
+    "产能",
+    "成本压力",
+)
 ECOMMERCE_THEME_TERMS = ("电商", "带货", "情感共鸣", "消费者心理", "用户需求", "内容转化", "信任", "品牌表达", "产品故事", "情绪价值", "转化")
-GROWTH_THEME_TERMS = ("个人成长", "走出困境", "困境", "初心", "人群痛点", "服务", "课程", "内容产品")
+GROWTH_THEME_TERMS = ("成长", "个人成长", "自我改变", "逆袭", "走出困境", "困境", "野心", "执行", "目标", "学习", "挑战", "初心", "人群痛点", "服务", "课程", "内容产品")
 SURFACE_ONLY_PHRASES = (
     "招股书缺失",
     "正式文件最靠谱",
@@ -370,6 +400,46 @@ def source_core_brief(source_core: dict[str, Any], *, topic: str = "") -> str:
     return smooth_spoken_script("。".join(part for part in parts if part))
 
 
+def _flatten_evidence(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key, item in value.items():
+            parts.append(str(key))
+            parts.extend(_flatten_evidence(item))
+        return parts
+    if isinstance(value, (list, tuple, set)):
+        parts = []
+        for item in value:
+            parts.extend(_flatten_evidence(item))
+        return parts
+    return [str(value)]
+
+
+def source_theme_evidence(
+    source_core: dict[str, Any] | None,
+    *,
+    transcript: str = "",
+    topic: str = "",
+    hook: str = "",
+    template: str = "",
+    analysis: Any = None,
+    metadata: Any = None,
+    resolver: Any = None,
+    extra: Any = None,
+) -> str:
+    core = normalize_source_video_core(source_core or {}, transcript=transcript, topic=topic, hook=hook, template=template)
+    parts: list[str] = [transcript, topic, hook, template]
+    parts.extend(_flatten_evidence(source_core))
+    parts.extend(_flatten_evidence(core))
+    parts.extend(_flatten_evidence(analysis))
+    parts.extend(_flatten_evidence(metadata))
+    parts.extend(_flatten_evidence(resolver))
+    parts.extend(_flatten_evidence(extra))
+    return "\n".join(part for part in parts if part)
+
+
 def _source_support_text(
     source_core: dict[str, Any] | None,
     *,
@@ -377,15 +447,22 @@ def _source_support_text(
     topic: str = "",
     hook: str = "",
     template: str = "",
+    analysis: Any = None,
+    metadata: Any = None,
+    resolver: Any = None,
+    extra: Any = None,
 ) -> str:
-    core = normalize_source_video_core(source_core or {}, transcript=transcript, topic=topic, hook=hook, template=template)
-    parts: list[str] = [transcript, topic, hook, template]
-    for value in core.values():
-        if isinstance(value, list):
-            parts.extend(str(item) for item in value)
-        else:
-            parts.append(str(value or ""))
-    return "\n".join(part for part in parts if part)
+    return source_theme_evidence(
+        source_core,
+        transcript=transcript,
+        topic=topic,
+        hook=hook,
+        template=template,
+        analysis=analysis,
+        metadata=metadata,
+        resolver=resolver,
+        extra=extra,
+    )
 
 
 def known_source_themes(
@@ -395,8 +472,12 @@ def known_source_themes(
     topic: str = "",
     hook: str = "",
     template: str = "",
+    analysis: Any = None,
+    metadata: Any = None,
+    resolver: Any = None,
+    extra: Any = None,
 ) -> list[str]:
-    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
     return [term for term in KNOWN_THEME_TERMS if term in support_text]
 
 
@@ -407,9 +488,13 @@ def source_theme_domain(
     topic: str = "",
     hook: str = "",
     template: str = "",
+    analysis: Any = None,
+    metadata: Any = None,
+    resolver: Any = None,
+    extra: Any = None,
 ) -> str:
-    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
-    if any(term in support_text for term in SUPPLY_CHAIN_THEME_TERMS):
+    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
+    if any(term in support_text for term in SUPPLY_CHAIN_EVIDENCE_TERMS):
         return "supply_chain"
     if any(term in support_text for term in ECOMMERCE_THEME_TERMS):
         return "commerce_emotion"
@@ -425,16 +510,24 @@ def source_detail_theme(
     topic: str = "",
     hook: str = "",
     template: str = "",
+    analysis: Any = None,
+    metadata: Any = None,
+    resolver: Any = None,
+    extra: Any = None,
 ) -> str:
-    themes = known_source_themes(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
-    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
-    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    themes = known_source_themes(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
+    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
+    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
     if domain == "supply_chain":
-        return next((term for term in ("关键材料", "技术量产", "技术依赖", "地缘政治", "产能", "成本压力", "供应链", "产业链") if term in support_text), "供应链变化")
+        if any(term in support_text for term in ("关键材料", "技术量产", "技术依赖", "地缘政治", "产能", "成本压力")):
+            return next(term for term in ("关键材料", "技术量产", "技术依赖", "地缘政治", "产能", "成本压力") if term in support_text)
+        if any(term in support_text for term in ("线索指向", "商业隐忧", "供应商", "关键环节", "链条")):
+            return "供应链线索"
+        return next((term for term in ("供应链", "产业链") if term in support_text), "供应链变化")
     if domain == "commerce_emotion":
         return next((term for term in themes if term in ("情感共鸣", "消费者心理", "用户需求", "信任", "内容转化", "品牌表达", "情绪价值")), "用户心理")
     if domain == "growth":
-        return next((term for term in themes if term in ("走出困境", "初心", "人群痛点", "服务", "内容产品")), "人群痛点")
+        return next((term for term in themes if term in ("自我改变", "走出困境", "困境", "野心", "执行", "目标", "学习", "人群痛点", "服务", "内容产品")), "人群痛点")
     return next((term for term in themes if term not in SUPPLY_CHAIN_THEME_TERMS), "用户需求")
 
 
@@ -445,9 +538,13 @@ def source_opportunity_clause(
     topic: str = "",
     hook: str = "",
     template: str = "",
+    analysis: Any = None,
+    metadata: Any = None,
+    resolver: Any = None,
+    extra: Any = None,
 ) -> str:
-    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
-    detail = source_detail_theme(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
+    detail = source_detail_theme(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
     if domain == "supply_chain":
         return f"再看{detail}带来的压力，哪一段产业链可能被重新关注，机会就会更清楚"
     if domain == "commerce_emotion":
@@ -465,17 +562,23 @@ def script_preserves_known_themes(
     topic: str = "",
     hook: str = "",
     template: str = "",
+    analysis: Any = None,
+    metadata: Any = None,
+    resolver: Any = None,
+    extra: Any = None,
 ) -> bool:
-    themes = known_source_themes(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    themes = known_source_themes(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
     if not themes:
         return True
     text = str(script or "")
-    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
     has_chain = domain != "supply_chain" or any(term in text for term in ("供应链", "产业链"))
     has_commerce = domain != "commerce_emotion" or any(term in text for term in ("情感共鸣", "消费者心理", "用户需求", "信任", "内容转化", "品牌表达", "情绪价值", "转化"))
-    has_risk_or_opportunity = not any(term in themes for term in ("风险", "机会")) or any(term in text for term in ("风险", "机会"))
+    has_growth = domain != "growth" or any(term in text for term in ("成长", "自我改变", "困境", "野心", "执行", "目标", "学习", "人群痛点"))
+    has_risk_or_opportunity = not any(term in themes for term in ("风险", "机会", "风险机会")) or any(term in text for term in ("风险", "机会"))
     specific_theme_hits = sum(1 for term in themes if term in text)
-    return has_chain and has_commerce and has_risk_or_opportunity and specific_theme_hits >= min(3, len(themes))
+    required_hits = 1 if domain in ("supply_chain", "commerce_emotion", "growth") else min(3, len(themes))
+    return has_chain and has_commerce and has_growth and has_risk_or_opportunity and specific_theme_hits >= required_hits
 
 
 def is_surface_only_script(
@@ -486,6 +589,10 @@ def is_surface_only_script(
     topic: str = "",
     hook: str = "",
     template: str = "",
+    analysis: Any = None,
+    metadata: Any = None,
+    resolver: Any = None,
+    extra: Any = None,
 ) -> bool:
     text = str(script or "")
     has_report_tone = any(phrase in text for phrase in (*SURFACE_ONLY_PHRASES, "差异分析", "实质性进展待确认", "正式文件最靠谱", "官方文件空白"))
@@ -497,6 +604,10 @@ def is_surface_only_script(
         topic=topic,
         hook=hook,
         template=template,
+        analysis=analysis,
+        metadata=metadata,
+        resolver=resolver,
+        extra=extra,
     )
 
 
@@ -528,11 +639,15 @@ def bound_script_to_source(
     topic: str = "",
     hook: str = "",
     template: str = "",
+    analysis: Any = None,
+    metadata: Any = None,
+    resolver: Any = None,
+    extra: Any = None,
 ) -> str:
     text = str(script or "")
     if not text:
         return ""
-    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template)
+    support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
     for source, target in OVERCONFIDENT_FACT_REPLACEMENTS:
         if source not in support_text:
             text = text.replace(source, target)
@@ -540,9 +655,13 @@ def bound_script_to_source(
         text = text.replace(source, target)
     text = text.replace("→", "，").replace("->", "，")
     text = re.sub(r"(?<=[\u4e00-\u9fffA-Za-z0-9])—(?=[\u4e00-\u9fffA-Za-z0-9])", "，", text)
-    if source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template) != "supply_chain":
+    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
+    if domain != "supply_chain":
         unsupported_theme_phrases = tuple(phrase for phrase in SUPPLY_CHAIN_THEME_TERMS if phrase in text and phrase not in support_text)
         text = _drop_unsupported_fact_sentences(text, unsupported_theme_phrases)
+    if domain != "commerce_emotion":
+        unsupported_commerce_phrases = tuple(phrase for phrase in ECOMMERCE_THEME_TERMS if phrase in text and phrase not in support_text)
+        text = _drop_unsupported_fact_sentences(text, unsupported_commerce_phrases)
     unsupported = tuple(phrase for phrase in UNSUPPORTED_FACT_PHRASES if phrase in text and phrase not in support_text)
     text = _drop_unsupported_fact_sentences(text, unsupported)
     text = re.sub(r"[，,]\s*[，,。；;]", "，", text)
@@ -609,6 +728,9 @@ def smooth_spoken_script(script: str) -> str:
     text = re.sub(r"真正", "", text)
     text = text.replace("你觉得的重点", "你觉得重点")
     text = re.sub(r"这条\s*的", "这条内容的", text)
+    text = text.replace("才是不是", "才是")
+    text = text.replace("才是喊鸡血，而是", "才不是喊鸡血，而是")
+    text = text.replace("才是空喊鸡血，而是", "才不是空喊鸡血，而是")
     text = re.sub(r"从([^。！？!?]{2,40})讲到", r"先看\1，再看", text)
     text = re.sub(r"(互动)(你觉得|评论区)", r"\1。\2", text)
     text = re.sub(r"(判断|套用|看)(\s+)(我更想提醒|如果你也在做内容|后面如果)", r"\1。\3", text)

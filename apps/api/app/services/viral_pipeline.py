@@ -191,22 +191,31 @@ def _expand_pipeline_rewrite(
     title: str,
     source_core: dict[str, Any] | None = None,
     transcript: str = "",
+    hook: str = "",
+    analysis: dict[str, Any] | None = None,
     index: int = 0,
 ) -> str:
-    text = smooth_spoken_script(bound_script_to_source(script, source_core, transcript=transcript, topic=topic, template=template))
-    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text) and not is_surface_only_script(text, source_core, transcript=transcript, topic=topic, template=template):
+    text = smooth_spoken_script(bound_script_to_source(script, source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis))
+    if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text) and not is_surface_only_script(text, source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis):
         return text
     topic_text = topic or "这个热点"
-    core = normalize_source_video_core(source_core or {}, transcript=transcript, topic=topic_text, template=template)
+    core = normalize_source_video_core(source_core or {}, transcript=transcript, topic=topic_text, hook=hook, template=template)
     core_event = natural_source_clause(str(core.get("core_event") or topic_text))
     core_conflict = natural_source_clause(str(core.get("core_conflict") or source_core_brief(source_core or {}, topic=topic_text)))
     causal_chain = natural_source_clause(str(core.get("causal_chain") or core_conflict))
     business_implication = natural_source_clause(str(core.get("business_implication") or core_conflict))
     audience_takeaway = natural_source_clause(str(core.get("audience_takeaway") or business_implication))
-    detail_theme = source_detail_theme(source_core, transcript=transcript, topic=topic_text, template=template)
-    opportunity_clause = source_opportunity_clause(source_core, transcript=transcript, topic=topic_text, template=template)
-    domain = source_theme_domain(source_core, transcript=transcript, topic=topic_text, template=template)
-    suspense_tail = "这些压力一旦被放大，供应链和产业链里的风险机会才是重点。" if domain == "supply_chain" else f"{detail_theme}一旦被放大，观众要看的就是用户需求和转化机会。"
+    detail_theme = source_detail_theme(source_core, transcript=transcript, topic=topic_text, hook=hook, template=template, analysis=analysis)
+    opportunity_clause = source_opportunity_clause(source_core, transcript=transcript, topic=topic_text, hook=hook, template=template, analysis=analysis)
+    domain = source_theme_domain(source_core, transcript=transcript, topic=topic_text, hook=hook, template=template, analysis=analysis)
+    if domain == "supply_chain":
+        suspense_tail = "这些压力一旦被放大，供应链和产业链里的风险机会才是重点。"
+    elif domain == "commerce_emotion":
+        suspense_tail = f"{detail_theme}一旦被放大，观众要看的就是用户需求和转化机会。"
+    elif domain == "growth":
+        suspense_tail = f"{detail_theme}一旦被放大，观众要看的就是改变怎么发生。"
+    else:
+        suspense_tail = f"{detail_theme}一旦被放大，观众要看的就是后面的变化。"
     styles = [
         (
             f"你以为{topic_text}只是在聊消息真假？其实更该往下看。"
@@ -248,7 +257,7 @@ def _expand_pipeline_rewrite(
             "先指出观众正在错过什么，再给一个清晰判断，最后把下一步行动说具体。"
         ),
     ]
-    opening = text or bound_script_to_source(styles[index % len(styles)], source_core, transcript=transcript, topic=topic, template=template)
+    opening = text or bound_script_to_source(styles[index % len(styles)], source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis)
     return _append_pipeline_cta(opening, index)
 
 
@@ -267,10 +276,18 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
     causal_chain = _spoken_clause(str(source_core.get("causal_chain") or core_conflict))
     business_implication = natural_source_clause(str(source_core.get("business_implication") or template))
     audience_takeaway = natural_source_clause(str(source_core.get("audience_takeaway") or business_implication))
-    detail_theme = source_detail_theme(source_core, transcript=transcript, topic=topic, template=template)
-    opportunity_clause = source_opportunity_clause(source_core, transcript=transcript, topic=topic, template=template)
-    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, template=template)
-    pressure_tail = f"这些压力一旦被放大，重点就变成{audience_takeaway}" if domain == "supply_chain" else f"{detail_theme}一旦被放大，重点就变成用户需求和转化机会"
+    hook = str(analysis.get("hook") or "")
+    detail_theme = source_detail_theme(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis)
+    opportunity_clause = source_opportunity_clause(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis)
+    domain = source_theme_domain(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis)
+    if domain == "supply_chain":
+        pressure_tail = f"这些压力一旦被放大，重点就变成{audience_takeaway}"
+    elif domain == "commerce_emotion":
+        pressure_tail = f"{detail_theme}一旦被放大，重点就变成用户需求和转化机会"
+    elif domain == "growth":
+        pressure_tail = f"{detail_theme}一旦被放大，重点就变成普通人怎么把改变做出来"
+    else:
+        pressure_tail = f"{detail_theme}一旦被放大，重点就变成观众真正关心的变化"
     samples = [
         f"今天换个更好懂的角度，聊聊{topic}。表面看是{core_event}，往下看是{core_conflict}。{pressure_tail}。",
         f"很多人看见{topic}就只看标题，但这样很容易错过后面的重点。更该注意的是{audience_takeaway}。先把{detail_theme}说清楚，观众才知道该关注哪里。",
@@ -285,13 +302,13 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
     if transcript and len(samples[-1]) < 30:
         samples[-1] = transcript[:180]
     rewrites = [
-        {"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title, source_core=source_core, transcript=transcript, index=index)}
+        {"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title, source_core=source_core, transcript=transcript, hook=hook, analysis=analysis, index=index)}
         for index, (title, script) in enumerate(zip(REWRITE_TITLES, samples, strict=False))
     ]
     return dedupe_and_diversify_rewrites(
         rewrites,
         topic=topic,
-        hook=str(analysis.get("hook") or "先用一个反差问题抓住注意力。"),
+        hook=hook or "先用一个反差问题抓住注意力。",
         template=template,
         language="zh",
         source_core=source_core,
@@ -313,26 +330,29 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
     if not isinstance(value, list):
         return fallback
     normalized: list[dict[str, str]] = []
+    topic = str(analysis.get("topic") or "这个爆款视频")
+    hook = str(analysis.get("hook") or "")
+    template = str(analysis.get("template") or "")
     for item in value:
         if isinstance(item, str):
             script = item.strip()
             if script:
                 title = f"版本{len(normalized) + 1}"
-                normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title, source_core=source_core, transcript=transcript, index=len(normalized))})
+                normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title, source_core=source_core, transcript=transcript, hook=hook, analysis=analysis, index=len(normalized))})
             continue
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or item.get("name") or item.get("version") or "").strip()
         script = str(item.get("script") or item.get("content") or item.get("text") or item.get("copy") or "").strip()
         if title and script:
-            normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=str(analysis.get("topic") or "这个爆款视频"), template=str(analysis.get("template") or ""), title=title, source_core=source_core, transcript=transcript, index=len(normalized))})
+            normalized.append({"title": title, "script": _expand_pipeline_rewrite(script, topic=topic, template=template, title=title, source_core=source_core, transcript=transcript, hook=hook, analysis=analysis, index=len(normalized))})
     existing = {item["title"] for item in normalized}
     normalized.extend(item for item in fallback if item["title"] not in existing)
     return dedupe_and_diversify_rewrites(
         normalized,
-        topic=str(analysis.get("topic") or "这个爆款视频"),
-        hook=str(analysis.get("hook") or "先用一个反差问题抓住注意力。"),
-        template=str(analysis.get("template") or ""),
+        topic=topic,
+        hook=hook or "先用一个反差问题抓住注意力。",
+        template=template,
         language="zh",
         source_core=source_core,
         limit=FINAL_REWRITE_LIMIT,
