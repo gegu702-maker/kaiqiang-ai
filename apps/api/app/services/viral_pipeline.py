@@ -25,6 +25,7 @@ from app.services.viral_analyzer import (
     known_source_themes,
     natural_source_clause,
     normalize_source_video_core,
+    safe_spoken_topic,
     source_detail_theme,
     source_opportunity_clause,
     source_theme_domain,
@@ -198,7 +199,7 @@ def _expand_pipeline_rewrite(
     text = smooth_spoken_script(bound_script_to_source(script, source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis))
     if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text) and not is_surface_only_script(text, source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis):
         return text
-    topic_text = topic or "这个热点"
+    topic_text = safe_spoken_topic(topic or "这个热点")
     core = normalize_source_video_core(source_core or {}, transcript=transcript, topic=topic_text, hook=hook, template=template)
     core_event = natural_source_clause(str(core.get("core_event") or topic_text))
     core_conflict = natural_source_clause(str(core.get("core_conflict") or source_core_brief(source_core or {}, topic=topic_text)))
@@ -214,11 +215,13 @@ def _expand_pipeline_rewrite(
         suspense_tail = f"{detail_theme}一旦被放大，观众要看的就是用户需求和转化机会。"
     elif domain == "growth":
         suspense_tail = f"{detail_theme}一旦被放大，观众要看的就是改变怎么发生。"
+    elif domain == "emotional_recovery":
+        suspense_tail = f"{detail_theme}一旦被放大，观众要看的就是人到底有没有走出来。"
     else:
-        suspense_tail = f"{detail_theme}一旦被放大，观众要看的就是后面的变化。"
+        suspense_tail = "信息还不完整时，观众要看的就是事件、矛盾和影响有没有说清楚。"
     styles = [
         (
-            f"你以为{topic_text}只是在聊消息真假？其实更该往下看。"
+            f"你以为{topic_text}只是在聊表面信息？其实更该往下看。"
             f"表面是{core_event}，背后是{core_conflict}。"
             + suspense_tail
         ),
@@ -262,8 +265,8 @@ def _expand_pipeline_rewrite(
 
 
 def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
-    topic = str(analysis.get("topic") or "这个爆款视频").strip()
-    template = str(analysis.get("template") or "先提出问题，再给出解决方法，最后明确行动。").strip()
+    topic = safe_spoken_topic(str(analysis.get("topic") or "这个爆款视频").strip())
+    template = str(analysis.get("template") or "先把事件、矛盾和对用户的影响说清楚，再给出保守判断。").strip()
     source_core = normalize_source_video_core(
         analysis.get("source_video_core") or analysis.get("sourceVideoCore"),
         transcript=transcript,
@@ -286,15 +289,17 @@ def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[s
         pressure_tail = f"{detail_theme}一旦被放大，重点就变成用户需求和转化机会"
     elif domain == "growth":
         pressure_tail = f"{detail_theme}一旦被放大，重点就变成普通人怎么把改变做出来"
+    elif domain == "emotional_recovery":
+        pressure_tail = f"{detail_theme}一旦被放大，重点就变成人是不是真的从痛苦里走出来"
     else:
-        pressure_tail = f"{detail_theme}一旦被放大，重点就变成观众真正关心的变化"
+        pressure_tail = "信息还不完整时，重点就是别把推测说成结论"
     samples = [
         f"今天换个更好懂的角度，聊聊{topic}。表面看是{core_event}，往下看是{core_conflict}。{pressure_tail}。",
         f"很多人看见{topic}就只看标题，但这样很容易错过后面的重点。更该注意的是{audience_takeaway}。先把{detail_theme}说清楚，观众才知道该关注哪里。",
         f"如果你从商业角度看{topic}，重点不是复述消息，而是看{business_implication}。{opportunity_clause}。",
-        f"我做内容越久越发现，爆款不是靠运气。像{topic}这种内容，背后都有一套可复制的表达节奏。",
-        f"一个视频为什么能火？关键不是句子多漂亮，而是它有没有把{topic}讲成一个用户愿意听完的问题。",
-        f"如果你正在找更稳定的短视频转化方法，可以先从{topic}这个方向入手，把痛点讲透，把方案讲清楚。",
+        f"如果信息还不完整，讲{topic}就要更稳一点。先说清已经确定的内容，再说可能的影响，别把猜测说成结论。",
+        f"{topic}能不能讲清楚，关键不是句子多漂亮，而是事件、矛盾和用户关心的问题有没有连起来。",
+        f"如果你想把{topic}讲得更像口播，先别堆概念。把看得见的线索讲清楚，再给一个保守判断。",
         f"一开始我也以为爆款靠灵感，后来才明白，像{topic}这样的内容，真正厉害的是先制造问题，再给答案。",
         f"今天直接拆重点：{topic}为什么容易吸引人？因为它先让你意识到问题，再告诉你下一步怎么做。",
         f"如果只用一句话拆{topic}，我会提醒你别只看标题。真正重要的是它背后的反差、线索和后续变化，这些才是观众愿意听完并继续互动的原因。",
@@ -321,7 +326,7 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
     source_core = normalize_source_video_core(
         analysis.get("source_video_core") or analysis.get("sourceVideoCore"),
         transcript=transcript,
-        topic=str(analysis.get("topic") or "这个爆款视频"),
+        topic=safe_spoken_topic(str(analysis.get("topic") or "这个爆款视频")),
         hook=str(analysis.get("hook") or ""),
         template=str(analysis.get("template") or ""),
     )
@@ -330,7 +335,7 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
     if not isinstance(value, list):
         return fallback
     normalized: list[dict[str, str]] = []
-    topic = str(analysis.get("topic") or "这个爆款视频")
+    topic = safe_spoken_topic(str(analysis.get("topic") or "这个爆款视频"))
     hook = str(analysis.get("hook") or "")
     template = str(analysis.get("template") or "")
     for item in value:

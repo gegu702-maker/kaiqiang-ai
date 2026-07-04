@@ -175,6 +175,9 @@ UNSUPPORTED_FACT_PHRASES = (
     "不锈钢壳",
     "发动机",
     "地面设施",
+    "IPO",
+    "SPAC",
+    "资产注入",
 )
 OVERCONFIDENT_FACT_REPLACEMENTS = (
     ("根本不需要上市", "不能只看上市传闻"),
@@ -220,8 +223,17 @@ KNOWN_THEME_TERMS = (
     "品牌表达",
     "产品故事",
     "情绪价值",
+    "麦家",
+    "巨大挫折",
+    "痛苦",
+    "低谷",
+    "创伤",
+    "内心修复",
+    "自我重建",
+    "人生变化",
+    "情绪疗愈",
 )
-SUPPLY_CHAIN_THEME_TERMS = ("供应链", "产业链", "关键材料", "技术依赖", "技术量产", "地缘政治", "产能", "成本压力")
+SUPPLY_CHAIN_THEME_TERMS = ("供应链", "产业链", "关键材料", "技术依赖", "技术量产", "地缘政治", "产能", "成本压力", "SpaceX", "上市", "上市传闻", "纳斯达克", "招股书", "IPO", "SPAC", "资产注入")
 SUPPLY_CHAIN_EVIDENCE_TERMS = (
     "供应链",
     "产业链",
@@ -240,6 +252,33 @@ SUPPLY_CHAIN_EVIDENCE_TERMS = (
 )
 ECOMMERCE_THEME_TERMS = ("电商", "带货", "情感共鸣", "消费者心理", "用户需求", "内容转化", "信任", "品牌表达", "产品故事", "情绪价值", "转化")
 GROWTH_THEME_TERMS = ("成长", "个人成长", "自我改变", "逆袭", "走出困境", "困境", "野心", "执行", "目标", "学习", "挑战", "初心", "人群痛点", "服务", "课程", "内容产品")
+EMOTIONAL_RECOVERY_THEME_TERMS = (
+    "麦家",
+    "人生什么时候开始衰老",
+    "巨大挫折",
+    "痛苦",
+    "外人以为",
+    "迈过坎",
+    "那道坎",
+    "只有你自己清楚",
+    "低谷",
+    "创伤",
+    "内心修复",
+    "自我重建",
+    "人生变化",
+    "情绪成长",
+    "挫折修复",
+    "情绪疗愈",
+)
+PLACEHOLDER_TEMPLATE_PHRASES = (
+    "短视频内容拆解",
+    "不是 X 不行",
+    "不是X不行",
+    "适合自己的 Y",
+    "适合自己的Y",
+    "找到适合自己的 Y",
+    "找到适合自己的Y",
+)
 SURFACE_ONLY_PHRASES = (
     "招股书缺失",
     "正式文件最靠谱",
@@ -254,6 +293,13 @@ REPORT_TONE_REPLACEMENTS = (
     ("正式文件最靠谱", "别只看文件进度"),
     ("官方文件空白", "公开信息还不够完整"),
 )
+
+
+def safe_spoken_topic(topic: str) -> str:
+    value = str(topic or "").strip()
+    if not value or any(phrase in value for phrase in PLACEHOLDER_TEMPLATE_PHRASES):
+        return "这个话题"
+    return value.strip(" ：:，,。；; ") or "这个话题"
 
 
 def _count_monthly_analyses(supabase: Client, *, user_id: str) -> int:
@@ -494,6 +540,8 @@ def source_theme_domain(
     extra: Any = None,
 ) -> str:
     support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
+    if any(term in support_text for term in EMOTIONAL_RECOVERY_THEME_TERMS):
+        return "emotional_recovery"
     if any(term in support_text for term in SUPPLY_CHAIN_EVIDENCE_TERMS):
         return "supply_chain"
     if any(term in support_text for term in ECOMMERCE_THEME_TERMS):
@@ -528,7 +576,9 @@ def source_detail_theme(
         return next((term for term in themes if term in ("情感共鸣", "消费者心理", "用户需求", "信任", "内容转化", "品牌表达", "情绪价值")), "用户心理")
     if domain == "growth":
         return next((term for term in themes if term in ("自我改变", "走出困境", "困境", "野心", "执行", "目标", "学习", "人群痛点", "服务", "内容产品")), "人群痛点")
-    return next((term for term in themes if term not in SUPPLY_CHAIN_THEME_TERMS), "用户需求")
+    if domain == "emotional_recovery":
+        return next((term for term in themes if term in ("巨大挫折", "痛苦", "低谷", "创伤", "内心修复", "自我重建", "情绪成长", "挫折修复")), "内心创伤")
+    return next((term for term in themes if term not in (*SUPPLY_CHAIN_THEME_TERMS, *ECOMMERCE_THEME_TERMS, *GROWTH_THEME_TERMS, *EMOTIONAL_RECOVERY_THEME_TERMS)), "用户关心的问题")
 
 
 def source_opportunity_clause(
@@ -551,7 +601,9 @@ def source_opportunity_clause(
         return f"再看{detail}怎么建立用户信任，内容转化和品牌表达的机会就会更清楚"
     if domain == "growth":
         return f"再看这些痛点怎么变成服务、课程或内容产品，机会就会更清楚"
-    return "再看用户真正关心什么，内容角度和转化机会就会更清楚"
+    if domain == "emotional_recovery":
+        return f"再看{detail}怎么被说成陪伴型内容、心理成长内容或书籍课程的表达机会"
+    return "再看用户关心什么，内容角度和表达机会就会更清楚"
 
 
 def script_preserves_known_themes(
@@ -575,10 +627,11 @@ def script_preserves_known_themes(
     has_chain = domain != "supply_chain" or any(term in text for term in ("供应链", "产业链"))
     has_commerce = domain != "commerce_emotion" or any(term in text for term in ("情感共鸣", "消费者心理", "用户需求", "信任", "内容转化", "品牌表达", "情绪价值", "转化"))
     has_growth = domain != "growth" or any(term in text for term in ("成长", "自我改变", "困境", "野心", "执行", "目标", "学习", "人群痛点"))
+    has_emotional = domain != "emotional_recovery" or any(term in text for term in ("低谷", "挫折", "痛苦", "创伤", "内心", "自我重建", "情绪", "麦家"))
     has_risk_or_opportunity = not any(term in themes for term in ("风险", "机会", "风险机会")) or any(term in text for term in ("风险", "机会"))
     specific_theme_hits = sum(1 for term in themes if term in text)
-    required_hits = 1 if domain in ("supply_chain", "commerce_emotion", "growth") else min(3, len(themes))
-    return has_chain and has_commerce and has_growth and has_risk_or_opportunity and specific_theme_hits >= required_hits
+    required_hits = 1 if domain in ("supply_chain", "commerce_emotion", "growth", "emotional_recovery") else min(3, len(themes))
+    return has_chain and has_commerce and has_growth and has_emotional and has_risk_or_opportunity and specific_theme_hits >= required_hits
 
 
 def is_surface_only_script(
@@ -595,7 +648,7 @@ def is_surface_only_script(
     extra: Any = None,
 ) -> bool:
     text = str(script or "")
-    has_report_tone = any(phrase in text for phrase in (*SURFACE_ONLY_PHRASES, "差异分析", "实质性进展待确认", "正式文件最靠谱", "官方文件空白"))
+    has_report_tone = any(phrase in text for phrase in (*SURFACE_ONLY_PHRASES, *PLACEHOLDER_TEMPLATE_PHRASES, "差异分析", "实质性进展待确认", "正式文件最靠谱", "官方文件空白"))
     has_arrow_chain = "→" in text or "->" in text or bool(re.search(r"[\u4e00-\u9fffA-Za-z0-9]—[\u4e00-\u9fffA-Za-z0-9]", text))
     return has_arrow_chain or has_report_tone or not script_preserves_known_themes(
         text,
@@ -647,6 +700,7 @@ def bound_script_to_source(
     text = str(script or "")
     if not text:
         return ""
+    text = _drop_unsupported_fact_sentences(text, PLACEHOLDER_TEMPLATE_PHRASES)
     support_text = _source_support_text(source_core, transcript=transcript, topic=topic, hook=hook, template=template, analysis=analysis, metadata=metadata, resolver=resolver, extra=extra)
     for source, target in OVERCONFIDENT_FACT_REPLACEMENTS:
         if source not in support_text:
@@ -662,8 +716,18 @@ def bound_script_to_source(
     if domain != "commerce_emotion":
         unsupported_commerce_phrases = tuple(phrase for phrase in ECOMMERCE_THEME_TERMS if phrase in text and phrase not in support_text)
         text = _drop_unsupported_fact_sentences(text, unsupported_commerce_phrases)
+    if domain != "growth":
+        unsupported_growth_phrases = tuple(phrase for phrase in ("逆袭", "野心", "执行", "目标", "学习") if phrase in text and phrase not in support_text)
+        text = _drop_unsupported_fact_sentences(text, unsupported_growth_phrases)
+    if domain != "emotional_recovery":
+        unsupported_emotional_phrases = tuple(phrase for phrase in ("麦家", "巨大挫折", "低谷", "创伤", "内心修复", "自我重建", "情绪疗愈") if phrase in text and phrase not in support_text)
+        text = _drop_unsupported_fact_sentences(text, unsupported_emotional_phrases)
     unsupported = tuple(phrase for phrase in UNSUPPORTED_FACT_PHRASES if phrase in text and phrase not in support_text)
     text = _drop_unsupported_fact_sentences(text, unsupported)
+    for phrase in PLACEHOLDER_TEMPLATE_PHRASES:
+        text = text.replace(phrase, "这个话题")
+    text = re.sub(r"不是\s*[A-Z]\s*不行", "不是方法不行", text)
+    text = re.sub(r"适合自己的\s*[A-Z]", "适合自己的表达方式", text)
     text = re.sub(r"[，,]\s*[，,。；;]", "，", text)
     text = re.sub(r"。{2,}", "。", text)
     text = re.sub(r"\s+", " ", text)
@@ -731,6 +795,8 @@ def smooth_spoken_script(script: str) -> str:
     text = text.replace("才是不是", "才是")
     text = text.replace("才是喊鸡血，而是", "才不是喊鸡血，而是")
     text = text.replace("才是空喊鸡血，而是", "才不是空喊鸡血，而是")
+    text = text.replace("才是空喊逆袭，而是", "才不是空喊逆袭，而是")
+    text = text.replace("这个话题，而是你没有找到这个话题", "信息还不完整，表达要保守")
     text = re.sub(r"从([^。！？!?]{2,40})讲到", r"先看\1，再看", text)
     text = re.sub(r"(互动)(你觉得|评论区)", r"\1。\2", text)
     text = re.sub(r"(判断|套用|看)(\s+)(我更想提醒|如果你也在做内容|后面如果)", r"\1。\3", text)
@@ -887,7 +953,7 @@ def _compose_diverse_script(
         )
         return base.strip()
 
-    topic_text = topic or "这个热点"
+    topic_text = safe_spoken_topic(topic or "这个热点")
     core = normalize_source_video_core(source_core or {}, transcript=seed, topic=topic, hook=hook, template=template)
     core_event = smooth_spoken_script(str(core.get("core_event") or topic_text))
     core_conflict = natural_source_clause(str(core.get("core_conflict") or hook or core_event))
@@ -1088,7 +1154,8 @@ def _default_rewrites(topic: str, hook: str, template: str, language: str, sourc
 
 def _rewrites(value: Any, fallback_topic: str, language: str, *, hook: str = "", template: str = "", source_core: dict[str, Any] | None = None) -> list[dict[str, str]]:
     fallback_hook = hook or "先用一个反差问题抓住注意力。"
-    fallback_template = template or "开头钩子 + 问题放大 + 信息价值 + 行动号召"
+    fallback_template = template or "先把事件、矛盾和对用户的影响说清楚，再给出保守判断"
+    fallback_topic = safe_spoken_topic(fallback_topic)
     default = _default_rewrites(fallback_topic, fallback_hook, fallback_template, language, source_core)
     if isinstance(value, str):
         value = [{"title": "基础版" if language == "zh" else "Base version", "script": value}]
@@ -1130,12 +1197,12 @@ def _rewrites(value: Any, fallback_topic: str, language: str, *, hook: str = "",
 
 
 def validate_viral_analysis_payload(payload: dict[str, Any], *, language: str) -> dict[str, Any]:
-    topic = str(payload.get("topic") or ("短视频内容拆解" if language == "zh" else "Short video content analysis")).strip()
+    topic = safe_spoken_topic(str(payload.get("topic") or ("这个话题" if language == "zh" else "Short video topic")).strip())
     hook = str(payload.get("hook") or ("先用一个反差问题抓住注意力。" if language == "zh" else "Start with a contrast question.")).strip()
     template = str(
         payload.get("template")
         or payload.get("template_formula")
-        or ("开头钩子 + 问题放大 + 信息价值 + 行动号召" if language == "zh" else "Hook + Problem + Value + CTA")
+        or ("先把事件、矛盾和对用户的影响说清楚，再给出保守判断" if language == "zh" else "Event + conflict + user impact + careful takeaway")
     ).strip()
     source_core = normalize_source_video_core(
         payload.get("source_video_core") or payload.get("sourceVideoCore"),
@@ -1197,7 +1264,7 @@ async def analyze_viral_script(
     quota = _assert_viral_quota(supabase, user_id=user_id, email=email)
     output_language = LANGUAGE_LABELS[language]
     fallback_text = {
-        "topic": "短视频内容拆解" if language == "zh" else "Short video content analysis",
+        "topic": "这个话题" if language == "zh" else "Short video topic",
         "hook": "用强问题或反差在前 3 秒抓住注意力。" if language == "zh" else "Use a strong question or contrast to capture attention in the first 3 seconds.",
         "selling_points": ["痛点明确", "反差制造注意力", "好奇心推动完播", "利益点清晰", "情绪共鸣", "信任背书"]
         if language == "zh"
@@ -1205,7 +1272,7 @@ async def analyze_viral_script(
         "structure": ["开头钩子", "问题放大", "解决方案", "证明/案例", "行动号召"]
         if language == "zh"
         else ["Opening hook", "Amplify the problem", "Solution", "Proof or case", "Call to action"],
-        "template": "不是 X 不行，而是你没有找到适合自己的 Y。"
+        "template": "先把事件、矛盾和对用户的影响说清楚，再给出保守判断。"
         if language == "zh"
         else "It is not that X does not work; you have not found the right Y for your situation.",
     }
