@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import logging
+import tempfile
 import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -16,6 +19,7 @@ from app.services.billing import assert_generation_quota, log_generation_usage
 from app.services.autodl_client import ensure_gpu_ready
 from app.services.avatar_template_videos import get_dynamic_template_video_url
 from app.services.avatar_templates import get_avatar_template
+from app.services.avatar_video_quality import check_avatar_video_quality
 from app.services.musetalk_client import check_musetalk_health, generate_avatar_video_with_musetalk
 from app.services.storage import upload_public_file
 from app.services.tts import synthesize_speech_to_storage
@@ -39,6 +43,8 @@ AUDIO_TYPES = {
     "audio/aac",
     "application/octet-stream",
 }
+
+
 class TemplateAvatarGenerateRequest(BaseModel):
     script_text: str | None = None
     text: str | None = None
@@ -67,6 +73,48 @@ async def avatar_health() -> dict:
         "status": "ok",
         "musetalk": await check_musetalk_health(),
     }
+
+
+@router.post("/video-quality-check")
+async def check_avatar_video_upload_quality(
+    video_file: UploadFile = File(...),
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    get_authenticated_user(supabase, token)
+    filename = video_file.filename or "upload"
+    extension = Path(filename).suffix.lower()
+    content_type = video_file.content_type or "application/octet-stream"
+
+    if extension not in VIDEO_EXTENSIONS or content_type not in VIDEO_TYPES:
+        return {
+            "success": True,
+            "grade": "C",
+            "reasons": [
+                {
+                    "code": "unsupported_format",
+                    "severity": "blocking",
+                    "message": "当前视频格式暂不支持，请上传 MP4、MOV 或 WebM。",
+                }
+            ],
+            "metrics": {
+                "duration_seconds": None,
+                "width": None,
+                "height": None,
+                "fps": None,
+                "codec": None,
+                "format": extension.lstrip(".") or content_type,
+            },
+        }
+
+    content = await video_file.read()
+    if len(content) > 120 * MB:
+        raise HTTPException(status_code=413, detail="视频文件过大，请上传 120MB 以内的视频。")
+
+    with tempfile.TemporaryDirectory(prefix="avatar-video-quality-") as temp_dir:
+        temp_path = Path(temp_dir) / f"input{extension}"
+        temp_path.write_bytes(content)
+        return await asyncio.to_thread(check_avatar_video_quality, temp_path)
 
 
 @router.get("/tts-voices")

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { checkAvatarVideoQuality, type AvatarVideoQualityResult } from "@/lib/api";
 import { avatarTemplates } from "@/lib/avatarTemplates";
 import { createClient } from "@/lib/supabase/client";
 import type { UsageSummary } from "@/lib/types";
@@ -56,6 +57,7 @@ type AvatarHealthPayload = {
 };
 type DeleteTaskError = Error & { status?: number };
 type PreviewState = "idle" | "generating" | "completed" | "failed";
+type QualityCheckState = "idle" | "checking" | "completed" | "failed";
 
 const AVATAR_HEALTH_READY_STATUSES = new Set(["ok", "ready", "healthy", "success"]);
 const TTS_SPEED_OPTIONS = [
@@ -147,6 +149,15 @@ const copy = {
     serviceUnavailable: "数字人 GPU 服务当前未开启，生成暂不可用。请开启 AutoDL/GPU 后再生成。",
     languageUnavailable: "英文配音音色尚未配置，请先使用中文普通话。",
     fileUnsupported: "文件格式暂不支持，请上传 MP4/MOV/WebM 视频或 WAV/MP3/M4A 音频。",
+    qualityChecking: "正在检查视频是否适合生成...",
+    qualityA: "这段视频适合生成数字人口播，预计效果更稳定。",
+    qualityB: "可以生成，但效果可能一般。建议重新上传更清晰的视频，也可以继续使用当前视频。",
+    qualityC: "这段视频暂不建议生成，本次不会扣次数。建议上传 10-30 秒正脸、清晰、嘴部无遮挡的视频。",
+    qualityFailed: "视频质检暂时失败，请重新上传或稍后再试。本次不会扣次数。",
+    qualityContinue: "继续生成",
+    qualityReupload: "重新上传",
+    qualityUseTemplate: "使用模板数字人",
+    qualityMetrics: "检测结果",
     genericError: "生成失败，请稍后重试或联系管理员。",
   },
   en: {
@@ -231,6 +242,15 @@ const copy = {
     serviceUnavailable: "The avatar GPU service is currently off, so generation is unavailable. Please start AutoDL/GPU before generating.",
     languageUnavailable: "English voiceover is not configured yet. Please use Mandarin Chinese.",
     fileUnsupported: "This file format is not supported. Upload MP4/MOV/WebM video or WAV/MP3/M4A audio.",
+    qualityChecking: "Checking whether this video is suitable for generation...",
+    qualityA: "This video is suitable for avatar generation and should be more stable.",
+    qualityB: "This video can be used, but quality may be average. Reupload a clearer video, or continue with this one.",
+    qualityC: "This video is not recommended. No credit will be used. Upload a clear 10-30 second front-facing video with an unobstructed mouth.",
+    qualityFailed: "Video quality check failed for now. Please reupload or retry later. No credit will be used.",
+    qualityContinue: "Continue",
+    qualityReupload: "Reupload",
+    qualityUseTemplate: "Use template avatar",
+    qualityMetrics: "Check result",
     genericError: "Generation failed. Please retry later or contact an administrator.",
   },
 };
@@ -248,6 +268,9 @@ export function AvatarVideoGenerator({
   const initialAvatarTemplate = avatarTemplates.some((template) => template.id === initialTemplateId) ? initialTemplateId : "business_female_01";
   const [avatarTemplateId, setAvatarTemplateId] = useState(initialAvatarTemplate);
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [qualityCheckState, setQualityCheckState] = useState<QualityCheckState>("idle");
+  const [qualityResult, setQualityResult] = useState<AvatarVideoQualityResult | null>(null);
+  const [qualityOverrideConfirmed, setQualityOverrideConfirmed] = useState(false);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [scriptText, setScriptText] = useState(initialScriptText);
   const [state, setState] = useState<GenerateState>("idle");
@@ -380,6 +403,43 @@ export function AvatarVideoGenerator({
     };
   }, [ttsLanguage]);
 
+  useEffect(() => {
+    setQualityOverrideConfirmed(false);
+    setQualityResult(null);
+    setError("");
+
+    if (!videoFile) {
+      setQualityCheckState("idle");
+      return;
+    }
+
+    let active = true;
+    setQualityCheckState("checking");
+
+    void supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        if (!session?.access_token) {
+          throw new Error(current.login);
+        }
+        return checkAvatarVideoQuality(videoFile, session.access_token);
+      })
+      .then((result) => {
+        if (!active) return;
+        setQualityResult(result);
+        setQualityCheckState("completed");
+      })
+      .catch(() => {
+        if (!active) return;
+        setQualityResult(null);
+        setQualityCheckState("failed");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [current.login, supabase, videoFile]);
+
   function startProgress() {
     setProgress(8);
     progressTimer.current = window.setInterval(() => {
@@ -487,6 +547,32 @@ export function AvatarVideoGenerator({
       setProgressStage("failed");
       setError(current.languageUnavailable);
       return;
+    }
+    if (useCustomVideo) {
+      if (qualityCheckState === "checking") {
+        setState("failed");
+        setProgressStage("failed");
+        setError(current.qualityChecking);
+        return;
+      }
+      if (qualityCheckState === "failed" || !qualityResult) {
+        setState("failed");
+        setProgressStage("failed");
+        setError(current.qualityFailed);
+        return;
+      }
+      if (qualityResult.grade === "C") {
+        setState("failed");
+        setProgressStage("failed");
+        setError(current.qualityC);
+        return;
+      }
+      if (qualityResult.grade === "B" && !qualityOverrideConfirmed) {
+        setState("failed");
+        setProgressStage("failed");
+        setError(current.qualityB);
+        return;
+      }
     }
 
     const {
@@ -617,7 +703,17 @@ export function AvatarVideoGenerator({
   const isGenerating = state === "queued" || state === "running";
   const isAvatarHealthChecking = avatarHealthStatus === "checking";
   const isAvatarHealthUnavailable = avatarHealthStatus === "unavailable";
-  const isGenerateDisabled = isGenerating || avatarHealthStatus !== "ready";
+  const customVideoQualityPending = Boolean(videoFile && qualityCheckState === "checking");
+  const customVideoQualityBlocked = Boolean(videoFile && (qualityCheckState === "failed" || qualityResult?.grade === "C"));
+  const customVideoNeedsConfirmation = Boolean(videoFile && qualityResult?.grade === "B" && !qualityOverrideConfirmed);
+  const isGenerateDisabled = isGenerating || avatarHealthStatus !== "ready" || customVideoQualityPending || customVideoQualityBlocked || customVideoNeedsConfirmation;
+  const clearCustomVideo = () => {
+    setVideoFile(null);
+    setQualityResult(null);
+    setQualityCheckState("idle");
+    setQualityOverrideConfirmed(false);
+    setError("");
+  };
   const generateButtonLabel = isGenerating
     ? current.generating
     : isAvatarHealthChecking
@@ -763,6 +859,20 @@ export function AvatarVideoGenerator({
             file={videoFile}
             onChange={setVideoFile}
           />
+          {videoFile ? (
+            <VideoQualityPanel
+              labels={current}
+              state={qualityCheckState}
+              result={qualityResult}
+              overrideConfirmed={qualityOverrideConfirmed}
+              onConfirm={() => {
+                setQualityOverrideConfirmed(true);
+                setError("");
+              }}
+              onReupload={clearCustomVideo}
+              onUseTemplate={clearCustomVideo}
+            />
+          ) : null}
           <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
             <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
               <Film size={17} className="text-blue-600" />
@@ -920,6 +1030,88 @@ export function AvatarVideoGenerator({
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function VideoQualityPanel({
+  labels,
+  state,
+  result,
+  overrideConfirmed,
+  onConfirm,
+  onReupload,
+  onUseTemplate,
+}: {
+  labels: (typeof copy)["zh"];
+  state: QualityCheckState;
+  result: AvatarVideoQualityResult | null;
+  overrideConfirmed: boolean;
+  onConfirm: () => void;
+  onReupload: () => void;
+  onUseTemplate: () => void;
+}) {
+  const grade = result?.grade;
+  const tone =
+    state === "failed" || grade === "C"
+      ? "border-rose-200 bg-rose-50 text-rose-800"
+      : grade === "B"
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : "border-emerald-200 bg-emerald-50 text-emerald-800";
+  const message = state === "checking" ? labels.qualityChecking : state === "failed" ? labels.qualityFailed : grade === "A" ? labels.qualityA : grade === "B" ? labels.qualityB : labels.qualityC;
+  const metrics = result?.metrics;
+
+  return (
+    <div className={`rounded-lg border p-4 text-sm shadow-sm ${tone}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold">
+            {state === "checking" ? labels.qualityChecking : grade ? `${labels.qualityMetrics}: ${grade}` : labels.qualityFailed}
+          </p>
+          <p className="mt-1 leading-6">{message}</p>
+        </div>
+        {state === "checking" ? <Loader2 className="shrink-0 animate-spin" size={18} /> : null}
+      </div>
+      {metrics ? (
+        <p className="mt-3 text-xs opacity-80">
+          {[
+            metrics.duration_seconds ? `${metrics.duration_seconds.toFixed(1)}s` : "",
+            metrics.width && metrics.height ? `${metrics.width}x${metrics.height}` : "",
+            metrics.fps ? `${metrics.fps.toFixed(1)}fps` : "",
+            metrics.codec || "",
+            metrics.format || "",
+          ]
+            .filter(Boolean)
+            .join(" / ")}
+        </p>
+      ) : null}
+      {result?.reasons.length ? (
+        <ul className="mt-3 list-disc space-y-1 pl-5 text-xs leading-5">
+          {result.reasons.map((reason) => (
+            <li key={`${reason.code}-${reason.severity}`}>{reason.message}</li>
+          ))}
+        </ul>
+      ) : null}
+      {grade === "B" && !overrideConfirmed ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" className="rounded-md bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-500" onClick={onConfirm}>
+            {labels.qualityContinue}
+          </button>
+          <button type="button" className="rounded-md border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100" onClick={onReupload}>
+            {labels.qualityReupload}
+          </button>
+        </div>
+      ) : null}
+      {(state === "failed" || grade === "C") && state !== "checking" ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" className="rounded-md border border-rose-300 bg-white px-3 py-2 text-xs font-semibold text-rose-800 hover:bg-rose-100" onClick={onReupload}>
+            {labels.qualityReupload}
+          </button>
+          <button type="button" className="rounded-md bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-500" onClick={onUseTemplate}>
+            {labels.qualityUseTemplate}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

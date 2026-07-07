@@ -71,6 +71,43 @@ function authHeaders(accessToken?: string): HeadersInit {
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 }
 
+export type AvatarVideoQualityGrade = "A" | "B" | "C";
+
+export type AvatarVideoQualityReason = {
+  code: string;
+  severity: "blocking" | "warning" | "info";
+  message: string;
+};
+
+export type AvatarVideoQualityMetrics = {
+  duration_seconds?: number | null;
+  width?: number | null;
+  height?: number | null;
+  fps?: number | null;
+  codec?: string | null;
+  format?: string | null;
+};
+
+export type AvatarVideoQualityResult = {
+  success: boolean;
+  grade: AvatarVideoQualityGrade;
+  reasons: AvatarVideoQualityReason[];
+  metrics: AvatarVideoQualityMetrics;
+};
+
+export async function checkAvatarVideoQuality(videoFile: File, accessToken?: string): Promise<AvatarVideoQualityResult> {
+  const url = `${API_URL}/api/avatar/video-quality-check`;
+  const formData = new FormData();
+  formData.set("video_file", videoFile);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: formData,
+    cache: "no-store",
+  });
+  return parseResponse<AvatarVideoQualityResult>(response, { url, method: "POST" });
+}
+
 export async function createVideoTask(formData: FormData, accessToken?: string): Promise<VideoTask> {
   const url = `${API_URL}/api/tasks`;
   let response: Response;
