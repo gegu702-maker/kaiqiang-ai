@@ -153,6 +153,7 @@ const copy = {
     qualityA: "这段视频适合生成数字人口播，预计效果更稳定。",
     qualityB: "可以生成，但效果可能一般。建议重新上传更清晰的视频，也可以继续使用当前视频。",
     qualityC: "这段视频暂不建议生成，本次不会扣次数。建议上传 10-30 秒正脸、清晰、嘴部无遮挡的视频。",
+    qualityFailedTitle: "视频质检失败",
     qualityFailed: "视频质检暂时失败，请重新上传或稍后再试。本次不会扣次数。",
     qualityContinue: "继续生成",
     qualityReupload: "重新上传",
@@ -246,6 +247,7 @@ const copy = {
     qualityA: "This video is suitable for avatar generation and should be more stable.",
     qualityB: "This video can be used, but quality may be average. Reupload a clearer video, or continue with this one.",
     qualityC: "This video is not recommended. No credit will be used. Upload a clear 10-30 second front-facing video with an unobstructed mouth.",
+    qualityFailedTitle: "Video quality check failed",
     qualityFailed: "Video quality check failed for now. Please reupload or retry later. No credit will be used.",
     qualityContinue: "Continue",
     qualityReupload: "Reupload",
@@ -1066,7 +1068,7 @@ function VideoQualityPanel({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="font-semibold">
-            {state === "checking" ? labels.qualityChecking : grade ? `${labels.qualityMetrics}: ${grade}` : labels.qualityFailed}
+            {state === "checking" ? labels.qualityChecking : grade ? `${labels.qualityMetrics}: ${grade}` : labels.qualityFailedTitle}
           </p>
           <p className="mt-1 leading-6">{message}</p>
         </div>
