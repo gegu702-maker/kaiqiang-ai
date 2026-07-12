@@ -1,10 +1,12 @@
 from typing import Any
 
-from pydantic import AliasChoices, Field, ValidationInfo, field_validator
+from pydantic import AliasChoices, Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    app_environment: str = "development"
+    avatar_preview_safe_mode: bool = False
     supabase_url: str = "https://example.supabase.co"
     supabase_service_role_key: str = ""
     supabase_image_bucket: str = "images"
@@ -126,6 +128,20 @@ class Settings(BaseSettings):
         if value.startswith(prefix):
             return value[len(prefix) :].strip()
         return value
+
+    @field_validator("app_environment", mode="before")
+    @classmethod
+    def normalize_app_environment(cls, value: Any) -> str:
+        normalized = str(value or "development").strip().lower()
+        if normalized not in {"development", "test", "preview", "production"}:
+            raise ValueError("APP_ENVIRONMENT must be development, test, preview, or production")
+        return normalized
+
+    @model_validator(mode="after")
+    def reject_preview_safe_mode_in_production(self) -> "Settings":
+        if self.app_environment == "production" and self.avatar_preview_safe_mode:
+            raise ValueError("AVATAR_PREVIEW_SAFE_MODE cannot be enabled in production")
+        return self
 
     @property
     def allowed_origins(self) -> list[str]:

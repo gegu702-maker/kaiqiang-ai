@@ -54,6 +54,8 @@ class TemplateAvatarGenerateRequest(BaseModel):
 
 @router.get("/health")
 async def avatar_health() -> dict:
+    if _preview_safe_mode_enabled():
+        return {"status": "ok", "video_generation": {"status": "disabled"}}
     return {
         "status": "ok",
         "musetalk": await check_musetalk_health(),
@@ -77,6 +79,8 @@ async def generate_template_avatar_video(
 
     if not audio_url and not text:
         raise HTTPException(status_code=400, detail="请提供 audio_url，或输入文案用于生成语音。")
+    if _preview_safe_mode_enabled() and audio_url:
+        raise HTTPException(status_code=409, detail="预览安全模式暂不支持视频生成。")
 
     assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
 
@@ -93,7 +97,7 @@ async def generate_template_avatar_video(
             tts_result = await synthesize_speech_to_storage(
                 supabase,
                 text=text,
-                folder="avatar/template-generate/tts",
+                folder=f"preview-tts/{user['id']}" if _preview_safe_mode_enabled() else "avatar/template-generate/tts",
                 language=payload.language,
                 voice_type=voice_request.requested_key,
                 legacy_provider_voice_id=voice_request.legacy_provider_voice_id,
@@ -107,6 +111,9 @@ async def generate_template_avatar_video(
         except Exception as error:
             logger.exception("Template avatar TTS failed user_id=%s template=%s", user["id"], template.id)
             raise HTTPException(status_code=502, detail=str(error)) from error
+
+    if _preview_safe_mode_enabled():
+        return _preview_tts_ready_response(tts_result, payload.language, audio_url)
 
     task = _create_avatar_task(supabase, user["id"], template_video_url, audio_url)
     logger.info(
@@ -146,6 +153,8 @@ async def generate_avatar_video(
     task = None
     text = (script_text or "").strip()
     try:
+        if _preview_safe_mode_enabled():
+            raise HTTPException(status_code=409, detail="预览安全模式暂不支持视频生成。")
         if audio_file is None and not text:
             raise HTTPException(status_code=400, detail="请上传口播音频，或输入文案用于生成语音。")
         assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
@@ -228,6 +237,8 @@ async def generate_avatar_video(
 
 
 async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio_url: str, script_text: str | None = None) -> None:
+    if _preview_safe_mode_enabled():
+        raise RuntimeError("Avatar task processing is disabled in preview safe mode")
     supabase = get_supabase()
 
     def update_stage(stage: str) -> None:
@@ -374,6 +385,24 @@ def _safe_fail_task(supabase: Client, task_id: str, message: str) -> None:
         supabase.table("avatar_tasks").update({"status": "failed", "progress_stage": "failed", "error_message": _compact_error_message(message)}).eq("id", task_id).execute()
     except Exception:
         logger.exception("Failed to mark avatar task failed")
+
+
+def _preview_safe_mode_enabled() -> bool:
+    return settings.app_environment == "preview" and settings.avatar_preview_safe_mode
+
+
+def _preview_tts_ready_response(tts_result: dict, language: str, audio_url: str | None) -> dict:
+    return {
+        "success": True,
+        "preview_safe_mode": True,
+        "status": "tts_ready",
+        "voice": tts_result.get("voice"),
+        "language": language,
+        "audio_url": audio_url or None,
+        "task_id": None,
+        "video_url": None,
+        "message": "预览配音已生成，未创建视频任务。",
+    }
 
 
 def _compact_error_message(message: str) -> str:
