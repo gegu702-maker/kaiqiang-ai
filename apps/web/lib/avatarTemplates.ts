@@ -6,7 +6,7 @@ export type AvatarTemplate = {
   useCases: string[];
   avatar_image: string;
   preview_video_url?: string;
-  voice_type: "BV001_streaming" | "BV002_streaming";
+  voice_type: "zh_female_default" | "zh_male_default";
   gender: "female" | "male";
   style: "business" | "tech";
   vip_only: boolean;
@@ -24,7 +24,7 @@ const allAvatarTemplates: AvatarTemplate[] = [
     useCases: ["产品介绍", "知识分享", "企业宣传", "企业培训"],
     avatar_image: "/avatars/business_female_01.png",
     preview_video_url: businessFemalePreviewVideoUrl,
-    voice_type: "BV001_streaming",
+    voice_type: "zh_female_default",
     gender: "female",
     style: "business",
     vip_only: false,
@@ -37,7 +37,7 @@ const allAvatarTemplates: AvatarTemplate[] = [
     useCases: ["企业宣传", "产品演示", "课程培训", "商业讲解"],
     avatar_image: "/avatars/business_male_01.png",
     preview_video_url: businessMalePreviewVideoUrl,
-    voice_type: "BV002_streaming",
+    voice_type: "zh_male_default",
     gender: "male",
     style: "business",
     vip_only: false,
@@ -49,7 +49,7 @@ const allAvatarTemplates: AvatarTemplate[] = [
     description: "适合AI资讯、科技口播、产品介绍",
     useCases: ["AI资讯", "科技口播", "产品介绍"],
     avatar_image: "/avatars/ai_female_01.png",
-    voice_type: "BV001_streaming",
+    voice_type: "zh_female_default",
     gender: "female",
     style: "tech",
     vip_only: false,

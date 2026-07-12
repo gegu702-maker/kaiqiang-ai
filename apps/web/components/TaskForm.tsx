@@ -38,7 +38,7 @@ const copy = {
     chooseFile: "选择文件",
     noFile: "未选择任何文件",
     clonedVoice: "使用我的克隆声音",
-    voiceType: "火山引擎音色",
+    voiceType: "配音音色",
     ttsTitle: "语音试听",
     ttsDescription: "输入口播文案，先生成一段可播放的 MP3。",
     ttsText: "口播文案",
@@ -48,7 +48,7 @@ const copy = {
     ttsSuccess: "语音已生成",
     ttsFailed: "TTS 失败",
     ttsNetworkError: "网络错误，请稍后重试。",
-    ttsProviderError: "provider 错误，请检查 Volcengine 配置。",
+    ttsProviderError: "配音服务暂不可用，请稍后重试。",
     ttsDownload: "下载 MP3",
     avatarTemplate: "数字人模板",
     avatarTemplateHint: "普通会员可选择固定模板，Pro 后续开放自定义形象。",
@@ -66,8 +66,7 @@ const copy = {
     dynamicMode: "动态数字人",
     livePortraitUnavailable: "动态数字人暂未开通，请配置 Replicate API。",
     voiceTypes: {
-      BV001_streaming: "女声（BV001_streaming）",
-      BV002_streaming: "男声（BV002_streaming）",
+      zh_female_default: "通用音色",
     },
     cloneUpsell: "升级到 Pro 解锁声音克隆，后续视频可直接使用你的专属 voice_id。",
     loginHint: "可以先填写和上传素材，点击生成时再登录，登录后回到工作台。",
@@ -111,7 +110,7 @@ const copy = {
     chooseFile: "Choose File",
     noFile: "No file selected",
     clonedVoice: "Use my cloned voice",
-    voiceType: "Volcengine Voice",
+    voiceType: "Voice",
     ttsTitle: "Voice Preview",
     ttsDescription: "Generate a playable MP3 from your talking script.",
     ttsText: "Script",
@@ -121,7 +120,7 @@ const copy = {
     ttsSuccess: "Voice generated",
     ttsFailed: "TTS failed",
     ttsNetworkError: "Network error. Please try again.",
-    ttsProviderError: "Provider error. Please check Volcengine settings.",
+    ttsProviderError: "The voice service is unavailable. Please try again later.",
     ttsDownload: "Download MP3",
     avatarTemplate: "Avatar Template",
     avatarTemplateHint: "Members can use fixed templates. Custom avatars will come with Pro.",
@@ -139,8 +138,7 @@ const copy = {
     dynamicMode: "Dynamic Avatar",
     livePortraitUnavailable: "Dynamic avatar is not enabled. Configure the Replicate API first.",
     voiceTypes: {
-      BV001_streaming: "Female (BV001_streaming)",
-      BV002_streaming: "Male (BV002_streaming)",
+      zh_female_default: "General voice",
     },
     cloneUpsell: "Upgrade to Pro to unlock voice cloning and reuse your dedicated voice_id in future videos.",
     loginHint: "You can fill in details and upload assets first. Sign in when you click generate, then return to the studio.",
@@ -208,7 +206,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
   const [useDigitalHuman, setUseDigitalHuman] = useState(true);
   const [draftRestored, setDraftRestored] = useState(false);
   const [ttsText, setTtsText] = useState(current.ttsPlaceholder);
-  const [ttsVoiceType, setTtsVoiceType] = useState("BV001_streaming");
+  const [ttsVoiceType, setTtsVoiceType] = useState("zh_female_default");
   const [avatarTemplateId, setAvatarTemplateId] = useState("business_female_01");
   const [ttsStatus, setTtsStatus] = useState<TTSStatus>("idle");
   const [ttsError, setTtsError] = useState("");
@@ -243,7 +241,6 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
               const template = avatarTemplates.find((item) => item.id === value);
               if (template) {
                 setAvatarTemplateId(template.id);
-                setTtsVoiceType(template.voice_type);
               }
             }
           }
@@ -453,7 +450,6 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
                     checked={isSelected}
                     onChange={() => {
                       setAvatarTemplateId(template.id);
-                      setTtsVoiceType(template.voice_type);
                     }}
                     className="sr-only"
                   />
@@ -470,7 +466,7 @@ export function TaskForm({ userEmail, remainingQuota, quotaLoadFailed = false, v
                       <p className="font-semibold text-white">{template.name}</p>
                       <p className="text-xs leading-5 text-slate-400">{template.description}</p>
                       <p className="text-xs text-slate-500">
-                        {current.recommended} · {template.style} · {template.voice_type}
+                        {current.recommended} · {template.style}
                       </p>
                     </div>
                     {isSelected ? (

@@ -4,43 +4,128 @@ import pytest
 from fastapi import HTTPException
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.api import avatar
+from app.api.avatar import TemplateAvatarGenerateRequest
 from app.core.auth import get_bearer_token
 from app.core.supabase import get_supabase
 from app.services import tts
+from app.services.tts import voice_registry
+from app.services.tts import volcengine_tts
 
 
-def test_default_language_preserves_current_voice_validation_behavior():
-    assert avatar._normalize_tts_language(None) is None
-    assert avatar._normalize_tts_language("") is None
+@pytest.fixture(autouse=True)
+def empty_voice_configuration(monkeypatch):
+    monkeypatch.setattr(voice_registry.settings, "volcengine_default_voice_key", "zh_female_default")
+    monkeypatch.setattr(voice_registry.settings, "volcengine_tts_voice_type", "")
+    for setting_name in voice_registry.VOICE_SETTING_MAP.values():
+        monkeypatch.setattr(voice_registry.settings, setting_name, "")
 
 
-def test_zh_cn_allows_confirmed_template_voices():
-    avatar._validate_template_tts_voice("zh-CN", "BV001_streaming")
-    avatar._validate_template_tts_voice("zh-CN", "BV002_streaming")
+def test_default_business_key_resolves(monkeypatch):
+    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_female_default", "provider-default")
+    result = voice_registry.resolve_voice(None, "zh-CN")
+    assert result.requested_key == "zh_female_default"
+    assert result.resolved_key == "zh_female_default"
+    assert result.provider_voice_id == "provider-default"
+    assert result.used_fallback is False
 
 
-def test_unsupported_language_returns_clear_error():
+def test_configured_business_key_resolves(monkeypatch):
+    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_male_default", "provider-two")
+    result = voice_registry.resolve_voice("zh_male_default", "zh-CN")
+    assert result.provider_voice_id == "provider-two"
+    assert result.used_fallback is False
+
+
+def test_unconfigured_key_falls_back_to_default(monkeypatch):
+    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_female_default", "provider-default")
+    result = voice_registry.resolve_voice("zh_warm_female", "zh-CN")
+    assert result.resolved_key == "zh_female_default"
+    assert result.provider_voice_id == "provider-default"
+    assert result.used_fallback is True
+
+
+@pytest.mark.parametrize("value", ["random", "BV001_streaming", "../../voice"])
+def test_unknown_or_provider_voice_is_rejected(value):
     with pytest.raises(HTTPException) as error:
-        avatar._normalize_tts_language("fr-FR")
-
-    assert error.value.status_code == 400
-    assert "Unsupported TTS language" in str(error.value.detail)
+        voice_registry.resolve_voice(value, "zh-CN")
+    assert error.value.status_code == 422
 
 
-def test_en_us_without_configured_voice_returns_clear_error(monkeypatch):
-    monkeypatch.setattr(avatar.settings, "volcengine_tts_en_us_female_voice_type", "")
-    monkeypatch.setattr(avatar.settings, "volcengine_tts_en_us_male_voice_type", "")
-
+def test_language_and_voice_mismatch_is_rejected():
     with pytest.raises(HTTPException) as error:
-        avatar._validate_template_tts_voice("en-US", "BV001_streaming")
-
-    assert error.value.status_code == 400
-    assert "English TTS voices are not configured yet" in str(error.value.detail)
+        voice_registry.resolve_voice("zh_female_default", "en-US")
+    assert error.value.status_code == 422
 
 
-def test_synthesize_speech_passes_language_and_audio_controls(monkeypatch):
+def test_legacy_request_field_accepts_business_key():
+    payload = TemplateAvatarGenerateRequest(avatar_template_id="business_female_01", voice_type="zh_female_default")
+    assert payload.voice is None
+    assert payload.voice_type == "zh_female_default"
+
+
+@pytest.mark.parametrize("legacy_voice", ["BV001_streaming", "BV002_streaming"])
+def test_exact_legacy_voice_type_is_temporarily_normalized(legacy_voice):
+    result = voice_registry.normalize_legacy_voice_request(None, legacy_voice)
+    assert result.requested_key == "zh_female_default"
+    assert result.legacy_provider_voice_id == legacy_voice
+
+
+@pytest.mark.parametrize("public_voice", ["BV001_streaming", "BV002_streaming"])
+def test_provider_id_in_public_voice_field_is_rejected(public_voice):
+    with pytest.raises(HTTPException) as error:
+        voice_registry.normalize_legacy_voice_request(public_voice, None)
+    assert error.value.status_code == 422
+
+
+@pytest.mark.parametrize("legacy_voice", ["BV003_streaming", "random_provider_id"])
+def test_unknown_legacy_voice_type_is_rejected_by_resolver(legacy_voice):
+    normalized = voice_registry.normalize_legacy_voice_request(None, legacy_voice)
+    with pytest.raises(HTTPException) as error:
+        voice_registry.resolve_voice(normalized.requested_key, "zh-CN")
+    assert error.value.status_code == 422
+
+
+def test_public_voice_takes_priority_over_legacy_voice_type(monkeypatch):
+    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_female_default", "provider-default")
+    normalized = voice_registry.normalize_legacy_voice_request("zh_female_default", "BV002_streaming")
+    assert normalized.requested_key == "zh_female_default"
+    assert normalized.legacy_provider_voice_id is None
+
+
+def test_invalid_public_voice_cannot_use_legacy_voice_type():
+    with pytest.raises(HTTPException) as error:
+        voice_registry.normalize_legacy_voice_request("random", "BV001_streaming")
+    assert error.value.status_code == 422
+
+
+@pytest.mark.parametrize("speed", [0.5, 2.0])
+def test_speed_boundaries_are_allowed(speed):
+    assert TemplateAvatarGenerateRequest(avatar_template_id="business_female_01", speed_ratio=speed).speed_ratio == speed
+
+
+@pytest.mark.parametrize("speed", [0.49, 2.01])
+def test_speed_outside_boundaries_is_rejected(speed):
+    with pytest.raises(ValidationError):
+        TemplateAvatarGenerateRequest(avatar_template_id="business_female_01", speed_ratio=speed)
+
+
+def test_legacy_provider_voice_is_last_fallback(monkeypatch):
+    monkeypatch.setattr(voice_registry.settings, "volcengine_tts_voice_type", "legacy-provider")
+    result = voice_registry.resolve_voice("zh_warm_female", "zh-CN")
+    assert result.provider_voice_id == "legacy-provider"
+    assert result.used_fallback is True
+
+
+def test_all_voice_configuration_missing_fails_before_network():
+    with pytest.raises(HTTPException) as error:
+        voice_registry.resolve_voice("zh_female_default", "zh-CN")
+    assert error.value.status_code == 503
+
+
+def test_synthesis_resolves_business_key_without_real_network(monkeypatch):
     captured = {}
 
     class FakeVolcengineTTSProvider:
@@ -51,10 +136,11 @@ def test_synthesize_speech_passes_language_and_audio_controls(monkeypatch):
                 "extension": ".mp3",
                 "content_type": "audio/mpeg",
                 "provider": "volcengine",
-                "language": kwargs.get("language"),
-                "voice_type": kwargs.get("voice_type"),
+                "language": kwargs["language"],
+                "voice_type": kwargs["voice_type"],
             }
 
+    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_female_default", "provider-internal")
     monkeypatch.setattr(tts.settings, "voice_clone_provider", "volcengine")
     monkeypatch.setattr(tts, "VolcengineTTSProvider", FakeVolcengineTTSProvider)
     monkeypatch.setattr(tts, "upload_public_bytes", lambda *_args, **_kwargs: "https://storage.example/audio.mp3")
@@ -62,45 +148,124 @@ def test_synthesize_speech_passes_language_and_audio_controls(monkeypatch):
 
     result = asyncio.run(
         tts.synthesize_speech_to_storage(
-            object(),
-            text="你好",
-            folder="avatar/template-generate/tts",
-            language="zh-CN",
-            voice_type="BV001_streaming",
-            speed_ratio=0.9,
-            volume_ratio=0.8,
-            pitch_ratio=1.1,
+            object(), text="你好", language="zh-CN", voice_type="zh_female_default", speed_ratio=1.0
         )
     )
 
-    assert captured == {
-        "text": "你好",
-        "language": "zh-CN",
-        "voice_type": "BV001_streaming",
-        "speed_ratio": 0.9,
-        "volume_ratio": 0.8,
-        "pitch_ratio": 1.1,
-    }
-    assert result["language"] == "zh-CN"
-    assert result["voice_type"] == "BV001_streaming"
-    assert result["audio_url"] == "https://storage.example/audio.mp3"
+    assert captured["voice_type"] == "provider-internal"
+    assert result["voice"] == "zh_female_default"
+    assert "voice_type" not in result
 
 
-def test_tts_preview_speed_out_of_range_returns_400(monkeypatch):
+def test_provider_error_body_is_not_exposed(monkeypatch):
+    leaked_body = "BV001_streaming secret-token https://provider.example raw-body"
+
+    class FakeResponse:
+        status_code = 400
+        text = leaked_body
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(volcengine_tts.httpx, "AsyncClient", FakeClient)
+    provider = volcengine_tts.VolcengineTTSProvider(
+        app_id="app", access_token="secret-token", cluster="cluster", endpoint="https://provider.example"
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(provider.synthesize(text="测试", language="zh-CN", voice_type="BV001_streaming"))
+
+    assert error.value.status_code == 502
+    assert error.value.detail == "配音服务暂时不可用，请稍后重试。"
+    for secret in ("BV001_streaming", "secret-token", "provider.example", "raw-body"):
+        assert secret not in str(error.value.detail)
+
+
+def test_provider_configuration_error_is_stable_and_hides_env_names():
+    provider = volcengine_tts.VolcengineTTSProvider(app_id="", access_token="", cluster="", endpoint="")
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(provider.synthesize(text="测试", language="zh-CN", voice_type="provider-internal"))
+    assert error.value.status_code == 503
+    assert error.value.detail == "配音服务尚未完成配置。"
+    assert "VOLCENGINE_TTS_ZH_CN_FEMALE_VOICE_TYPE" not in str(error.value.detail)
+
+
+def test_resolver_failure_does_not_create_task_or_start_gpu(monkeypatch):
     app = FastAPI()
     app.include_router(avatar.router, prefix="/api")
-    client = TestClient(app)
-
     app.dependency_overrides[get_bearer_token] = lambda: "test-token"
     app.dependency_overrides[get_supabase] = lambda: object()
-    monkeypatch.setattr(avatar, "get_authenticated_user", lambda *_args, **_kwargs: {"id": "user-1", "email": "test@example.com"})
+    calls = {"task": 0, "gpu": 0}
 
-    for speed in (0.4, 2.1):
-        response = client.post(
-            "/api/avatar/tts-preview",
-            json={"text": "hello", "language": "zh-CN", "voice": "BV001_streaming", "speed": speed},
-        )
-        assert response.status_code == 400
-        assert response.json()["detail"] == "speed must be between 0.5 and 2.0"
+    monkeypatch.setattr(avatar, "get_authenticated_user", lambda *_args: {"id": "user-1", "email": "test@example.com"})
+    monkeypatch.setattr(avatar, "assert_generation_quota", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(avatar, "get_dynamic_template_video_url", lambda _template_id: "https://example.com/template.mp4")
+    monkeypatch.setattr(avatar, "_create_avatar_task", lambda *_args, **_kwargs: calls.__setitem__("task", calls["task"] + 1))
 
-    app.dependency_overrides.clear()
+    async def fake_gpu(*_args, **_kwargs):
+        calls["gpu"] += 1
+
+    monkeypatch.setattr(avatar, "ensure_gpu_ready", fake_gpu)
+
+    response = TestClient(app).post(
+        "/api/avatar/template-generate",
+        headers={"Authorization": "Bearer test-token"},
+        json={
+            "avatar_template_id": "business_female_01",
+            "script_text": "测试文案",
+            "language": "zh-CN",
+            "voice": "BV001_streaming",
+            "speed_ratio": 1.0,
+        },
+    )
+
+    assert response.status_code == 422
+    assert calls == {"task": 0, "gpu": 0}
+
+
+def test_provider_failure_does_not_create_task_or_start_gpu(monkeypatch):
+    app = FastAPI()
+    app.include_router(avatar.router, prefix="/api")
+    app.dependency_overrides[get_bearer_token] = lambda: "test-token"
+    app.dependency_overrides[get_supabase] = lambda: object()
+    calls = {"task": 0, "gpu": 0}
+
+    monkeypatch.setattr(avatar, "get_authenticated_user", lambda *_args: {"id": "user-1", "email": "test@example.com"})
+    monkeypatch.setattr(avatar, "assert_generation_quota", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(avatar, "get_dynamic_template_video_url", lambda _template_id: "https://example.com/template.mp4")
+    monkeypatch.setattr(avatar, "_create_avatar_task", lambda *_args, **_kwargs: calls.__setitem__("task", calls["task"] + 1))
+
+    async def fail_tts(*_args, **_kwargs):
+        raise HTTPException(status_code=502, detail="配音服务暂时不可用，请稍后重试。")
+
+    async def fake_gpu(*_args, **_kwargs):
+        calls["gpu"] += 1
+
+    monkeypatch.setattr(avatar, "synthesize_speech_to_storage", fail_tts)
+    monkeypatch.setattr(avatar, "ensure_gpu_ready", fake_gpu)
+
+    response = TestClient(app).post(
+        "/api/avatar/template-generate",
+        headers={"Authorization": "Bearer test-token"},
+        json={
+            "avatar_template_id": "business_female_01",
+            "script_text": "测试文案",
+            "language": "zh-CN",
+            "voice": "zh_female_default",
+            "speed_ratio": 1.0,
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "配音服务暂时不可用，请稍后重试。"
+    assert calls == {"task": 0, "gpu": 0}

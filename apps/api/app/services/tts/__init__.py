@@ -12,7 +12,7 @@ from supabase import Client
 from app.core.config import settings
 from app.services.storage import upload_public_bytes
 from app.services.tts.volcengine_tts import VolcengineTTSProvider
-from app.services.tts.voice_registry import DEFAULT_TTS_LANGUAGE, validate_tts_voice
+from app.services.tts.voice_registry import DEFAULT_TTS_LANGUAGE, resolve_voice
 
 
 async def synthesize_speech_to_storage(
@@ -23,6 +23,7 @@ async def synthesize_speech_to_storage(
     folder: str = "tts",
     language: str | None = DEFAULT_TTS_LANGUAGE,
     voice_type: str | None = None,
+    legacy_provider_voice_id: str | None = None,
     speed_ratio: float = 1.0,
     volume_ratio: float = 1.0,
     pitch_ratio: float = 1.0,
@@ -36,14 +37,14 @@ async def synthesize_speech_to_storage(
     extension = ".mp3"
     content_type = "audio/mpeg"
     provider_name = "unknown"
-    voice_config = validate_tts_voice(language, voice_type)
-    selected_voice_type = voice_config.id
+    resolved_voice = resolve_voice(voice_type, language, legacy_provider_voice_id=legacy_provider_voice_id)
+    selected_voice_type = resolved_voice.resolved_key
 
     if provider == "volcengine":
         result = await VolcengineTTSProvider().synthesize(
             text=text,
-            language=voice_config.language,
-            voice_type=voice_config.id,
+            language=language,
+            voice_type=resolved_voice.provider_voice_id,
             speed_ratio=speed_ratio,
             volume_ratio=volume_ratio,
             pitch_ratio=pitch_ratio,
@@ -52,7 +53,6 @@ async def synthesize_speech_to_storage(
         extension = result["extension"]
         content_type = result["content_type"]
         provider_name = result["provider"]
-        selected_voice_type = result["voice_type"]
     elif voice_clone and voice_clone.get("provider") == "elevenlabs" and voice_clone.get("voice_id"):
         audio = await _elevenlabs_tts(text, voice_id=voice_clone["voice_id"])
         provider_name = "elevenlabs"
@@ -63,14 +63,7 @@ async def synthesize_speech_to_storage(
         audio = await _openai_tts(text)
         provider_name = "openai"
     else:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "TTS provider 未配置。若使用火山引擎，请设置 VOICE_CLONE_PROVIDER=volcengine、"
-                "VOLCENGINE_TTS_APP_ID、VOLCENGINE_TTS_ACCESS_TOKEN、VOLCENGINE_TTS_CLUSTER、"
-                "VOLCENGINE_TTS_ZH_CN_FEMALE_VOICE_TYPE；或配置 OPENAI_API_KEY / ELEVENLABS_API_KEY。"
-            ),
-        )
+        raise HTTPException(status_code=503, detail="配音服务尚未完成配置。")
 
     audio_url = upload_public_bytes(
         supabase,
@@ -86,8 +79,8 @@ async def synthesize_speech_to_storage(
         "duration": duration,
         "audio_bytes": audio,
         "provider": provider_name,
-        "language": voice_config.language,
-        "voice_type": selected_voice_type,
+        "language": language,
+        "voice": selected_voice_type,
         "content_type": content_type,
     }
 
