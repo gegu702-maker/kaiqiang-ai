@@ -17,7 +17,12 @@ def test_production_cannot_enable_preview_safe_mode():
 
 
 def test_preview_can_enable_safe_mode_and_normalizes_environment():
-    configured = Settings(app_environment=" Preview ", avatar_preview_safe_mode=True, _env_file=None)
+    configured = Settings(
+        app_environment=" Preview ",
+        avatar_preview_safe_mode=True,
+        CORS_ALLOWED_ORIGINS="https://p2-34-preview.vercel.app",
+        _env_file=None,
+    )
     assert configured.app_environment == "preview"
     assert configured.avatar_preview_safe_mode is True
 

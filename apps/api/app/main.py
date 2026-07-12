@@ -34,7 +34,6 @@ async def start_worker() -> None:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
-    allow_origin_regex=r"https://(?:kaiqiang|kaiqiang-ai)(?:-[a-z0-9-]+)*-kaiqiang-ai-s-projects\.vercel\.app",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
