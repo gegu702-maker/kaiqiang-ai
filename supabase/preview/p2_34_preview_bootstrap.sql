@@ -277,6 +277,75 @@ create policy "Users can insert own avatar tasks" on public.avatar_tasks
 for insert to authenticated
 with check (auth.uid() = user_id);
 
+-- DATA API TABLE PRIVILEGES
+-- Grants control object access; RLS controls row access.
+-- Clear platform defaults before granting only the operations required by this Preview.
+revoke all privileges
+on table
+  public.profiles,
+  public.subscriptions,
+  public.user_quotas,
+  public.usage_logs,
+  public.avatar_tasks
+from anon;
+
+revoke all privileges
+on table
+  public.profiles,
+  public.subscriptions,
+  public.user_quotas,
+  public.usage_logs,
+  public.avatar_tasks
+from authenticated;
+
+revoke all privileges
+on table
+  public.profiles,
+  public.subscriptions,
+  public.user_quotas,
+  public.usage_logs,
+  public.avatar_tasks
+from service_role;
+
+grant select, insert, update
+on table public.profiles
+to service_role;
+
+grant select, insert
+on table public.subscriptions
+to service_role;
+
+grant select, insert, update
+on table public.user_quotas
+to service_role;
+
+grant select, insert, delete
+on table public.usage_logs
+to service_role;
+
+grant select, insert, update
+on table public.avatar_tasks
+to service_role;
+
+grant select
+on table
+  public.profiles,
+  public.subscriptions,
+  public.user_quotas,
+  public.usage_logs,
+  public.avatar_tasks
+to authenticated;
+
+-- Trigger functions are not client-callable RPCs. PostgreSQL trigger execution does
+-- not require the invoking role to retain direct EXECUTE on the trigger function.
+revoke all privileges
+on function public.set_updated_at()
+from public, anon, authenticated;
+
+revoke all privileges
+on function public.initialize_preview_free_user()
+from public, anon, authenticated;
+
 -- The plans table is intentionally omitted. Current API code falls back to built-in
 -- plan metadata when the table is absent; no Production pricing is copied here.
 
