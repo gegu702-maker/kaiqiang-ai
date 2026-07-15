@@ -1,3 +1,9 @@
+import {
+  allowExternalMediaUrl,
+  isPreviewEnvironment,
+  PRODUCTION_SUPABASE_MEDIA_ORIGIN,
+} from "./runtimeEnvironment";
+
 export type CaseLocale = "zh" | "en";
 
 export type CustomerCase = {
@@ -6,14 +12,21 @@ export type CustomerCase = {
   title: Record<CaseLocale, string>;
   description: Record<CaseLocale, string>;
   thumbnailUrl: string;
-  videoUrl: string;
+  videoUrl?: string;
   taskId: string;
   duration: string;
   language: CaseLocale | "multi";
   featured?: boolean;
 };
 
-export const customerCases: CustomerCase[] = [
+type CustomerCaseOptions = {
+  previewEnvironment?: boolean;
+};
+
+export function createCustomerCases({
+  previewEnvironment = isPreviewEnvironment,
+}: CustomerCaseOptions = {}): CustomerCase[] {
+  return [
   {
     id: "ai-avatar-production-demo",
     category: "avatar",
@@ -26,7 +39,10 @@ export const customerCases: CustomerCase[] = [
       en: "Generated through the production flow: script input, synthesized voice, MuseTalk avatar video, and MP4 delivery.",
     },
     thumbnailUrl: "/avatars/ai_female_01.png",
-    videoUrl: "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/133d03f9-05db-455d-9559-2c5ad9e14982/ce39f0da8f8c4794ab015758ed7da048.mp4?",
+    videoUrl: allowExternalMediaUrl(
+      `${PRODUCTION_SUPABASE_MEDIA_ORIGIN}/storage/v1/object/public/videos/avatar-results/133d03f9-05db-455d-9559-2c5ad9e14982/ce39f0da8f8c4794ab015758ed7da048.mp4?`,
+      previewEnvironment,
+    ),
     taskId: "133d03f9-05db-455d-9559-2c5ad9e14982",
     duration: "13.032s",
     language: "zh",
@@ -44,7 +60,10 @@ export const customerCases: CustomerCase[] = [
       en: "Upload presenter footage and a voiceover to create a talking avatar clip for landing pages, ads, and social channels.",
     },
     thumbnailUrl: "/avatars/business_female_01.png",
-    videoUrl: "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/19e8db33-799a-4986-98e2-61ca00fd4329/b353170a4dcc4f0797242a84cf7d1974.mp4?",
+    videoUrl: allowExternalMediaUrl(
+      `${PRODUCTION_SUPABASE_MEDIA_ORIGIN}/storage/v1/object/public/videos/avatar-results/19e8db33-799a-4986-98e2-61ca00fd4329/b353170a4dcc4f0797242a84cf7d1974.mp4?`,
+      previewEnvironment,
+    ),
     taskId: "19e8db33-799a-4986-98e2-61ca00fd4329",
     duration: "17.520s",
     language: "multi",
@@ -62,7 +81,10 @@ export const customerCases: CustomerCase[] = [
       en: "Create human-feeling product narration for PDPs, livestream previews, and performance creatives.",
     },
     thumbnailUrl: "/avatars/business_male_01.png",
-    videoUrl: "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/56b1468c-f7a4-4cba-bab4-aaaa706a6ee8/e4385c1df5af4906a441828a1fe11126.mp4?",
+    videoUrl: allowExternalMediaUrl(
+      `${PRODUCTION_SUPABASE_MEDIA_ORIGIN}/storage/v1/object/public/videos/avatar-results/56b1468c-f7a4-4cba-bab4-aaaa706a6ee8/e4385c1df5af4906a441828a1fe11126.mp4?`,
+      previewEnvironment,
+    ),
     taskId: "56b1468c-f7a4-4cba-bab4-aaaa706a6ee8",
     duration: "15.552s",
     language: "multi",
@@ -79,12 +101,18 @@ export const customerCases: CustomerCase[] = [
       en: "Turn reports, process explainers, and training scripts into consistent video assets.",
     },
     thumbnailUrl: "/logo-transparent.png",
-    videoUrl: "https://povfvhdnrpytxbbyndit.supabase.co/storage/v1/object/public/videos/avatar-results/e81a5831-6ff2-49b4-9e73-23742138b7ef/76cc7d699bac46cfb32f5da615919240.mp4?",
+    videoUrl: allowExternalMediaUrl(
+      `${PRODUCTION_SUPABASE_MEDIA_ORIGIN}/storage/v1/object/public/videos/avatar-results/e81a5831-6ff2-49b4-9e73-23742138b7ef/76cc7d699bac46cfb32f5da615919240.mp4?`,
+      previewEnvironment,
+    ),
     taskId: "e81a5831-6ff2-49b4-9e73-23742138b7ef",
     duration: "15.216s",
     language: "multi",
   },
-];
+  ];
+}
+
+export const customerCases = createCustomerCases();
 
 export function getFeaturedCases() {
   return customerCases.filter((item) => item.featured).slice(0, 2);
