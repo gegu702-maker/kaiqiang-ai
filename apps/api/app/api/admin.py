@@ -39,20 +39,42 @@ def verify_admin(x_admin_key: str = Header(...)) -> None:
         raise HTTPException(status_code=401, detail="Invalid admin key")
 
 
+def ensure_legacy_video_admin_enabled() -> None:
+    if settings.app_environment == "preview":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "preview_legacy_video_tasks_disabled",
+                "message": "Legacy video-task administration is disabled in the isolated Preview environment.",
+            },
+        )
+
+
+def verify_legacy_video_admin_access(x_admin_key: str = Header(...)) -> None:
+    verify_admin(x_admin_key)
+    ensure_legacy_video_admin_enabled()
+
+
+def get_legacy_video_admin_supabase(
+    _access: None = Depends(verify_legacy_video_admin_access),
+) -> Client:
+    return get_supabase()
+
+
 def _missing_generation_error_column(error: APIError) -> bool:
     message = str(error)
     return "generation_error" in message and ("PGRST204" in message or "schema cache" in message)
 
 
-@router.get("/tasks", response_model=list[VideoTask], dependencies=[Depends(verify_admin)])
-def get_admin_tasks(supabase: Client = Depends(get_supabase)) -> list[VideoTask]:
+@router.get("/tasks", response_model=list[VideoTask])
+def get_admin_tasks(supabase: Client = Depends(get_legacy_video_admin_supabase)) -> list[VideoTask]:
     return [VideoTask(**task) for task in list_all_tasks(supabase)]
 
 
-@router.get("/tasks/{task_id}", response_model=VideoTask, dependencies=[Depends(verify_admin)])
+@router.get("/tasks/{task_id}", response_model=VideoTask)
 def get_admin_task(
     task_id: str,
-    supabase: Client = Depends(get_supabase),
+    supabase: Client = Depends(get_legacy_video_admin_supabase),
 ) -> VideoTask:
     task = get_task(supabase, task_id)
     if not task:
@@ -60,7 +82,7 @@ def get_admin_task(
     return VideoTask(**task)
 
 
-@router.patch("/tasks/{task_id}", response_model=VideoTask, dependencies=[Depends(verify_admin)])
+@router.patch("/tasks/{task_id}", response_model=VideoTask)
 async def patch_admin_task(
     task_id: str,
     status: TaskStatus | None = Form(default=None),
@@ -70,7 +92,7 @@ async def patch_admin_task(
     heygen_video_id: str | None = Form(default=None),
     heygen_video_url: str | None = Form(default=None),
     result_video: UploadFile | None = File(default=None),
-    supabase: Client = Depends(get_supabase),
+    supabase: Client = Depends(get_legacy_video_admin_supabase),
 ) -> VideoTask:
     result_video_url = None
     subtitle_url = None
@@ -254,8 +276,8 @@ def mark_order_paid(
     return {"ok": True, "order": order}
 
 
-@router.get("/tasks/{task_id}/logs", dependencies=[Depends(verify_admin)])
-def get_task_logs(task_id: str, supabase: Client = Depends(get_supabase)) -> list[dict]:
+@router.get("/tasks/{task_id}/logs")
+def get_task_logs(task_id: str, supabase: Client = Depends(get_legacy_video_admin_supabase)) -> list[dict]:
     result = (
         supabase.table("task_logs")
         .select("*")
@@ -267,8 +289,8 @@ def get_task_logs(task_id: str, supabase: Client = Depends(get_supabase)) -> lis
     return result.data
 
 
-@router.post("/tasks/{task_id}/retry", response_model=VideoTask, dependencies=[Depends(verify_admin)])
-def retry_admin_task(task_id: str, supabase: Client = Depends(get_supabase)) -> VideoTask:
+@router.post("/tasks/{task_id}/retry", response_model=VideoTask)
+def retry_admin_task(task_id: str, supabase: Client = Depends(get_legacy_video_admin_supabase)) -> VideoTask:
     task = get_task(supabase, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
