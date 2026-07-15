@@ -74,12 +74,13 @@ async def generate_template_avatar_video(
     audio_url = (payload.audio_url or "").strip()
     template_id = payload.avatar_template_id.strip()
     template = get_avatar_template(template_id)
-    template_video_url = get_dynamic_template_video_url(template.id)
+    preview_safe_mode = _preview_safe_mode_enabled()
+    template_video_url = None if preview_safe_mode else get_dynamic_template_video_url(template.id)
     voice_request = normalize_legacy_voice_request(payload.voice, payload.voice_type)
 
     if not audio_url and not text:
         raise HTTPException(status_code=400, detail="请提供 audio_url，或输入文案用于生成语音。")
-    if _preview_safe_mode_enabled() and audio_url:
+    if preview_safe_mode and audio_url:
         raise HTTPException(status_code=409, detail="预览安全模式暂不支持视频生成。")
 
     assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
@@ -97,7 +98,7 @@ async def generate_template_avatar_video(
             tts_result = await synthesize_speech_to_storage(
                 supabase,
                 text=text,
-                folder=f"preview-tts/{user['id']}" if _preview_safe_mode_enabled() else "avatar/template-generate/tts",
+                folder=f"preview-tts/{user['id']}" if preview_safe_mode else "avatar/template-generate/tts",
                 language=payload.language,
                 voice_type=voice_request.requested_key,
                 legacy_provider_voice_id=voice_request.legacy_provider_voice_id,
@@ -112,9 +113,11 @@ async def generate_template_avatar_video(
             logger.exception("Template avatar TTS failed user_id=%s template=%s", user["id"], template.id)
             raise HTTPException(status_code=502, detail=str(error)) from error
 
-    if _preview_safe_mode_enabled():
+    if preview_safe_mode:
         return _preview_tts_ready_response(tts_result, payload.language, audio_url)
 
+    if template_video_url is None:
+        raise RuntimeError("Template video URL must be resolved outside Preview Safe Mode.")
     task = _create_avatar_task(supabase, user["id"], template_video_url, audio_url)
     logger.info(
         "Template avatar task queued task_id=%s user_id=%s template=%s template_video_url=%s audio_url=%s",

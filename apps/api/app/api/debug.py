@@ -186,6 +186,14 @@ def debug_config() -> dict:
 
 @router.post("/api/debug/tts-test")
 async def debug_tts_test(payload: TTSTestRequest) -> dict:
+    if settings.app_environment == "preview":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "preview_debug_tts_disabled",
+                "message": "Debug TTS is disabled in the Preview environment.",
+            },
+        )
     supabase = get_supabase()
     result = await synthesize_speech_to_storage(
         supabase,
