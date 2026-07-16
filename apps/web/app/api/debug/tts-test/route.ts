@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 
+import {
+  PREVIEW_DEBUG_ROUTE_DISABLED_DETAIL,
+  previewDebugRoutesDisabled,
+} from "../../../../lib/previewDebugRoutes";
+
 const API_URL = process.env.SERVER_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function stringifyDetail(value: unknown): string {
@@ -13,6 +18,13 @@ function stringifyDetail(value: unknown): string {
 }
 
 export async function POST(request: Request) {
+  if (previewDebugRoutesDisabled()) {
+    return NextResponse.json(
+      { detail: PREVIEW_DEBUG_ROUTE_DISABLED_DETAIL },
+      { status: 409 },
+    );
+  }
+
   let payload: unknown;
   try {
     payload = await request.json();
