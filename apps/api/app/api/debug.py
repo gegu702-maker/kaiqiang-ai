@@ -40,8 +40,20 @@ class LivePortraitTestRequest(StaticAvatarVideoTestRequest):
     driving_video_url: str | None = None
 
 
+def ensure_debug_route_enabled() -> None:
+    if settings.app_environment == "preview":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "preview_debug_route_disabled",
+                "message": "This debug route is disabled in the Preview environment.",
+            },
+        )
+
+
 @router.get("/debug/supabase")
 def debug_supabase() -> dict:
+    ensure_debug_route_enabled()
     supabase = get_supabase()
     result: dict = {
         "database": False,
@@ -114,6 +126,7 @@ def debug_supabase() -> dict:
 
 @router.get("/debug/config")
 def debug_config() -> dict:
+    ensure_debug_route_enabled()
     admin_key = settings.admin_api_key.strip()
     volcengine_tts_configured = all(
         [
@@ -186,6 +199,14 @@ def debug_config() -> dict:
 
 @router.post("/api/debug/tts-test")
 async def debug_tts_test(payload: TTSTestRequest) -> dict:
+    if settings.app_environment == "preview":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "preview_debug_tts_disabled",
+                "message": "Debug TTS is disabled in the Preview environment.",
+            },
+        )
     supabase = get_supabase()
     result = await synthesize_speech_to_storage(
         supabase,
@@ -207,6 +228,7 @@ async def debug_tts_test(payload: TTSTestRequest) -> dict:
 
 @router.post("/api/debug/avatar-video-test")
 async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict:
+    ensure_debug_route_enabled()
     template = get_avatar_template(payload.avatar_template_id)
     supabase = get_supabase()
     selected_voice_type = payload.voice_type or template.voice_type
@@ -255,6 +277,7 @@ async def debug_avatar_video_test(payload: StaticAvatarVideoTestRequest) -> dict
 
 @router.post("/api/debug/musetalk-test")
 async def debug_musetalk_test() -> dict:
+    ensure_debug_route_enabled()
     supabase = get_supabase()
     video_url = await _debug_musetalk_with_autodl_sample_audio(supabase, task_prefix="debug-musetalk-test")
     return {
@@ -336,6 +359,7 @@ def _normalize_musetalk_result_url(output_url: str, base_url: str) -> str:
 
 @router.post("/api/debug/liveportrait-test")
 async def debug_liveportrait_test(payload: LivePortraitTestRequest) -> dict:
+    ensure_debug_route_enabled()
     template = get_avatar_template(payload.avatar_template_id)
     supabase = get_supabase()
     selected_voice_type = payload.voice_type or template.default_voice_type

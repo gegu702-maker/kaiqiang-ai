@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import traceback
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,7 +33,6 @@ async def start_worker() -> None:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
-    allow_origin_regex=r"https://(?:kaiqiang|kaiqiang-ai)(?:-[a-z0-9-]+)*-kaiqiang-ai-s-projects\.vercel\.app",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,14 +44,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     logger.exception("Unhandled API exception on %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content={
-            "detail": {
-                "message": str(exc),
-                "type": exc.__class__.__name__,
-                "path": request.url.path,
-                "traceback": traceback.format_exc()[-6000:],
-            }
-        },
+        content={"detail": "Internal server error"},
     )
 
 @app.get("/health")
