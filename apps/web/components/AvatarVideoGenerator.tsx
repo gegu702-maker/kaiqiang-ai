@@ -6,18 +6,19 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import {
+  buildTemplateGenerateRequest,
+  deriveAvatarGenerationCapabilities,
+  getAvatarGenerationAction,
+  getAvatarGenerationButtonLabelKey,
+  parsePreviewTtsReadyResponse,
+  type AvatarGenerationCapabilities,
+} from "@/lib/avatarGenerationReadiness";
 import { avatarTemplates } from "@/lib/avatarTemplates";
+import { avatarVoiceGroups, avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY, getAvatarVoiceLanguage, type AvatarVoiceKey } from "@/lib/avatarVoiceOptions";
+import { isPreviewEnvironment } from "@/lib/runtimeEnvironment";
 import { createClient } from "@/lib/supabase/client";
 import type { UsageSummary } from "@/lib/types";
-import {
-  DEFAULT_DUBBING_LANGUAGE,
-  DEFAULT_DUBBING_VOICE,
-  dubbingLanguages,
-  getDefaultVoiceForLanguage,
-  getEnabledDubbingVoices,
-  type DubbingLanguage,
-  type DubbingLanguageCode,
-} from "@/lib/voiceRegistry";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -48,6 +49,12 @@ type AvatarTask = {
 };
 type AvatarHealthPayload = {
   status?: string;
+  video_generation?: {
+    status?: string;
+  };
+  preview_tts_only?: {
+    status?: string;
+  };
   musetalk?: {
     status?: string;
     message?: string;
@@ -55,33 +62,36 @@ type AvatarHealthPayload = {
   };
 };
 type DeleteTaskError = Error & { status?: number };
-type PreviewState = "idle" | "generating" | "completed" | "failed";
 
-const AVATAR_HEALTH_READY_STATUSES = new Set(["ok", "ready", "healthy", "success"]);
+const EMPTY_CAPABILITIES: AvatarGenerationCapabilities = {
+  previewSafeMode: false,
+  previewTtsOnlyReady: false,
+  videoGenerationReady: false,
+};
 const TTS_SPEED_OPTIONS = [
-  { value: 0.9, label: { zh: "稳定自然", en: "Stable natural" } },
+  { value: 0.9, label: { zh: "舒缓", en: "Relaxed" } },
   { value: 1, label: { zh: "标准", en: "Standard" } },
   { value: 1.1, label: { zh: "稍快", en: "Slightly faster" } },
 ];
 
 const copy = {
   zh: {
-    title: "数字人口播生成器",
-    subtitle: "选择商务数字人模板，输入文案，MuseTalk 会自动生成口播视频。",
+    title: "基础数字人口播",
+    subtitle: "选择模板、音色和语速，将文案生成口播视频。适合产品讲解、知识分享和短视频内容制作。",
     template: "数字人模板",
     templateHint: "选择本次出镜的商务数字人。",
-    video: "自定义人物视频",
+    video: "使用自拍视频作为口播模板",
     script: "口播文案",
     audio: "口播音频",
-    videoHint: "可选。上传后将使用你的自定义视频；不上传则使用所选商务模板。",
+    videoHint: "建议上传单人正脸、光线均匀、画面稳定且嘴部无遮挡的视频。",
     scriptHint: "输入文案后，系统会生成语音、驱动数字人，并默认添加中文字幕。",
-    scriptLengthHint: "建议 15-60 秒；句子不要太长，多用标点制造自然停顿，口播语速不要太快。",
+    scriptLengthHint: "建议文案时长 15–60 秒。标准语速通常能获得更稳定的口型效果。",
     scriptPlaceholder: "输入要数字人口播的文案...",
     audioHint: "上传音频后，将优先使用你的音频；未上传音频时会自动生成语音。支持 wav / mp3 / m4a。",
     ttsLanguage: "配音语言",
     ttsLanguageHint: "语言选择只影响配音音色，不会自动翻译文案；默认中文流程不变。",
     ttsVoice: "配音音色",
-    ttsVoiceHint: "中文音色已可用；英文配音需配置并验证英文音色后启用。",
+    ttsVoiceHint: "仅展示当前明确开放的音色。",
     englishVoiceUnavailable: "英文配音音色尚未配置，请先使用中文普通话。",
     ttsPreview: "试听配音",
     ttsPreviewGenerating: "试听生成中",
@@ -93,16 +103,24 @@ const copy = {
     realismVideoTips: ["正脸出镜", "1080p 或更高", "光线稳定", "背景干净", "脸部占画面足够大", "头部动作不要太大"],
     realismScriptTips: ["句子不要太长", "多用标点制造自然停顿", "15-60 秒更稳", "语速不要太快"],
     ttsSpeed: "TTS 语速",
-    ttsSpeedHint: "仅用于模板文案自动配音；上传音频或自定义视频时保持原音频节奏。",
+    ttsSpeedHint: "推荐使用标准语速，过快或过慢可能影响口型自然度。",
     steps: ["选择商务模板", "输入口播文案", "生成并下载 MP4"],
     generate: "生成口播视频",
     generating: "生成中",
+    previewTtsGenerate: "生成语音预览",
+    previewTtsGenerating: "正在生成语音预览",
+    previewTtsReady: "语音预览已生成。",
+    previewTtsUnavailable: "语音服务未就绪",
+    previewTtsHealthReady: "Preview 语音服务已就绪，视频生成保持禁用。",
+    previewTtsHealthUnavailable: "Preview 语音服务暂未就绪。",
+    previewMediaBlocked: "Preview 语音模式不支持上传视频或使用已有音频。",
+    downloadAudio: "下载 MP3",
     login: "登录状态已失效，请重新登录后再试。",
-    waitingGpu: "检查数字人服务中",
-    autodlStarting: "启动数字人服务中",
-    musetalkLoading: "加载数字人模型中",
-    videoGenerating: "视频生成中",
-    uploadingResult: "上传结果中",
+    waitingGpu: "正在检查生成服务",
+    autodlStarting: "正在准备生成服务",
+    musetalkLoading: "正在准备视频",
+    videoGenerating: "正在生成口播视频",
+    uploadingResult: "正在处理成片",
     queued: "排队中",
     running: "生成中",
     completed: "已完成",
@@ -127,7 +145,7 @@ const copy = {
     upgrade: "升级套餐",
     healthChecking: "正在检查数字人生成服务状态...",
     healthReady: "数字人生成服务已就绪。",
-    healthUnavailable: "数字人 GPU 服务当前未开启，生成暂不可用。请开启 AutoDL/GPU 后再生成。",
+    healthUnavailable: "视频生成服务暂未就绪，请稍后重新检查。",
     healthRetry: "重新检查服务状态",
     healthCheckingButton: "检查服务中...",
     healthUnavailableButton: "服务未就绪",
@@ -144,14 +162,14 @@ const copy = {
     deleteFailed: "删除失败，请稍后重试。",
     autoSubtitle: "自动字幕",
     authExpired: "登录状态已失效，请重新登录后再试。",
-    serviceUnavailable: "数字人 GPU 服务当前未开启，生成暂不可用。请开启 AutoDL/GPU 后再生成。",
+    serviceUnavailable: "视频生成服务当前不可用，本次不会扣除生成次数。请稍后重试。",
     languageUnavailable: "英文配音音色尚未配置，请先使用中文普通话。",
     fileUnsupported: "文件格式暂不支持，请上传 MP4/MOV/WebM 视频或 WAV/MP3/M4A 音频。",
     genericError: "生成失败，请稍后重试或联系管理员。",
   },
   en: {
     title: "Avatar Video Generator",
-    subtitle: "Choose a business avatar template, enter a script, and MuseTalk will generate a talking video.",
+    subtitle: "Choose a template, voice, and speed to turn your script into a talking video.",
     template: "Avatar Template",
     templateHint: "Choose the business presenter for this video.",
     video: "Custom Person Video",
@@ -165,7 +183,7 @@ const copy = {
     ttsLanguage: "Voice language",
     ttsLanguageHint: "Language only affects the voiceover voice. It does not translate your script. Chinese remains the default.",
     ttsVoice: "Voice",
-    ttsVoiceHint: "Mandarin voices are available. English voiceover requires verified English voice configuration.",
+    ttsVoiceHint: "Choose from clearly grouped Chinese, English, and Japanese voices.",
     englishVoiceUnavailable: "English voiceover is not configured yet. Please use Mandarin Chinese.",
     ttsPreview: "Preview voice",
     ttsPreviewGenerating: "Generating preview",
@@ -181,12 +199,20 @@ const copy = {
     steps: ["Choose template", "Enter script", "Generate MP4"],
     generate: "Generate Avatar Video",
     generating: "Generating",
+    previewTtsGenerate: "Generate voice preview",
+    previewTtsGenerating: "Generating voice preview",
+    previewTtsReady: "Voice preview is ready.",
+    previewTtsUnavailable: "Voice service unavailable",
+    previewTtsHealthReady: "Preview voice service is ready. Video generation remains disabled.",
+    previewTtsHealthUnavailable: "The Preview voice service is not ready yet.",
+    previewMediaBlocked: "Preview voice mode does not accept uploaded video or existing audio.",
+    downloadAudio: "Download MP3",
     login: "Your login session expired. Please sign in again and retry.",
-    waitingGpu: "Checking avatar service",
-    autodlStarting: "Starting avatar service",
-    musetalkLoading: "Loading avatar model",
-    videoGenerating: "Generating video",
-    uploadingResult: "Uploading result",
+    waitingGpu: "Checking generation service",
+    autodlStarting: "Preparing generation service",
+    musetalkLoading: "Preparing video",
+    videoGenerating: "Generating talking video",
+    uploadingResult: "Processing final video",
     queued: "Queued",
     running: "Generating",
     completed: "Completed",
@@ -211,7 +237,7 @@ const copy = {
     upgrade: "Upgrade",
     healthChecking: "Checking avatar generation service...",
     healthReady: "Avatar generation service is ready.",
-    healthUnavailable: "The avatar GPU service is currently off, so generation is unavailable. Please start AutoDL/GPU before generating.",
+    healthUnavailable: "The video generation service is not ready yet. Please check again shortly.",
     healthRetry: "Recheck service status",
     healthCheckingButton: "Checking service...",
     healthUnavailableButton: "Service unavailable",
@@ -228,7 +254,7 @@ const copy = {
     deleteFailed: "Delete failed. Please retry later.",
     autoSubtitle: "Auto subtitles",
     authExpired: "Your login session expired. Please sign in again and retry.",
-    serviceUnavailable: "The avatar GPU service is currently off, so generation is unavailable. Please start AutoDL/GPU before generating.",
+    serviceUnavailable: "The video generation service is unavailable. Failed generations do not use a credit.",
     languageUnavailable: "English voiceover is not configured yet. Please use Mandarin Chinese.",
     fileUnsupported: "This file format is not supported. Upload MP4/MOV/WebM video or WAV/MP3/M4A audio.",
     genericError: "Generation failed. Please retry later or contact an administrator.",
@@ -245,7 +271,7 @@ export function AvatarVideoGenerator({
   const { locale } = useLanguage();
   const current = copy[locale === "zh" ? "zh" : "en"];
   const supabase = useMemo(() => createClient(), []);
-  const initialAvatarTemplate = avatarTemplates.some((template) => template.id === initialTemplateId) ? initialTemplateId : "business_female_01";
+  const initialAvatarTemplate = initialTemplateId && avatarTemplates.some((template) => template.id === initialTemplateId) ? initialTemplateId : "business_female_01";
   const [avatarTemplateId, setAvatarTemplateId] = useState(initialAvatarTemplate);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -254,20 +280,17 @@ export function AvatarVideoGenerator({
   const [progressStage, setProgressStage] = useState<ProgressStage>("waiting_gpu");
   const [progress, setProgress] = useState(0);
   const [resultUrl, setResultUrl] = useState("");
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState("");
   const [resultSubtitleStatus, setResultSubtitleStatus] = useState<AvatarSubtitleStatus>("unknown");
   const [error, setError] = useState("");
-  const [voiceRegistry, setVoiceRegistry] = useState<DubbingLanguage[]>(dubbingLanguages);
-  const [ttsLanguage, setTtsLanguage] = useState<DubbingLanguageCode>(DEFAULT_DUBBING_LANGUAGE);
-  const [selectedVoiceType, setSelectedVoiceType] = useState<string>(DEFAULT_DUBBING_VOICE);
-  const [ttsSpeedRatio, setTtsSpeedRatio] = useState(0.9);
-  const enabledVoices = getEnabledDubbingVoices(voiceRegistry, ttsLanguage);
-  const [previewState, setPreviewState] = useState<PreviewState>("idle");
-  const [previewAudioUrl, setPreviewAudioUrl] = useState("");
-  const [previewError, setPreviewError] = useState("");
+  const [selectedVoice, setSelectedVoice] = useState<AvatarVoiceKey>(DEFAULT_AVATAR_VOICE_KEY);
+  const ttsLanguage = getAvatarVoiceLanguage(selectedVoice);
+  const [ttsSpeedRatio, setTtsSpeedRatio] = useState(1);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [tasks, setTasks] = useState<AvatarTask[]>([]);
   const [copied, setCopied] = useState(false);
   const [avatarHealthStatus, setAvatarHealthStatus] = useState<AvatarHealthStatus>("checking");
+  const [generationCapabilities, setGenerationCapabilities] = useState<AvatarGenerationCapabilities>(EMPTY_CAPABILITIES);
   const [avatarHealthMessage, setAvatarHealthMessage] = useState("");
   const [avatarHealthCheckedAt, setAvatarHealthCheckedAt] = useState<Date | null>(null);
   const progressTimer = useRef<number | null>(null);
@@ -279,17 +302,32 @@ export function AvatarVideoGenerator({
     try {
       const response = await fetch(`${API_URL}/api/avatar/health`, { cache: "no-store" });
       const payload = (await response.json().catch(() => null)) as AvatarHealthPayload | null;
-      const musetalkStatus = String(payload?.musetalk?.status ?? "").trim().toLowerCase();
-      const isReady = response.ok && AVATAR_HEALTH_READY_STATUSES.has(musetalkStatus);
-      setAvatarHealthStatus(isReady ? "ready" : "unavailable");
-      setAvatarHealthMessage(isReady ? current.healthReady : current.healthUnavailable);
+      const capabilities = deriveAvatarGenerationCapabilities({
+        previewEnvironment: isPreviewEnvironment,
+        responseOk: response.ok,
+        musetalkStatus: payload?.musetalk?.status,
+        videoGenerationStatus: payload?.video_generation?.status,
+        previewTtsOnlyStatus: payload?.preview_tts_only?.status,
+      });
+      setGenerationCapabilities(capabilities);
+      setAvatarHealthStatus(capabilities.videoGenerationReady ? "ready" : "unavailable");
+      setAvatarHealthMessage(
+        capabilities.previewSafeMode
+          ? capabilities.previewTtsOnlyReady
+            ? current.previewTtsHealthReady
+            : current.previewTtsHealthUnavailable
+          : capabilities.videoGenerationReady
+            ? current.healthReady
+            : current.healthUnavailable,
+      );
     } catch {
+      setGenerationCapabilities(EMPTY_CAPABILITIES);
       setAvatarHealthStatus("unavailable");
       setAvatarHealthMessage(current.healthUnavailable);
     } finally {
       setAvatarHealthCheckedAt(new Date());
     }
-  }, [current.healthReady, current.healthUnavailable]);
+  }, [current.healthReady, current.healthUnavailable, current.previewTtsHealthReady, current.previewTtsHealthUnavailable]);
 
   const refreshTasks = useCallback(async () => {
     const {
@@ -357,29 +395,6 @@ export function AvatarVideoGenerator({
     };
   }, [checkAvatarHealth, refreshTasks, refreshUsage]);
 
-  useEffect(() => {
-    let active = true;
-    void fetch(`${API_URL}/api/avatar/tts-voices`, { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload) => {
-        if (!active || !Array.isArray(payload?.languages)) return;
-        const languages = payload.languages as DubbingLanguage[];
-        setVoiceRegistry(languages);
-        const currentLanguage = languages.find((language) => language.code === ttsLanguage && language.enabled);
-        const fallbackLanguage = currentLanguage ?? languages.find((language) => language.code === DEFAULT_DUBBING_LANGUAGE && language.enabled) ?? languages.find((language) => language.enabled);
-        if (fallbackLanguage) {
-          setTtsLanguage(fallbackLanguage.code);
-          setSelectedVoiceType(getDefaultVoiceForLanguage(languages, fallbackLanguage.code));
-        }
-      })
-      .catch(() => {
-        // The bundled registry keeps the selector usable when the API is unavailable.
-      });
-    return () => {
-      active = false;
-    };
-  }, [ttsLanguage]);
-
   function startProgress() {
     setProgress(8);
     progressTimer.current = window.setInterval(() => {
@@ -410,62 +425,32 @@ export function AvatarVideoGenerator({
     stageTimers.current = [];
   }
 
-  function handleTtsLanguageChange(value: string) {
-    const language = value as DubbingLanguageCode;
-    setTtsLanguage(language);
-    setSelectedVoiceType(getDefaultVoiceForLanguage(voiceRegistry, language));
-    setPreviewAudioUrl("");
-    setPreviewError("");
-    setPreviewState("idle");
-  }
-
-  async function handlePreviewAudio() {
-    const text = scriptText.trim();
-    if (!text || previewState === "generating" || enabledVoices.length === 0) return;
-    setPreviewState("generating");
-    setPreviewAudioUrl("");
-    setPreviewError("");
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      setPreviewState("failed");
-      setPreviewError(current.login);
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/api/avatar/tts-preview`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          language: ttsLanguage,
-          voice: selectedVoiceType,
-          speed: ttsSpeedRatio,
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail ?? payload);
-        throw new Error(detail || current.ttsPreviewFailed);
-      }
-      setPreviewAudioUrl(payload.audio_url || "");
-      setPreviewState("completed");
-    } catch (err) {
-      setPreviewState("failed");
-      setPreviewError(err instanceof Error ? err.message : current.ttsPreviewFailed);
-    }
-  }
+  const isGenerating = state === "queued" || state === "running";
+  const generationAction = getAvatarGenerationAction({
+    capabilities: generationCapabilities,
+    isGenerating,
+    hasText: Boolean(scriptText.trim()),
+    hasTemplate: Boolean(avatarTemplateId),
+    hasVoice: Boolean(selectedVoice),
+    hasVideoFile: Boolean(videoFile),
+    hasAudioFile: Boolean(audioFile),
+  });
+  const isPreviewTtsOnly = generationAction.mode === "preview_tts";
 
   async function handleGenerate() {
     setError("");
     setResultUrl("");
+    setAudioPreviewUrl("");
     setResultSubtitleStatus("unknown");
     setCopied(false);
-    if (avatarHealthStatus !== "ready") {
-      setError(current.healthUnavailable);
+    if (!generationAction.enabled) {
+      setError(
+        isPreviewTtsOnly
+          ? videoFile || audioFile
+            ? current.previewMediaBlocked
+            : current.previewTtsHealthUnavailable
+          : current.healthUnavailable,
+      );
       return;
     }
     const text = scriptText.trim();
@@ -482,13 +467,6 @@ export function AvatarVideoGenerator({
       setError(current.quotaEmpty);
       return;
     }
-    if (!useCustomVideo && enabledVoices.length === 0) {
-      setState("failed");
-      setProgressStage("failed");
-      setError(current.languageUnavailable);
-      return;
-    }
-
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -500,15 +478,17 @@ export function AvatarVideoGenerator({
     }
 
     try {
-      setState("queued");
+      setState(isPreviewTtsOnly ? "running" : "queued");
       setProgressStage("waiting_gpu");
       startProgress();
-      scheduleStageUpdates();
-      const runningTimer = window.setTimeout(() => {
-        setState((value) => (value === "queued" ? "running" : value));
-        setProgressStage((value) => (value === "waiting_gpu" ? "autodl_starting" : value));
-      }, 400);
-      stageTimers.current.push(runningTimer);
+      if (!isPreviewTtsOnly) {
+        scheduleStageUpdates();
+        const runningTimer = window.setTimeout(() => {
+          setState((value) => (value === "queued" ? "running" : value));
+          setProgressStage((value) => (value === "waiting_gpu" ? "autodl_starting" : value));
+        }, 400);
+        stageTimers.current.push(runningTimer);
+      }
       const response = useCustomVideo
         ? await fetch(`${API_URL}/api/avatar/generate`, {
             method: "POST",
@@ -519,8 +499,7 @@ export function AvatarVideoGenerator({
               if (audioFile) formData.set("audio_file", audioFile);
               if (text) formData.set("script_text", text);
               formData.set("language", ttsLanguage);
-              formData.set("voice", selectedVoiceType);
-              formData.set("voice_type", selectedVoiceType);
+              formData.set("voice", selectedVoice);
               formData.set("speed_ratio", String(ttsSpeedRatio));
               return formData;
             })(),
@@ -528,19 +507,30 @@ export function AvatarVideoGenerator({
         : await fetch(`${API_URL}/api/avatar/template-generate`, {
             method: "POST",
             headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              avatar_template_id: avatarTemplateId,
-              script_text: text,
-              language: ttsLanguage,
-              voice: selectedVoiceType,
-              voice_type: selectedVoiceType,
-              speed_ratio: ttsSpeedRatio,
-            }),
+            body: JSON.stringify(
+              buildTemplateGenerateRequest({
+                avatarTemplateId,
+                scriptText: text,
+                language: ttsLanguage,
+                voice: selectedVoice,
+                speedRatio: ttsSpeedRatio,
+              }),
+            ),
           });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         const detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail ?? payload);
         throw new Error(detail || current.failed);
+      }
+      if (isPreviewTtsOnly) {
+        const ttsResult = parsePreviewTtsReadyResponse(payload);
+        if (!ttsResult) throw new Error(current.genericError);
+        setAudioPreviewUrl(ttsResult.audioUrl);
+        clearStageUpdates();
+        setState("completed");
+        setProgressStage("completed");
+        stopProgress(100);
+        return;
       }
       const immediateResult = payload.result_video_url || payload.video_url || payload.task?.result_video_url || payload.task?.result_url || "";
       const taskId = payload.task_id || payload.task?.id;
@@ -614,19 +604,33 @@ export function AvatarVideoGenerator({
     setTasks((items) => items.filter((item) => item.id !== taskId));
   }
 
-  const isGenerating = state === "queued" || state === "running";
-  const isAvatarHealthChecking = avatarHealthStatus === "checking";
-  const isAvatarHealthUnavailable = avatarHealthStatus === "unavailable";
-  const isGenerateDisabled = isGenerating || avatarHealthStatus !== "ready";
-  const generateButtonLabel = isGenerating
-    ? current.generating
-    : isAvatarHealthChecking
-      ? current.healthCheckingButton
-      : isAvatarHealthUnavailable
-        ? current.healthUnavailableButton
-        : current.generate;
-  const stageText = getStageLabel(progressStage, current);
-  const statusText = getStatusLabel(state, current);
+  const effectiveHealthStatus = isPreviewTtsOnly
+    ? generationCapabilities.previewTtsOnlyReady
+      ? "ready"
+      : avatarHealthStatus === "checking"
+        ? "checking"
+        : "unavailable"
+    : avatarHealthStatus;
+  const isAvatarHealthChecking = effectiveHealthStatus === "checking";
+  const isAvatarHealthUnavailable = effectiveHealthStatus === "unavailable";
+  const isGenerateDisabled = !generationAction.enabled;
+  const generateButtonLabelKey = getAvatarGenerationButtonLabelKey({
+    action: generationAction,
+    isGenerating,
+    healthChecking: isAvatarHealthChecking,
+    healthUnavailable: isAvatarHealthUnavailable,
+  });
+  const generateButtonLabel = {
+    generate_video: current.generate,
+    generate_preview_tts: current.previewTtsGenerate,
+    generating_video: current.generating,
+    generating_preview_tts: current.previewTtsGenerating,
+    health_checking: current.healthCheckingButton,
+    video_unavailable: current.healthUnavailableButton,
+    preview_tts_unavailable: current.previewTtsUnavailable,
+  }[generateButtonLabelKey];
+  const stageText = isPreviewTtsOnly ? "" : getStageLabel(progressStage, current);
+  const statusText = isPreviewTtsOnly && isGenerating ? current.previewTtsGenerating : getStatusLabel(state, current);
   const subtitleNotice = getSubtitleNotice(resultSubtitleStatus, current);
 
   return (
@@ -634,7 +638,7 @@ export function AvatarVideoGenerator({
       <section className="space-y-5">
         <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
           <Film size={15} />
-          MuseTalk
+          {current.title}
         </div>
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{current.title}</h1>
@@ -678,20 +682,20 @@ export function AvatarVideoGenerator({
         <div
           data-checked-at={avatarHealthCheckedAt?.toISOString()}
           className={
-            avatarHealthStatus === "ready"
+            effectiveHealthStatus === "ready"
               ? "rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"
-              : avatarHealthStatus === "checking"
+              : effectiveHealthStatus === "checking"
                 ? "rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm"
                 : "rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
           }
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p>
-              {avatarHealthStatus === "checking"
+              {effectiveHealthStatus === "checking"
                 ? current.healthChecking
-                : avatarHealthMessage || (avatarHealthStatus === "ready" ? current.healthReady : current.healthUnavailable)}
+                : avatarHealthMessage || (effectiveHealthStatus === "ready" ? current.healthReady : current.healthUnavailable)}
             </p>
-            {avatarHealthStatus === "unavailable" ? (
+            {effectiveHealthStatus === "unavailable" ? (
               <button
                 type="button"
                 onClick={() => void checkAvatarHealth()}
@@ -762,6 +766,7 @@ export function AvatarVideoGenerator({
             accept="video/mp4,video/quicktime,video/webm"
             file={videoFile}
             onChange={setVideoFile}
+            disabled={isPreviewEnvironment}
           />
           <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
             <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -778,44 +783,29 @@ export function AvatarVideoGenerator({
               onChange={(event) => setScriptText(event.target.value)}
             />
           </label>
-          <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
-            <span className="block text-sm font-semibold text-slate-900">{current.ttsLanguage}</span>
-            <span className="mt-1 block text-sm text-slate-500">{current.ttsLanguageHint}</span>
-            <select
-              className="mt-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500"
-              value={ttsLanguage}
-              disabled={Boolean(videoFile)}
-              onChange={(event) => handleTtsLanguageChange(event.target.value)}
-            >
-              {voiceRegistry.map((option) => (
-                <option key={option.code} value={option.code} disabled={!option.enabled}>
-                  {option.nativeLabel} / {option.label}
-                  {option.comingSoon ? ` (${current.comingSoon})` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <span className="block text-sm font-semibold text-slate-900">{current.ttsVoice}</span>
             <span className="mt-1 block text-sm text-slate-500">{current.ttsVoiceHint}</span>
-            <select
-              className="mt-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500"
-              value={selectedVoiceType}
-              disabled={Boolean(videoFile) || enabledVoices.length === 0}
-              onChange={(event) => setSelectedVoiceType(event.target.value)}
-            >
-              {enabledVoices.length > 0 ? (
-                enabledVoices.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label} ({option.id})
-                  </option>
-                ))
-              ) : (
-                <option>{current.unsupportedTtsVoice}</option>
-              )}
-            </select>
-            {enabledVoices.length === 0 ? <span className="mt-2 block text-xs text-amber-600">{current.englishVoiceUnavailable}</span> : null}
-          </label>
+            <div className="mt-3 space-y-4">
+              {avatarVoiceGroups.map((group) => (
+                <fieldset key={group.key}>
+                  <legend className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{group.name[locale === "zh" ? "zh" : "en"]}</legend>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {avatarVoiceOptions.filter((option) => option.group === group.key).map((option) => (
+                      <label key={option.key} className={`cursor-pointer rounded-md border p-3 transition ${selectedVoice === option.key ? "border-blue-500 bg-blue-50" : "border-slate-200 hover:border-blue-200"}`}>
+                        <input className="sr-only" type="radio" name="voice" value={option.key} checked={selectedVoice === option.key} onChange={() => setSelectedVoice(option.key)} />
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="font-semibold text-slate-900">{option.name[locale === "zh" ? "zh" : "en"]}</span>
+                          {option.recommended ? <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs font-semibold text-white">{locale === "zh" ? "推荐" : "Recommended"}</span> : null}
+                        </span>
+                        <span className="mt-1 block text-sm text-slate-500">{option.description[locale === "zh" ? "zh" : "en"]}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              ))}
+            </div>
+          </div>
           <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-blue-300 hover:border-blue-200 hover:bg-blue-50/30">
             <span className="block text-sm font-semibold text-slate-900">{current.ttsSpeed}</span>
             <span className="mt-1 block text-sm text-slate-500">{current.ttsSpeedHint}</span>
@@ -832,26 +822,13 @@ export function AvatarVideoGenerator({
               ))}
             </select>
           </label>
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <button
-              type="button"
-              disabled={previewState === "generating" || !scriptText.trim() || Boolean(videoFile) || enabledVoices.length === 0}
-              onClick={handlePreviewAudio}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              {previewState === "generating" ? <Loader2 className="animate-spin" size={16} /> : null}
-              {previewState === "generating" ? current.ttsPreviewGenerating : current.ttsPreview}
-            </button>
-            {previewState === "completed" && previewAudioUrl ? <p className="mt-2 text-xs text-emerald-700">{current.ttsPreviewReady}</p> : null}
-            {previewError ? <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-sm text-rose-700">{previewError}</p> : null}
-            {previewAudioUrl ? <audio className="mt-3 w-full" src={previewAudioUrl} controls preload="metadata" /> : null}
-          </div>
           <FilePicker
             title={current.audio}
             hint={current.audioHint}
             accept="audio/wav,audio/mpeg,audio/mp3,audio/mp4,audio/aac"
             file={audioFile}
             onChange={setAudioFile}
+            disabled={isPreviewEnvironment}
           />
         </div>
         <button
@@ -863,6 +840,7 @@ export function AvatarVideoGenerator({
           {isGenerating ? <Loader2 className="animate-spin" size={18} /> : <Video size={18} />}
           {generateButtonLabel}
         </button>
+        <p className="text-xs text-slate-500">{locale === "zh" ? "生成失败不会扣除次数。" : "Failed generations do not use a credit."}</p>
         {statusText ? (
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between text-sm">
@@ -881,27 +859,29 @@ export function AvatarVideoGenerator({
       <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-900">{current.result}</h2>
-          {resultUrl ? (
+          {resultUrl || audioPreviewUrl ? (
             <div className="flex items-center gap-2">
-              <button className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" type="button" onClick={() => copyResultLink(resultUrl)}>
+              <button className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" type="button" onClick={() => copyResultLink(audioPreviewUrl || resultUrl)}>
                 {copied ? <Check size={16} /> : <Copy size={16} />}
                 {copied ? current.copied : current.copyLink}
               </button>
-              <a className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" href={resultUrl} download="kaiqiang-avatar-video.mp4">
+              <a className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" href={audioPreviewUrl || resultUrl} download={audioPreviewUrl ? "kaiqiang-preview-voice.mp3" : "kaiqiang-avatar-video.mp4"}>
                 <Download size={16} />
-                {current.download}
+                {audioPreviewUrl ? current.downloadAudio : current.download}
               </a>
             </div>
           ) : null}
         </div>
-        {resultUrl ? (
+        {resultUrl || audioPreviewUrl ? (
           <p className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {current.resultReady}
-            {subtitleNotice ? ` ${subtitleNotice}` : ""}
+            {audioPreviewUrl ? current.previewTtsReady : current.resultReady}
+            {!audioPreviewUrl && subtitleNotice ? ` ${subtitleNotice}` : ""}
           </p>
         ) : null}
         <div className="grid min-h-[420px] place-items-center overflow-hidden rounded-md bg-slate-100">
-          {resultUrl ? (
+          {audioPreviewUrl ? (
+            <audio className="w-full max-w-xl" src={audioPreviewUrl} controls preload="metadata" />
+          ) : resultUrl ? (
             <video className="h-full max-h-[680px] w-full bg-black object-contain" src={resultUrl} controls playsInline />
           ) : (
             <div className="grid place-items-center gap-3 text-center text-slate-500">
@@ -1058,21 +1038,23 @@ function FilePicker({
   accept,
   file,
   onChange,
+  disabled = false,
 }: {
   title: string;
   hint: string;
   accept: string;
   file: File | null;
   onChange: (file: File | null) => void;
+  disabled?: boolean;
 }) {
   return (
-    <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:bg-blue-50/30">
+    <label className={`block rounded-lg border border-slate-200 p-4 shadow-sm transition ${disabled ? "cursor-not-allowed bg-slate-50 opacity-70" : "bg-white hover:border-blue-200 hover:bg-blue-50/30"}`}>
       <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
         <UploadCloud size={17} className="text-blue-600" />
         {title}
       </span>
       <span className="mt-1 block text-sm text-slate-500">{hint}</span>
-      <input className="mt-3 block w-full text-sm text-slate-600 file:mr-4 file:rounded-md file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-500" type="file" accept={accept} onChange={(event) => onChange(event.target.files?.[0] ?? null)} />
+      <input className="mt-3 block w-full text-sm text-slate-600 file:mr-4 file:rounded-md file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-500 disabled:cursor-not-allowed" type="file" accept={accept} disabled={disabled} onChange={(event) => onChange(event.target.files?.[0] ?? null)} />
       {file ? <span className="mt-2 block truncate text-xs text-slate-500">{file.name}</span> : null}
     </label>
   );

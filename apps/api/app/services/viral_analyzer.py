@@ -69,7 +69,10 @@ COMMON_CTA_RE = re.compile(
     r"(?:如果你也想看懂这类热点，?)?(?:先收藏，?)?下一条继续拆(?:给你看)?[。！!]*|"
     r"关注我，?下一条继续拆(?:给你看)?[。！!]*|"
     r"先收藏，?下次判断热点时再看[。！!]*|"
-    r"先收藏[。！!]*"
+    r"先收藏[。！!]*|"
+    r"你觉得(?:真正)?的?重点在哪里？评论区说说你的判断[。！!]*|"
+    r"如果你也在做内容，把这个拆法先记下来，下一次热点就能直接套用[。！!]*|"
+    r"后面如果产业链继续有新变化，我会再单独拆给你看[。！!]*"
 )
 SCRIPT_PUNCT_RE = re.compile(r"[\s，。！？、；：,.!?;:\"'“”‘’（）()\[\]【】《》<>-]+")
 
@@ -130,6 +133,20 @@ OVERUSED_PHRASE_BUCKETS = [
     ("detail_chance", ("机会藏在细节里",)),
     ("listing_news", ("别只盯着上市新闻",)),
 ]
+AWKWARD_SPOKEN_REPLACEMENTS = (
+    ("真正值得关注的不是表面的热闹", "别只看表面的热闹"),
+    ("真正值得学习的，不只是", "别只学"),
+    ("真正要看的，是", "更值得看的，是"),
+    ("真正抓人的地方，是", "更抓人的地方在于"),
+    ("它会先制造一个疑问：", "你可以先抛出一个问题："),
+    ("行动号召", "下一步动作"),
+    ("信息价值", "有用信息"),
+    ("模板说明", ""),
+    ("值得学习的是", "可以借鉴的是"),
+    ("先别急着模仿表面内容", "别先忙着照搬原视频"),
+    ("结构", "节奏"),
+    ("你觉得的重点", "你觉得重点"),
+)
 
 
 def _count_monthly_analyses(supabase: Client, *, user_id: str) -> int:
@@ -189,6 +206,33 @@ def sanitize_rewrite_script(script: str) -> str:
     text = SCRIPT_PREFIX_RE.sub("", text)
     text = TEMPLATE_BLOCK_RE.sub("", text)
     text = BRACKET_TEMPLATE_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" ：:，,。；;")
+
+
+def _with_sentence_end(text: str) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    if value[-1] in "。！？!?":
+        return value
+    return f"{value}。"
+
+
+def _join_sentences(*parts: str) -> str:
+    return "".join(_with_sentence_end(part) for part in parts if str(part or "").strip()).strip()
+
+
+def smooth_spoken_script(script: str) -> str:
+    text = sanitize_rewrite_script(script)
+    for source, target in AWKWARD_SPOKEN_REPLACEMENTS:
+        text = text.replace(source, target)
+    text = re.sub(r"真正", "", text)
+    text = text.replace("你觉得的重点", "你觉得重点")
+    text = re.sub(r"(互动)(你觉得|评论区)", r"\1。\2", text)
+    text = re.sub(r"(判断|套用|看)(\s+)(我更想提醒|如果你也在做内容|后面如果)", r"\1。\3", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+([。！？!?])", r"\1", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip(" ：:，,。；;")
 
@@ -306,11 +350,11 @@ def _trim_common_cta(script: str) -> str:
 
 
 def _script_with_unique_cta(script: str, index: int) -> str:
-    text = _trim_common_cta(script)
+    text = smooth_spoken_script(_trim_common_cta(script))
     cta = _cta_for_index(index)
     if cta in text:
-        return text
-    return f"{text}。{cta}".strip(" 。")
+        return smooth_spoken_script(text)
+    return smooth_spoken_script(_join_sentences(text, cta))
 
 
 def _compose_diverse_script(*, topic: str, hook: str, template: str, language: str, style: str, seed: str, index: int) -> str:
@@ -323,36 +367,37 @@ def _compose_diverse_script(*, topic: str, hook: str, template: str, language: s
         return base.strip()
 
     topic_text = topic or "这个热点"
-    hook_text = sanitize_rewrite_script(seed) or hook or f"{topic_text}真正值得关注的地方，可能不是你第一眼看到的热闹。"
+    hook_text = smooth_spoken_script(_trim_common_cta(seed)) or smooth_spoken_script(hook) or f"{topic_text}有一个容易被忽略的点。"
     lines = {
         "suspense": (
-            f"你以为{topic_text}只是一个普通热点？其实它真正抓人的地方，是表面信息和隐藏线索之间的反差。"
-            f"{hook_text} 这类开头适合先制造冲突，再把观众带到一个问题里：大家看到的是结果，但更值得讨论的是哪些线索没有被明说。"
-            "把这个反差讲透，观众才会愿意留下来判断。"
+            f"你以为{topic_text}只是一个普通热点？先别急着下结论。"
+            f"{_with_sentence_end(hook_text)}大家都在看结果，但我更想看中间没说透的那条线。"
+            "把这条线讲清楚，观众才会愿意留下来判断。"
         ),
         "pain_point": (
-            f"很多人做内容，看到{topic_text}第一反应就是复述新闻，但这样很难做出差异。"
-            "更好的做法，是把热点翻译成用户听得懂的问题：它和我有什么关系，我能从里面借到什么选题。"
-            "你先抓住这个痛点，再把信息拆成一个能拍、能讲、能互动的角度。"
+            f"如果你也在做内容，看到{topic_text}，千万别只把新闻复述一遍。"
+            "用户更想听的是：这件事和我有什么关系？我能从里面借到什么选题？"
+            "你先把这个问题讲明白，再给一个能马上开拍的角度，内容就会自然很多。"
         ),
         "opportunity": (
-            f"如果你是老板或行业观察者，{topic_text}不该只当成一条新闻看。"
-            "真正要看的，是它背后可能牵动哪条产业链，哪些供应关系会被重新定价，普通人又能从哪里读到机会和风险。"
-            "把商业逻辑讲出来，这条内容就不只是追热点。"
+            f"如果你是老板或者行业观察者，{topic_text}别只当成一条新闻刷过去。"
+            "更值得看的，是谁的需求变了，谁的供给跟不上，哪一段链条可能先出现新机会。"
+            "把这些话讲清楚，你的内容就不是蹭热点，而是在帮观众做判断。"
         ),
         "boss_view": (
-            f"站在经营者视角看，{topic_text}更像是一道趋势判断题。"
-            "你要看的不是谁上了热搜，而是谁掌握了资源、渠道和用户认知。"
-            "当这些位置发生变化，真正有准备的人会先调整选题、产品和合作方向。"
+            f"站在经营者视角看，{topic_text}更像一道趋势题。"
+            "别只看谁上了热搜，要看谁拿到了资源，谁靠近用户，谁可能改变原来的合作关系。"
+            "这些位置一变，有准备的人就会先调整选题、产品和打法。"
         ),
         "knowledge": (
-            f"把{topic_text}讲成知识口播，可以分三步：先交代背景，再解释矛盾，最后给一个判断方法。"
-            "这样观众听到的不只是消息，而是以后遇到类似热点时也能复用的一套分析路径。"
+            f"想把{topic_text}讲成知识口播，可以简单一点。"
+            "先说背景，再说矛盾，最后给一个判断方法。"
+            "观众听完不只是知道一条消息，还能学会下次遇到类似热点该怎么看。"
         ),
         "story": (
             f"昨天有个朋友问我：{topic_text}这种事，和普通人到底有什么关系？"
-            "我告诉他，关系可能不在新闻本身，而在它提醒我们：很多机会一开始都藏在不起眼的变化里。"
-            "你把这个转折讲出来，内容就会更像故事。"
+            "我说，关系可能不在新闻本身，而在它提醒我们：很多机会一开始都藏在不起眼的小变化里。"
+            "把这个转折讲出来，观众会更容易听进去。"
         ),
         "live_stream": (
             f"家人们，这个消息先别只看热闹，{topic_text}里面有一个很适合互动的点。"
@@ -368,7 +413,7 @@ def _compose_diverse_script(*, topic: str, hook: str, template: str, language: s
         ),
     }
     body = lines.get(style, lines["suspense"])
-    return f"{body}{strategy['cta']}"
+    return smooth_spoken_script(_join_sentences(body, strategy["cta"]))
 
 
 def _extend_unique(items: list[str], fallback: list[str], min_count: int) -> list[str]:
@@ -386,7 +431,7 @@ def _extend_unique(items: list[str], fallback: list[str], min_count: int) -> lis
 
 
 def _expand_rewrite_script(script: str, *, topic: str, hook: str, template: str, language: str, variant: str, index: int = 0) -> str:
-    text = sanitize_rewrite_script(script)
+    text = smooth_spoken_script(script)
     style = _style_for_index(index, variant)
     if language != "zh":
         if len(text.split()) >= 70 and not is_script_polluted(text):
@@ -467,15 +512,15 @@ def _default_rewrites(topic: str, hook: str, template: str, language: str) -> li
     base = [
         (
             "版本A：稳健拆解版",
-            f"{hook} 这条内容真正值得学习的，不只是{topic}本身，而是它把一个热点讲成了观众愿意继续听的问题。开头先抛出反差，中间补充关键线索，再给出可延伸的判断，最后引导大家关注后续变化。",
+            f"{hook} 这条内容别只学{topic}本身，更要学它怎么把热点讲成一个让人愿意听下去的问题。开头先抛反差，中间补一条关键线索，最后给出你的判断，观众才会觉得这不是在复述新闻。",
         ),
         (
             "版本B：强钩子口播版",
-            f"很多人看到{topic}，只会复述新闻，但真正能吸引人的内容不会停在表面。它会先制造一个疑问：为什么这件事值得现在关注？再把问题、线索和影响讲清楚，最后提醒观众继续关注后续变化。",
+            f"很多人看到{topic}，第一反应就是照着讲一遍，但这样很难留下观众。你可以先问一句：为什么这件事现在值得关注？再把问题、线索和影响讲清楚，结尾给一个能评论的判断。",
         ),
         (
             "版本C：转化引导版",
-            f"如果你也想做{topic}这类内容，别急着照搬标题。先用一句话抓住反差，再放大观众关心的问题，接着给出一个有价值的判断，最后用一句行动号召收尾，让用户愿意评论、收藏或继续追更。",
+            f"如果你也想做{topic}这类内容，别急着照搬标题。先用一句话讲出反差，再说清楚观众为什么要关心，接着给一个你的判断，最后把下一步动作说具体，让用户愿意评论或收藏。",
         ),
     ]
     return [

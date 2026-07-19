@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import base64
+import logging
 from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException
 
 from app.core.config import settings
-from app.services.tts.voice_registry import DEFAULT_TTS_LANGUAGE, validate_tts_voice
+from app.services.tts.voice_registry import DEFAULT_TTS_LANGUAGE
+
+logger = logging.getLogger(__name__)
+PROVIDER_ERROR_DETAIL = "配音服务暂时不可用，请稍后重试。"
 
 
 class VolcengineTTSProvider:
@@ -37,8 +41,7 @@ class VolcengineTTSProvider:
         pitch_ratio: float = 1.0,
     ) -> dict:
         clean_text = text.strip()
-        voice_config = validate_tts_voice(language, voice_type)
-        selected_voice = voice_config.id
+        selected_voice = (voice_type or "").strip()
         self._validate(selected_voice)
 
         payload = {
@@ -76,50 +79,55 @@ class VolcengineTTSProvider:
             )
 
         if response.status_code >= 400:
-            raise HTTPException(
-                status_code=502,
-                detail=_format_volcengine_error(response.status_code, response.text),
-            )
+            logger.warning("TTS provider request failed status_code=%s", response.status_code)
+            raise HTTPException(status_code=502, detail=PROVIDER_ERROR_DETAIL)
 
         try:
             data = response.json()
         except ValueError as error:
-            raise HTTPException(status_code=502, detail="Volcengine TTS returned non-JSON response.") from error
+            logger.warning("TTS provider returned an invalid response status_code=%s", response.status_code)
+            raise HTTPException(status_code=502, detail=PROVIDER_ERROR_DETAIL) from error
 
         code = data.get("code")
         if code not in {None, 0, 200, "0", "200", 3000, "3000"}:
-            message = str(data.get("message") or data.get("msg") or data)[:1000]
-            raise HTTPException(status_code=502, detail=_format_volcengine_api_error(message))
+            logger.warning("TTS provider returned an application error code=%s", code)
+            raise HTTPException(status_code=502, detail=PROVIDER_ERROR_DETAIL)
 
         audio_base64 = _find_audio_base64(data)
         if not audio_base64:
-            raise HTTPException(status_code=502, detail=f"Volcengine TTS response missing audio data: {str(data)[:800]}")
+            logger.warning("TTS provider response did not contain audio data")
+            raise HTTPException(status_code=502, detail=PROVIDER_ERROR_DETAIL)
 
         try:
             audio = base64.b64decode(audio_base64)
         except Exception as error:
-            raise HTTPException(status_code=502, detail="Volcengine TTS audio data is not valid base64.") from error
+            logger.warning("TTS provider returned invalid audio data")
+            raise HTTPException(status_code=502, detail=PROVIDER_ERROR_DETAIL) from error
 
         return {
             "audio_bytes": audio,
             "extension": ".mp3",
             "content_type": "audio/mpeg",
             "provider": "volcengine",
-            "language": voice_config.language,
+            "language": language,
             "voice_type": selected_voice,
         }
 
     def _validate(self, voice_type: str) -> None:
+        missing = []
         if not self.access_token:
-            raise HTTPException(status_code=500, detail="VOLCENGINE_TTS_ACCESS_TOKEN missing")
+            missing.append("credentials")
         if not self.app_id:
-            raise HTTPException(status_code=500, detail="VOLCENGINE_TTS_APP_ID missing")
+            missing.append("application")
         if not self.cluster:
-            raise HTTPException(status_code=500, detail="VOLCENGINE_TTS_CLUSTER missing")
+            missing.append("cluster")
         if not voice_type:
-            raise HTTPException(status_code=500, detail="VOLCENGINE_TTS_VOICE_TYPE missing")
+            missing.append("voice_mapping")
         if not self.endpoint:
-            raise HTTPException(status_code=500, detail="VOLCENGINE_TTS_ENDPOINT missing")
+            missing.append("endpoint")
+        if missing:
+            logger.error("TTS provider configuration incomplete missing_categories=%s", ",".join(missing))
+            raise HTTPException(status_code=503, detail="配音服务尚未完成配置。")
 
 
 def _find_audio_base64(data: dict) -> str:
@@ -138,20 +146,4 @@ def _find_audio_base64(data: dict) -> str:
     return ""
 
 
-def _format_volcengine_api_error(message: str) -> str:
-    lowered = message.lower()
-    if "voice" in lowered and ("invalid" in lowered or "not" in lowered or "unsupported" in lowered):
-        return f"Volcengine TTS voice_type invalid: {message}"
-    if any(token in lowered for token in ["quota", "permission", "unauthorized", "forbidden", "balance", "credit"]):
-        return f"Volcengine TTS quota/permission error: {message}"
-    return f"Volcengine TTS failed: {message}"
-
-
-def _format_volcengine_error(status_code: int, body: str) -> str:
-    if status_code in {401, 403}:
-        return f"Volcengine TTS quota/permission error: API permission denied or token invalid. 返回：{body[:500]}"
-    if status_code in {402, 429}:
-        return f"Volcengine TTS quota/permission error: quota, balance, or rate limit issue. 返回：{body[:500]}"
-    if status_code == 400 and "voice" in body.lower():
-        return f"Volcengine TTS voice_type invalid: {body[:500]}"
-    return f"Volcengine TTS failed ({status_code}): {body[:800]}"
+# Provider response bodies are intentionally never exposed through HTTP details.

@@ -15,7 +15,7 @@ from app.services.asr_service import transcribe_audio
 from app.services.llm_provider import LLMProvider
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio
 from app.services.video_link_resolver import resolve_video_link
-from app.services.viral_analyzer import FINAL_REWRITE_LIMIT, analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, sanitize_rewrite_script
+from app.services.viral_analyzer import FINAL_REWRITE_LIMIT, analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, smooth_spoken_script
 
 
 class ViralPipelineStatus(str, Enum):
@@ -141,23 +141,46 @@ def _pipeline_cta(index: int) -> str:
     return PIPELINE_CTA_POOL[index % len(PIPELINE_CTA_POOL)]
 
 
+def _with_sentence_end(text: str) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    if value[-1] in "。！？!?":
+        return value
+    return f"{value}。"
+
+
+def _trim_pipeline_cta(script: str) -> str:
+    text = str(script or "")
+    for cta in PIPELINE_CTA_POOL:
+        text = text.replace(cta, "")
+        text = text.replace(cta.rstrip("。！？!"), "")
+    return text.strip(" ：:，,。；; ")
+
+
+def _append_pipeline_cta(script: str, index: int) -> str:
+    text = smooth_spoken_script(_trim_pipeline_cta(script))
+    return smooth_spoken_script(f"{_with_sentence_end(text)}{_pipeline_cta(index)}")
+
+
 def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: str, index: int = 0) -> str:
-    text = sanitize_rewrite_script(script)
+    text = smooth_spoken_script(script)
     if _cjk_len(text) >= MIN_REWRITE_CJK_CHARS and not is_script_polluted(text):
         return text
     topic_text = topic or "这个热点"
     styles = [
         (
-            f"你有没有发现，{topic_text}真正抓人的不是事件本身，而是它背后的反常识线索。"
-            "先把悬念抛给观众，再补一个关键判断，让大家知道为什么现在值得看懂。"
+            f"你有没有发现，{topic_text}让人停下来的地方，往往不是事件本身。"
+            "而是大家第一眼以为很简单，往下看才发现里面有一个反差。"
+            "先把这个反差讲出来，再补一个你的判断，观众会更愿意听下去。"
         ),
         (
-            f"如果你经常追热点却不知道怎么做内容，{topic_text}可以换成一个普通人视角。"
-            "先说大家最容易忽略的痛点，再把影响讲明白，最后给一个能马上复用的表达角度。"
+            f"如果你经常追热点，却不知道怎么把{topic_text}拍成自己的内容，可以先换到用户视角。"
+            "别急着讲结论，先说大家最容易卡住的问题，再给一个能马上开拍的角度。"
         ),
         (
-            f"{topic_text}最值得关注的是机会信号。"
-            "表面看是一个新闻点，往深一层看，是注意力、产业变化和内容选题之间的连接。"
+            f"{topic_text}不只是一个新闻点，也可能是一个机会信号。"
+            "你可以看谁的需求变了，谁的供给还没跟上，再判断这个话题能不能延伸成自己的选题。"
         ),
         (
             f"站在老板视角看，{topic_text}不是单纯热点，而是一次判断趋势的练习。"
@@ -185,16 +208,16 @@ def _expand_pipeline_rewrite(script: str, *, topic: str, template: str, title: s
         ),
     ]
     opening = text or styles[index % len(styles)]
-    return f"{opening}{_pipeline_cta(index)}"
+    return _append_pipeline_cta(opening, index)
 
 
 def _fallback_rewrites(analysis: dict[str, Any], transcript: str) -> list[dict[str, str]]:
     topic = str(analysis.get("topic") or "这个爆款视频").strip()
     template = str(analysis.get("template") or "先提出问题，再给出解决方法，最后明确行动。").strip()
     samples = [
-        f"今天用一个更清晰的角度，聊聊{topic}。先别急着模仿表面内容，真正值得学习的是它的开头、痛点和行动号召。",
-        f"很多人看见爆款只想照着拍，但真正能复用的是结构。围绕{topic}，先抓住用户最在意的问题，再给出解决路径。",
-        f"如果你也想做同类内容，先把{topic}拆成三步：开头抓注意力，中间放大问题，结尾给出明确行动。",
+        f"今天换个更好懂的角度，聊聊{topic}。别先忙着照搬原视频，先看它为什么能让人停下来：表面是热点，里面其实藏着一个和观众有关的问题。",
+        f"很多人看见爆款就想照着拍，但用户听到一半就划走，通常是因为你只复述了信息。围绕{topic}，先说清楚他们关心什么，再给一个能立刻用上的表达角度。",
+        f"如果你也想做同类内容，可以把{topic}拆成三句话：第一句抓注意力，第二句讲清楚为什么和观众有关，第三句给出你的判断和下一步动作。",
         f"我做内容越久越发现，爆款不是靠运气。像{topic}这种内容，背后都有一套可复制的表达节奏。",
         f"一个视频为什么能火？关键不是句子多漂亮，而是它有没有把{topic}讲成一个用户愿意听完的问题。",
         f"如果你正在找更稳定的短视频转化方法，可以先从{topic}这个方向入手，把痛点讲透，把方案讲清楚。",
@@ -260,6 +283,10 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
             "不要逐字复制原文案",
             "必须是原创表达",
             "适合数字人口播",
+            "必须像真人直接对观众说话，少用书面总结和方法论标题",
+            "多用短句和自然转折，避免连续堆叠“真正、背后、结构、价值、逻辑”等抽象词",
+            "不要把每条都写成“先...再...最后...”的教学提纲，除非句子本身像口播",
+            "每条建议 100-160 个中文字符，信息要具体但不要编造事实",
             "避免承诺绝对收益",
             "每个版本都要有明确口播节奏",
             "只生成 3 条高质量版本：版本A热点反差版、版本B用户痛点版、版本C商业机会版",

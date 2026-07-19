@@ -19,7 +19,12 @@ from app.services.avatar_templates import get_avatar_template
 from app.services.musetalk_client import check_musetalk_health, generate_avatar_video_with_musetalk
 from app.services.storage import upload_public_file
 from app.services.tts import synthesize_speech_to_storage
-from app.services.tts.voice_registry import DEFAULT_TTS_LANGUAGE, get_language_config, normalize_tts_language, serialize_voice_registry, validate_tts_voice
+from app.services.tts.voice_registry import (
+    DEFAULT_TTS_LANGUAGE,
+    DEFAULT_VOICE_KEY,
+    normalize_legacy_voice_request,
+    resolve_voice,
+)
 
 router = APIRouter(prefix="/avatar", tags=["avatar"])
 logger = logging.getLogger(__name__)
@@ -52,65 +57,19 @@ class TemplateAvatarGenerateRequest(BaseModel):
     pitch_ratio: float = 1.0
 
 
-class TTSPreviewRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=1200)
-    language: str = DEFAULT_TTS_LANGUAGE
-    voice: str | None = None
-    voice_type: str | None = None
-    speed: float | None = None
-    speed_ratio: float | None = None
-
-
 @router.get("/health")
 async def avatar_health() -> dict:
+    if _preview_safe_mode_enabled():
+        return {
+            "status": "ok",
+            "video_generation": {"status": "disabled"},
+            "preview_tts_only": {
+                "status": "ready" if _preview_tts_only_ready() else "unavailable",
+            },
+        }
     return {
         "status": "ok",
         "musetalk": await check_musetalk_health(),
-    }
-
-
-@router.get("/tts-voices")
-def list_tts_voices() -> dict:
-    return {
-        "default_language": DEFAULT_TTS_LANGUAGE,
-        "languages": serialize_voice_registry(),
-    }
-
-
-@router.post("/tts-preview")
-async def generate_tts_preview(
-    payload: TTSPreviewRequest,
-    token: str = Depends(get_bearer_token),
-    supabase: Client = Depends(get_supabase),
-) -> dict:
-    user = get_authenticated_user(supabase, token)
-    selected_voice_type = payload.voice or payload.voice_type
-    selected_speed = payload.speed if payload.speed is not None else payload.speed_ratio
-    speed_ratio = selected_speed if selected_speed is not None else 1.0
-    if speed_ratio < 0.5 or speed_ratio > 2.0:
-        raise HTTPException(status_code=400, detail="speed must be between 0.5 and 2.0")
-    logger.info(
-        "Avatar TTS preview started user_id=%s text_length=%s language=%s voice_type=%s",
-        user["id"],
-        len(payload.text),
-        payload.language,
-        selected_voice_type,
-    )
-    result = await synthesize_speech_to_storage(
-        supabase,
-        text=payload.text,
-        folder="avatar/tts-preview",
-        language=payload.language,
-        voice_type=selected_voice_type,
-        speed_ratio=speed_ratio,
-    )
-    return {
-        "success": True,
-        "audio_url": result["audio_url"],
-        "duration": result.get("duration", 0),
-        "provider": result["provider"],
-        "language": result.get("language") or normalize_tts_language(payload.language),
-        "voice_type": result.get("voice_type") or selected_voice_type,
     }
 
 
@@ -126,32 +85,34 @@ async def generate_template_avatar_video(
     audio_url = (payload.audio_url or "").strip()
     template_id = payload.avatar_template_id.strip()
     template = get_avatar_template(template_id)
-    template_video_url = get_dynamic_template_video_url(template.id)
-    selected_voice_type = payload.voice or payload.voice_type or template.default_voice_type
+    preview_safe_mode = _preview_safe_mode_enabled()
+    template_video_url = None if preview_safe_mode else get_dynamic_template_video_url(template.id)
+    voice_request = normalize_legacy_voice_request(payload.voice, payload.voice_type)
 
     if not audio_url and not text:
         raise HTTPException(status_code=400, detail="请提供 audio_url，或输入文案用于生成语音。")
+    if preview_safe_mode and audio_url:
+        raise HTTPException(status_code=409, detail="预览安全模式暂不支持视频生成。")
 
     assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
 
     if not audio_url:
-        selected_voice = validate_tts_voice(payload.language, selected_voice_type)
-        selected_language = selected_voice.language
         try:
             logger.info(
-                "Template avatar TTS started user_id=%s template=%s text_length=%s language=%s voice_type=%s",
+                "Template avatar TTS started user_id=%s template=%s text_length=%s language=%s requested_voice_key=%s",
                 user["id"],
                 template.id,
                 len(text),
-                selected_language or "default",
-                selected_voice_type,
+                payload.language,
+                voice_request.requested_key,
             )
             tts_result = await synthesize_speech_to_storage(
                 supabase,
                 text=text,
-                folder="avatar/template-generate/tts",
-                language=selected_language,
-                voice_type=selected_voice.id,
+                folder=f"preview-tts/{user['id']}" if preview_safe_mode else "avatar/template-generate/tts",
+                language=payload.language,
+                voice_type=voice_request.requested_key,
+                legacy_provider_voice_id=voice_request.legacy_provider_voice_id,
                 speed_ratio=payload.speed_ratio,
                 volume_ratio=payload.volume_ratio,
                 pitch_ratio=payload.pitch_ratio,
@@ -163,6 +124,11 @@ async def generate_template_avatar_video(
             logger.exception("Template avatar TTS failed user_id=%s template=%s", user["id"], template.id)
             raise HTTPException(status_code=502, detail=str(error)) from error
 
+    if preview_safe_mode:
+        return _preview_tts_ready_response(tts_result, payload.language, audio_url)
+
+    if template_video_url is None:
+        raise RuntimeError("Template video URL must be resolved outside Preview Safe Mode.")
     task = _create_avatar_task(supabase, user["id"], template_video_url, audio_url)
     logger.info(
         "Template avatar task queued task_id=%s user_id=%s template=%s template_video_url=%s audio_url=%s",
@@ -201,6 +167,8 @@ async def generate_avatar_video(
     task = None
     text = (script_text or "").strip()
     try:
+        if _preview_safe_mode_enabled():
+            raise HTTPException(status_code=409, detail="预览安全模式暂不支持视频生成。")
         if audio_file is None and not text:
             raise HTTPException(status_code=400, detail="请上传口播音频，或输入文案用于生成语音。")
         assert_generation_quota(supabase, user_id=user["id"], email=user["email"])
@@ -229,20 +197,21 @@ async def generate_avatar_video(
             )
             logger.info("Avatar input audio uploaded user_id=%s audio_url=%s", user["id"], audio_url)
         else:
-            selected_voice_type = voice or voice_type
+            voice_request = normalize_legacy_voice_request(voice, voice_type)
             logger.info(
-                "Avatar TTS started user_id=%s text_length=%s language=%s voice_type=%s",
+                "Avatar TTS started user_id=%s text_length=%s language=%s requested_voice_key=%s",
                 user["id"],
                 len(text),
                 language,
-                selected_voice_type or settings.volcengine_tts_voice_type,
+                voice_request.requested_key,
             )
             tts_result = await synthesize_speech_to_storage(
                 supabase,
                 text=text,
                 folder="avatar-inputs/tts",
                 language=language,
-                voice_type=selected_voice_type,
+                voice_type=voice_request.requested_key,
+                legacy_provider_voice_id=voice_request.legacy_provider_voice_id,
                 speed_ratio=speed_ratio,
             )
             audio_url = tts_result["audio_url"]
@@ -282,6 +251,8 @@ async def generate_avatar_video(
 
 
 async def _process_avatar_task(task_id: str, user_id: str, video_url: str, audio_url: str, script_text: str | None = None) -> None:
+    if _preview_safe_mode_enabled():
+        raise RuntimeError("Avatar task processing is disabled in preview safe mode")
     supabase = get_supabase()
 
     def update_stage(stage: str) -> None:
@@ -430,21 +401,43 @@ def _safe_fail_task(supabase: Client, task_id: str, message: str) -> None:
         logger.exception("Failed to mark avatar task failed")
 
 
-def _normalize_tts_language(language: str | None) -> str | None:
-    if not (language or "").strip():
-        return None
-    normalized = normalize_tts_language(language)
-    get_language_config(normalized)
-    return normalized
+def _preview_safe_mode_enabled() -> bool:
+    return settings.app_environment == "preview" and settings.avatar_preview_safe_mode
 
 
-def _validate_template_tts_voice(language: str, voice_type: str) -> None:
+def _preview_tts_only_ready() -> bool:
+    if settings.voice_clone_provider.strip().lower() != "volcengine":
+        return False
+    if not all(
+        value.strip()
+        for value in (
+            settings.volcengine_tts_app_id,
+            settings.volcengine_tts_access_token,
+            settings.volcengine_tts_cluster,
+            settings.volcengine_tts_endpoint,
+        )
+    ):
+        return False
     try:
-        validate_tts_voice(language, voice_type)
-    except HTTPException as error:
-        if normalize_tts_language(language) == "en-US" and "coming soon" in str(error.detail).lower():
-            raise HTTPException(status_code=400, detail="English TTS voices are not configured yet.") from error
-        raise
+        resolve_voice(DEFAULT_VOICE_KEY, DEFAULT_TTS_LANGUAGE)
+    except HTTPException:
+        return False
+    return True
+
+
+def _preview_tts_ready_response(tts_result: dict, language: str, audio_url: str | None) -> dict:
+    return {
+        "success": True,
+        "preview_safe_mode": True,
+        "status": "tts_ready",
+        "voice": tts_result.get("voice"),
+        "used_fallback": bool(tts_result.get("used_fallback")),
+        "language": language,
+        "audio_url": audio_url or None,
+        "task_id": None,
+        "video_url": None,
+        "message": "预览配音已生成，未创建视频任务。",
+    }
 
 
 def _compact_error_message(message: str) -> str:

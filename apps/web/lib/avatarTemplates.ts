@@ -1,3 +1,5 @@
+import { allowExternalMediaUrl, isPreviewEnvironment } from "./runtimeEnvironment";
+
 export type AvatarTemplate = {
   id: string;
   name: string;
@@ -6,16 +8,24 @@ export type AvatarTemplate = {
   useCases: string[];
   avatar_image: string;
   preview_video_url?: string;
-  voice_type: "BV001_streaming" | "BV002_streaming";
+  voice_type: "zh_female_default" | "zh_male_default";
   gender: "female" | "male";
   style: "business" | "tech";
   vip_only: boolean;
 };
 
-const businessFemalePreviewVideoUrl = process.env.NEXT_PUBLIC_AVATAR_TEMPLATE_VIDEO_URL_BUSINESS_FEMALE_01?.trim() || undefined;
-const businessMalePreviewVideoUrl = process.env.NEXT_PUBLIC_AVATAR_TEMPLATE_VIDEO_URL_BUSINESS_MALE_01?.trim() || undefined;
+type AvatarTemplateOptions = {
+  previewEnvironment?: boolean;
+  businessFemalePreviewVideoUrl?: string;
+  businessMalePreviewVideoUrl?: string;
+};
 
-const allAvatarTemplates: AvatarTemplate[] = [
+function createAllAvatarTemplates({
+  previewEnvironment = isPreviewEnvironment,
+  businessFemalePreviewVideoUrl = process.env.NEXT_PUBLIC_AVATAR_TEMPLATE_VIDEO_URL_BUSINESS_FEMALE_01,
+  businessMalePreviewVideoUrl = process.env.NEXT_PUBLIC_AVATAR_TEMPLATE_VIDEO_URL_BUSINESS_MALE_01,
+}: AvatarTemplateOptions = {}): AvatarTemplate[] {
+  return [
   {
     id: "business_female_01",
     name: "商务女主播",
@@ -23,8 +33,8 @@ const allAvatarTemplates: AvatarTemplate[] = [
     description: "适用于产品介绍、知识分享、企业宣传、企业培训",
     useCases: ["产品介绍", "知识分享", "企业宣传", "企业培训"],
     avatar_image: "/avatars/business_female_01.png",
-    preview_video_url: businessFemalePreviewVideoUrl,
-    voice_type: "BV001_streaming",
+    preview_video_url: allowExternalMediaUrl(businessFemalePreviewVideoUrl, previewEnvironment),
+    voice_type: "zh_female_default",
     gender: "female",
     style: "business",
     vip_only: false,
@@ -36,8 +46,8 @@ const allAvatarTemplates: AvatarTemplate[] = [
     description: "适用于企业宣传、产品演示、课程培训、商业讲解",
     useCases: ["企业宣传", "产品演示", "课程培训", "商业讲解"],
     avatar_image: "/avatars/business_male_01.png",
-    preview_video_url: businessMalePreviewVideoUrl,
-    voice_type: "BV002_streaming",
+    preview_video_url: allowExternalMediaUrl(businessMalePreviewVideoUrl, previewEnvironment),
+    voice_type: "zh_male_default",
     gender: "male",
     style: "business",
     vip_only: false,
@@ -49,16 +59,23 @@ const allAvatarTemplates: AvatarTemplate[] = [
     description: "适合AI资讯、科技口播、产品介绍",
     useCases: ["AI资讯", "科技口播", "产品介绍"],
     avatar_image: "/avatars/ai_female_01.png",
-    voice_type: "BV001_streaming",
+    voice_type: "zh_female_default",
     gender: "female",
     style: "tech",
     vip_only: false,
   },
-];
+  ];
+}
 
-export const avatarTemplates: AvatarTemplate[] = allAvatarTemplates.filter((template) =>
-  ["business_female_01", "business_male_01"].includes(template.id),
-);
+const allAvatarTemplates = createAllAvatarTemplates();
+
+export function createAvatarTemplates(options: AvatarTemplateOptions = {}): AvatarTemplate[] {
+  return createAllAvatarTemplates(options).filter((template) =>
+    ["business_female_01", "business_male_01"].includes(template.id),
+  );
+}
+
+export const avatarTemplates = createAvatarTemplates();
 
 export function getAvatarTemplate(id: string | null | undefined) {
   return allAvatarTemplates.find((template) => template.id === id) ?? avatarTemplates[0];
