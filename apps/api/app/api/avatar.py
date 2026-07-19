@@ -19,7 +19,12 @@ from app.services.avatar_templates import get_avatar_template
 from app.services.musetalk_client import check_musetalk_health, generate_avatar_video_with_musetalk
 from app.services.storage import upload_public_file
 from app.services.tts import synthesize_speech_to_storage
-from app.services.tts.voice_registry import DEFAULT_TTS_LANGUAGE, normalize_legacy_voice_request
+from app.services.tts.voice_registry import (
+    DEFAULT_TTS_LANGUAGE,
+    DEFAULT_VOICE_KEY,
+    normalize_legacy_voice_request,
+    resolve_voice,
+)
 
 router = APIRouter(prefix="/avatar", tags=["avatar"])
 logger = logging.getLogger(__name__)
@@ -55,7 +60,13 @@ class TemplateAvatarGenerateRequest(BaseModel):
 @router.get("/health")
 async def avatar_health() -> dict:
     if _preview_safe_mode_enabled():
-        return {"status": "ok", "video_generation": {"status": "disabled"}}
+        return {
+            "status": "ok",
+            "video_generation": {"status": "disabled"},
+            "preview_tts_only": {
+                "status": "ready" if _preview_tts_only_ready() else "unavailable",
+            },
+        }
     return {
         "status": "ok",
         "musetalk": await check_musetalk_health(),
@@ -392,6 +403,26 @@ def _safe_fail_task(supabase: Client, task_id: str, message: str) -> None:
 
 def _preview_safe_mode_enabled() -> bool:
     return settings.app_environment == "preview" and settings.avatar_preview_safe_mode
+
+
+def _preview_tts_only_ready() -> bool:
+    if settings.voice_clone_provider.strip().lower() != "volcengine":
+        return False
+    if not all(
+        value.strip()
+        for value in (
+            settings.volcengine_tts_app_id,
+            settings.volcengine_tts_access_token,
+            settings.volcengine_tts_cluster,
+            settings.volcengine_tts_endpoint,
+        )
+    ):
+        return False
+    try:
+        resolve_voice(DEFAULT_VOICE_KEY, DEFAULT_TTS_LANGUAGE)
+    except HTTPException:
+        return False
+    return True
 
 
 def _preview_tts_ready_response(tts_result: dict, language: str, audio_url: str | None) -> dict:

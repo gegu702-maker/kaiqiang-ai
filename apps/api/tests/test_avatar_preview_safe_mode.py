@@ -326,7 +326,55 @@ def test_health_does_not_call_musetalk_in_safe_mode(monkeypatch):
         calls["health"] += 1
 
     monkeypatch.setattr(avatar, "check_musetalk_health", fake_health)
+    monkeypatch.setattr(avatar.settings, "voice_clone_provider", "mock")
     response = _client(monkeypatch).get("/api/avatar/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "video_generation": {"status": "disabled"}}
+    assert response.json() == {
+        "status": "ok",
+        "video_generation": {"status": "disabled"},
+        "preview_tts_only": {"status": "unavailable"},
+    }
     assert calls["health"] == 0
+
+
+def test_health_reports_preview_tts_ready_without_provider_call(monkeypatch):
+    calls = {"health": 0, "provider": 0}
+
+    async def fake_health():
+        calls["health"] += 1
+
+    async def fake_provider(*_args, **_kwargs):
+        calls["provider"] += 1
+
+    monkeypatch.setattr(avatar, "check_musetalk_health", fake_health)
+    monkeypatch.setattr(avatar, "synthesize_speech_to_storage", fake_provider)
+    monkeypatch.setattr(avatar.settings, "voice_clone_provider", "volcengine")
+    monkeypatch.setattr(avatar.settings, "volcengine_tts_app_id", "preview-app")
+    monkeypatch.setattr(avatar.settings, "volcengine_tts_access_token", "preview-token")
+    monkeypatch.setattr(avatar.settings, "volcengine_tts_cluster", "preview-cluster")
+    monkeypatch.setattr(avatar.settings, "volcengine_tts_endpoint", "https://tts.example.test")
+    monkeypatch.setattr(avatar.settings, "volcengine_voice_zh_female_default", "preview-voice")
+
+    response = _client(monkeypatch).get("/api/avatar/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "video_generation": {"status": "disabled"},
+        "preview_tts_only": {"status": "ready"},
+    }
+    assert calls == {"health": 0, "provider": 0}
+
+
+def test_non_preview_health_contract_remains_compatible(monkeypatch):
+    async def fake_health():
+        return {"status": "ready", "message": "ok"}
+
+    monkeypatch.setattr(avatar, "check_musetalk_health", fake_health)
+    response = _client(monkeypatch, safe_mode=False).get("/api/avatar/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "musetalk": {"status": "ready", "message": "ok"},
+    }
