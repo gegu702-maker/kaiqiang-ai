@@ -143,7 +143,19 @@ test("voice options expose 14 internal keys grouped by language while preserving
     avatarVoiceOptions.reduce<Record<string, number>>((counts, option) => ({ ...counts, [option.group]: (counts[option.group] ?? 0) + 1 }), {}),
     { zh: 10, en: 2, ja: 2 },
   );
-  assert.equal(avatarVoiceOptions.find(({ key }) => key === "ja_elegant_female")?.name.zh, "气质女生（日语）");
+  assert.deepEqual(
+    Object.fromEntries(
+      avatarVoiceOptions
+        .filter(({ group }) => group !== "zh")
+        .map(({ key, name }) => [key, name.zh]),
+    ),
+    {
+      en_energetic_male_jackson: "活力男声-Jackson（英语）",
+      en_energetic_female_ariana: "活力女声-Ariana（英语）",
+      ja_male: "日语男声（日语）",
+      ja_elegant_female: "气质女生（日语）",
+    },
+  );
   assert.equal(getAvatarVoiceLanguage("en_energetic_male_jackson"), "en-US");
   assert.equal(getAvatarVoiceLanguage("ja_elegant_female"), "ja-JP");
   assert.equal(DEFAULT_AVATAR_VOICE_KEY, "zh_female_default");

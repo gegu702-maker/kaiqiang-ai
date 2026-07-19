@@ -30,7 +30,7 @@ export const avatarVoiceOptions = [
   { key: "zh_lively_female", language: "zh-CN", group: "zh", name: { zh: "活泼女声", en: "Lively Female" }, description: { zh: "活泼明快的中文女声", en: "Lively bright Mandarin female" }, recommended: false, recommendedSpeed: 1 },
   { key: "en_energetic_male_jackson", language: "en-US", group: "en", name: { zh: "活力男声-Jackson（英语）", en: "Energetic Male - Jackson" }, description: { zh: "英语男声", en: "Energetic English male" }, recommended: false, recommendedSpeed: 1 },
   { key: "en_energetic_female_ariana", language: "en-US", group: "en", name: { zh: "活力女声-Ariana（英语）", en: "Energetic Female - Ariana" }, description: { zh: "英语女声", en: "Energetic English female" }, recommended: false, recommendedSpeed: 1 },
-  { key: "ja_male", language: "ja-JP", group: "ja", name: { zh: "日语男声", en: "Japanese Male" }, description: { zh: "日语男声", en: "Japanese male" }, recommended: false, recommendedSpeed: 1 },
+  { key: "ja_male", language: "ja-JP", group: "ja", name: { zh: "日语男声（日语）", en: "Japanese Male" }, description: { zh: "日语男声", en: "Japanese male" }, recommended: false, recommendedSpeed: 1 },
   { key: "ja_elegant_female", language: "ja-JP", group: "ja", name: { zh: "气质女生（日语）", en: "Elegant Female (Japanese)" }, description: { zh: "日语女声，请输入日语文案", en: "Japanese female; use a Japanese script" }, recommended: false, recommendedSpeed: 1 },
 ] as const;
 
