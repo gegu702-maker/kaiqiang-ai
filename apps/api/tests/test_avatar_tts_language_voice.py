@@ -14,6 +14,21 @@ from app.services import tts
 from app.services.tts import voice_registry
 from app.services.tts import volcengine_tts
 
+NEW_VOICES = [
+    ("zh_dongbei_laotie", "zh-CN", "volcengine_voice_zh_dongbei_laotie", "BV021_streaming"),
+    ("en_energetic_male_jackson", "en-US", "volcengine_voice_en_energetic_male_jackson", "BV504_streaming"),
+    ("zh_gentle_young_man", "zh-CN", "volcengine_voice_zh_gentle_young_man", "BV033_streaming"),
+    ("zh_refined_youth", "zh-CN", "volcengine_voice_zh_refined_youth", "BV102_streaming"),
+    ("en_energetic_female_ariana", "en-US", "volcengine_voice_en_energetic_female_ariana", "BV503_streaming"),
+    ("ja_male", "ja-JP", "volcengine_voice_ja_male", "BV524_streaming"),
+    ("ja_elegant_female", "ja-JP", "volcengine_voice_ja_elegant_female", "BV522_streaming"),
+    ("zh_sunny_male", "zh-CN", "volcengine_voice_zh_sunny_male", "BV056_streaming"),
+    ("zh_intellectual_female_bilingual", "zh-CN", "volcengine_voice_zh_intellectual_female_bilingual", "BV034_streaming"),
+    ("zh_friendly_female", "zh-CN", "volcengine_voice_zh_friendly_female", "BV007_streaming"),
+    ("zh_guangxi_cousin", "zh-CN", "volcengine_voice_zh_guangxi_cousin", "BV213_streaming"),
+    ("zh_lively_female", "zh-CN", "volcengine_voice_zh_lively_female", "BV005_streaming"),
+]
+
 
 @pytest.fixture(autouse=True)
 def empty_voice_configuration(monkeypatch):
@@ -67,6 +82,32 @@ def test_unknown_or_provider_voice_is_rejected(value):
 def test_language_and_voice_mismatch_is_rejected():
     with pytest.raises(HTTPException) as error:
         voice_registry.resolve_voice("zh_female_default", "en-US")
+    assert error.value.status_code == 422
+
+
+@pytest.mark.parametrize(("voice_key", "language", "setting_name", "provider_voice"), NEW_VOICES)
+def test_new_voice_registry_resolves_exact_provider_voice(monkeypatch, voice_key, language, setting_name, provider_voice):
+    monkeypatch.setattr(voice_registry.settings, setting_name, provider_voice)
+    result = voice_registry.resolve_voice(voice_key, language)
+    assert result.requested_key == voice_key
+    assert result.resolved_key == voice_key
+    assert result.provider_voice_id == provider_voice
+    assert result.used_fallback is False
+
+
+@pytest.mark.parametrize(("voice_key", "language", "_setting_name", "_provider_voice"), NEW_VOICES)
+def test_unconfigured_new_voice_never_falls_back(monkeypatch, voice_key, language, _setting_name, _provider_voice):
+    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_female_default", "BV001_streaming")
+    with pytest.raises(HTTPException) as error:
+        voice_registry.resolve_voice(voice_key, language)
+    assert error.value.status_code == 503
+
+
+@pytest.mark.parametrize(("voice_key", "language", "_setting_name", "_provider_voice"), NEW_VOICES)
+def test_new_voice_rejects_wrong_language(voice_key, language, _setting_name, _provider_voice):
+    wrong_language = "ja-JP" if language != "ja-JP" else "en-US"
+    with pytest.raises(HTTPException) as error:
+        voice_registry.resolve_voice(voice_key, wrong_language)
     assert error.value.status_code == 422
 
 
@@ -146,6 +187,7 @@ def test_all_voice_configuration_missing_fails_before_network():
     [
         ("zh_female_default", "volcengine_voice_zh_female_default", "BV001_streaming"),
         ("zh_male_default", "volcengine_voice_zh_male_default", "BV002_streaming"),
+        *[(voice_key, setting_name, provider_voice) for voice_key, _language, setting_name, provider_voice in NEW_VOICES],
     ],
 )
 def test_synthesis_resolves_business_key_without_real_network(monkeypatch, voice_key, setting_name, provider_voice):
@@ -169,14 +211,16 @@ def test_synthesis_resolves_business_key_without_real_network(monkeypatch, voice
     monkeypatch.setattr(tts, "upload_public_bytes", lambda *_args, **_kwargs: "https://storage.example/audio.mp3")
     monkeypatch.setattr(tts, "probe_audio_duration", lambda _audio: 1.23)
 
+    language = voice_registry.VOICE_LANGUAGE_MAP[voice_key]
     result = asyncio.run(
         tts.synthesize_speech_to_storage(
-            object(), text="你好", language="zh-CN", voice_type=voice_key, speed_ratio=1.0
+            object(), text="voice test", language=language, voice_type=voice_key, speed_ratio=1.0
         )
     )
 
     assert captured["voice_type"] == provider_voice
     assert result["voice"] == voice_key
+    assert result["used_fallback"] is False
     assert "voice_type" not in result
 
 

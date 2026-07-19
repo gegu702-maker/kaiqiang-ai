@@ -81,6 +81,7 @@ async def synthesize_speech_to_storage(
         "provider": provider_name,
         "language": language,
         "voice": selected_voice_type,
+        "used_fallback": resolved_voice.used_fallback,
         "content_type": content_type,
     }
 

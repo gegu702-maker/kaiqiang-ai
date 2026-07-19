@@ -177,6 +177,7 @@ def test_safe_mode_tts_success_stops_before_task_or_gpu(
         "preview_safe_mode": True,
         "status": "tts_ready",
         "voice": voice_key,
+        "used_fallback": False,
         "language": "zh-CN",
         "audio_url": "https://preview-storage.example/voice.mp3",
         "task_id": None,

@@ -8,7 +8,7 @@ import {
   getAvatarGenerationButtonLabelKey,
   parsePreviewTtsReadyResponse,
 } from "../avatarGenerationReadiness";
-import { avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY } from "../avatarVoiceOptions";
+import { avatarVoiceGroups, avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY, getAvatarVoiceLanguage } from "../avatarVoiceOptions";
 
 const previewReady = deriveAvatarGenerationCapabilities({
   previewEnvironment: true,
@@ -135,16 +135,33 @@ test("template request contains text, template, and public voice without media i
   assert.equal("video_file" in request, false);
 });
 
-test("voice options expose female then male while preserving the female default", () => {
-  assert.equal(avatarVoiceOptions.length, 2);
+test("voice options expose 14 internal keys grouped by language while preserving the female default", () => {
+  assert.equal(avatarVoiceOptions.length, 14);
+  assert.deepEqual(avatarVoiceGroups.map(({ key }) => key), ["zh", "en", "ja"]);
+  assert.equal(new Set(avatarVoiceOptions.map(({ key }) => key)).size, 14);
   assert.deepEqual(
-    avatarVoiceOptions.map(({ key, name }) => ({ key, zh: name.zh, en: name.en })),
-    [
-      { key: "zh_female_default", zh: "中文女声", en: "Chinese Female" },
-      { key: "zh_male_default", zh: "中文男声", en: "Chinese Male" },
-    ],
+    avatarVoiceOptions.reduce<Record<string, number>>((counts, option) => ({ ...counts, [option.group]: (counts[option.group] ?? 0) + 1 }), {}),
+    { zh: 10, en: 2, ja: 2 },
   );
+  assert.equal(avatarVoiceOptions.find(({ key }) => key === "ja_elegant_female")?.name.zh, "气质女生（日语）");
+  assert.equal(getAvatarVoiceLanguage("en_energetic_male_jackson"), "en-US");
+  assert.equal(getAvatarVoiceLanguage("ja_elegant_female"), "ja-JP");
   assert.equal(DEFAULT_AVATAR_VOICE_KEY, "zh_female_default");
+});
+
+test("all 12 new choices submit internal keys with their matching language", () => {
+  for (const option of avatarVoiceOptions.filter(({ key }) => !["zh_female_default", "zh_male_default"].includes(key))) {
+    const request = buildTemplateGenerateRequest({
+      avatarTemplateId: "business_female_01",
+      scriptText: "voice test",
+      language: getAvatarVoiceLanguage(option.key),
+      voice: option.key,
+      speedRatio: 1,
+    });
+    assert.equal(request.voice, option.key);
+    assert.equal(request.language, option.language);
+    assert.equal(JSON.stringify(request).includes("BV"), false);
+  }
 });
 
 test("male selection submits only the internal voice key", () => {

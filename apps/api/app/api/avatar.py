@@ -431,6 +431,7 @@ def _preview_tts_ready_response(tts_result: dict, language: str, audio_url: str 
         "preview_safe_mode": True,
         "status": "tts_ready",
         "voice": tts_result.get("voice"),
+        "used_fallback": bool(tts_result.get("used_fallback")),
         "language": language,
         "audio_url": audio_url or None,
         "task_id": None,

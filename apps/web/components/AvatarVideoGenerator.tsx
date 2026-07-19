@@ -15,7 +15,7 @@ import {
   type AvatarGenerationCapabilities,
 } from "@/lib/avatarGenerationReadiness";
 import { avatarTemplates } from "@/lib/avatarTemplates";
-import { avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY, type AvatarVoiceKey } from "@/lib/avatarVoiceOptions";
+import { avatarVoiceGroups, avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY, getAvatarVoiceLanguage, type AvatarVoiceKey } from "@/lib/avatarVoiceOptions";
 import { isPreviewEnvironment } from "@/lib/runtimeEnvironment";
 import { createClient } from "@/lib/supabase/client";
 import type { UsageSummary } from "@/lib/types";
@@ -183,7 +183,7 @@ const copy = {
     ttsLanguage: "Voice language",
     ttsLanguageHint: "Language only affects the voiceover voice. It does not translate your script. Chinese remains the default.",
     ttsVoice: "Voice",
-    ttsVoiceHint: "Mandarin voices are available. English voiceover requires verified English voice configuration.",
+    ttsVoiceHint: "Choose from clearly grouped Chinese, English, and Japanese voices.",
     englishVoiceUnavailable: "English voiceover is not configured yet. Please use Mandarin Chinese.",
     ttsPreview: "Preview voice",
     ttsPreviewGenerating: "Generating preview",
@@ -283,8 +283,8 @@ export function AvatarVideoGenerator({
   const [audioPreviewUrl, setAudioPreviewUrl] = useState("");
   const [resultSubtitleStatus, setResultSubtitleStatus] = useState<AvatarSubtitleStatus>("unknown");
   const [error, setError] = useState("");
-  const ttsLanguage = "zh-CN";
   const [selectedVoice, setSelectedVoice] = useState<AvatarVoiceKey>(DEFAULT_AVATAR_VOICE_KEY);
+  const ttsLanguage = getAvatarVoiceLanguage(selectedVoice);
   const [ttsSpeedRatio, setTtsSpeedRatio] = useState(1);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [tasks, setTasks] = useState<AvatarTask[]>([]);
@@ -786,16 +786,23 @@ export function AvatarVideoGenerator({
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <span className="block text-sm font-semibold text-slate-900">{current.ttsVoice}</span>
             <span className="mt-1 block text-sm text-slate-500">{current.ttsVoiceHint}</span>
-            <div className="mt-3 grid gap-2">
-              {avatarVoiceOptions.map((option) => (
-                <label key={option.key} className={`cursor-pointer rounded-md border p-3 transition ${selectedVoice === option.key ? "border-blue-500 bg-blue-50" : "border-slate-200 hover:border-blue-200"}`}>
-                  <input className="sr-only" type="radio" name="voice" value={option.key} checked={selectedVoice === option.key} onChange={() => setSelectedVoice(option.key)} />
-                  <span className="flex items-center justify-between gap-3">
-                    <span className="font-semibold text-slate-900">{option.name[locale === "zh" ? "zh" : "en"]}</span>
-                    {option.recommended ? <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs font-semibold text-white">{locale === "zh" ? "推荐" : "Recommended"}</span> : null}
-                  </span>
-                  <span className="mt-1 block text-sm text-slate-500">{option.description[locale === "zh" ? "zh" : "en"]}</span>
-                </label>
+            <div className="mt-3 space-y-4">
+              {avatarVoiceGroups.map((group) => (
+                <fieldset key={group.key}>
+                  <legend className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{group.name[locale === "zh" ? "zh" : "en"]}</legend>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {avatarVoiceOptions.filter((option) => option.group === group.key).map((option) => (
+                      <label key={option.key} className={`cursor-pointer rounded-md border p-3 transition ${selectedVoice === option.key ? "border-blue-500 bg-blue-50" : "border-slate-200 hover:border-blue-200"}`}>
+                        <input className="sr-only" type="radio" name="voice" value={option.key} checked={selectedVoice === option.key} onChange={() => setSelectedVoice(option.key)} />
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="font-semibold text-slate-900">{option.name[locale === "zh" ? "zh" : "en"]}</span>
+                          {option.recommended ? <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs font-semibold text-white">{locale === "zh" ? "推荐" : "Recommended"}</span> : null}
+                        </span>
+                        <span className="mt-1 block text-sm text-slate-500">{option.description[locale === "zh" ? "zh" : "en"]}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
               ))}
             </div>
           </div>

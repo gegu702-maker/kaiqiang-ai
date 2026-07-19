@@ -11,7 +11,21 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TTS_LANGUAGE = "zh-CN"
 DEFAULT_VOICE_KEY = "zh_female_default"
-NON_FALLBACK_VOICE_KEYS = {"zh_male_default"}
+NON_FALLBACK_VOICE_KEYS = {
+    "zh_male_default",
+    "zh_dongbei_laotie",
+    "en_energetic_male_jackson",
+    "zh_gentle_young_man",
+    "zh_refined_youth",
+    "en_energetic_female_ariana",
+    "ja_male",
+    "ja_elegant_female",
+    "zh_sunny_male",
+    "zh_intellectual_female_bilingual",
+    "zh_friendly_female",
+    "zh_guangxi_cousin",
+    "zh_lively_female",
+}
 
 LEGACY_PROVIDER_VOICE_COMPATIBILITY = {
     "BV001_streaming": "BV001_streaming",
@@ -27,6 +41,18 @@ VOICE_LANGUAGE_MAP = {
     "zh_knowledge_host": "zh-CN",
     "zh_business_narration": "zh-CN",
     "zh_casual_spoken": "zh-CN",
+    "zh_dongbei_laotie": "zh-CN",
+    "en_energetic_male_jackson": "en-US",
+    "zh_gentle_young_man": "zh-CN",
+    "zh_refined_youth": "zh-CN",
+    "en_energetic_female_ariana": "en-US",
+    "ja_male": "ja-JP",
+    "ja_elegant_female": "ja-JP",
+    "zh_sunny_male": "zh-CN",
+    "zh_intellectual_female_bilingual": "zh-CN",
+    "zh_friendly_female": "zh-CN",
+    "zh_guangxi_cousin": "zh-CN",
+    "zh_lively_female": "zh-CN",
 }
 
 VOICE_SETTING_MAP = {
@@ -38,6 +64,18 @@ VOICE_SETTING_MAP = {
     "zh_knowledge_host": "volcengine_voice_zh_knowledge_host",
     "zh_business_narration": "volcengine_voice_zh_business_narration",
     "zh_casual_spoken": "volcengine_voice_zh_casual_spoken",
+    "zh_dongbei_laotie": "volcengine_voice_zh_dongbei_laotie",
+    "en_energetic_male_jackson": "volcengine_voice_en_energetic_male_jackson",
+    "zh_gentle_young_man": "volcengine_voice_zh_gentle_young_man",
+    "zh_refined_youth": "volcengine_voice_zh_refined_youth",
+    "en_energetic_female_ariana": "volcengine_voice_en_energetic_female_ariana",
+    "ja_male": "volcengine_voice_ja_male",
+    "ja_elegant_female": "volcengine_voice_ja_elegant_female",
+    "zh_sunny_male": "volcengine_voice_zh_sunny_male",
+    "zh_intellectual_female_bilingual": "volcengine_voice_zh_intellectual_female_bilingual",
+    "zh_friendly_female": "volcengine_voice_zh_friendly_female",
+    "zh_guangxi_cousin": "volcengine_voice_zh_guangxi_cousin",
+    "zh_lively_female": "volcengine_voice_zh_lively_female",
 }
 
 
@@ -57,8 +95,8 @@ class NormalizedVoiceRequest:
 
 def normalize_tts_language(language: str | None) -> str:
     normalized = (language or DEFAULT_TTS_LANGUAGE).strip() or DEFAULT_TTS_LANGUAGE
-    if normalized != DEFAULT_TTS_LANGUAGE:
-        raise HTTPException(status_code=422, detail="当前仅支持中文配音，请选择中文音色。")
+    if normalized not in {"zh-CN", "en-US", "ja-JP"}:
+        raise HTTPException(status_code=422, detail="当前仅支持中文、英语和日语配音，请重新选择。")
     return normalized
 
 
