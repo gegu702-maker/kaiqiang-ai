@@ -66,7 +66,8 @@ const copy = {
     dynamicMode: "动态数字人",
     livePortraitUnavailable: "动态数字人暂未开通，请配置 Replicate API。",
     voiceTypes: {
-      zh_female_default: "通用音色",
+      zh_female_default: "中文女声",
+      zh_male_default: "中文男声",
     },
     cloneUpsell: "升级到 Pro 解锁声音克隆，后续视频可直接使用你的专属 voice_id。",
     loginHint: "可以先填写和上传素材，点击生成时再登录，登录后回到工作台。",
@@ -138,7 +139,8 @@ const copy = {
     dynamicMode: "Dynamic Avatar",
     livePortraitUnavailable: "Dynamic avatar is not enabled. Configure the Replicate API first.",
     voiceTypes: {
-      zh_female_default: "General voice",
+      zh_female_default: "Chinese Female",
+      zh_male_default: "Chinese Male",
     },
     cloneUpsell: "Upgrade to Pro to unlock voice cloning and reuse your dedicated voice_id in future videos.",
     loginHint: "You can fill in details and upload assets first. Sign in when you click generate, then return to the studio.",

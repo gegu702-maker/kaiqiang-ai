@@ -8,6 +8,7 @@ import {
   getAvatarGenerationButtonLabelKey,
   parsePreviewTtsReadyResponse,
 } from "../avatarGenerationReadiness";
+import { avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY } from "../avatarVoiceOptions";
 
 const previewReady = deriveAvatarGenerationCapabilities({
   previewEnvironment: true,
@@ -132,6 +133,33 @@ test("template request contains text, template, and public voice without media i
   });
   assert.equal("audio_url" in request, false);
   assert.equal("video_file" in request, false);
+});
+
+test("voice options expose female then male while preserving the female default", () => {
+  assert.equal(avatarVoiceOptions.length, 2);
+  assert.deepEqual(
+    avatarVoiceOptions.map(({ key, name }) => ({ key, zh: name.zh, en: name.en })),
+    [
+      { key: "zh_female_default", zh: "中文女声", en: "Chinese Female" },
+      { key: "zh_male_default", zh: "中文男声", en: "Chinese Male" },
+    ],
+  );
+  assert.equal(DEFAULT_AVATAR_VOICE_KEY, "zh_female_default");
+});
+
+test("male selection submits only the internal voice key", () => {
+  const request = buildTemplateGenerateRequest({
+    avatarTemplateId: "business_male_01",
+    scriptText: "Preview male TTS",
+    language: "zh-CN",
+    voice: "zh_male_default",
+    speedRatio: 1,
+  });
+
+  assert.equal(request.voice, "zh_male_default");
+  assert.equal(JSON.stringify(request).includes("BV002_streaming"), false);
+  assert.equal("voice_type" in request, false);
+  assert.equal("audio_url" in request, false);
 });
 
 test("tts_ready is accepted only as an audio result without a task", () => {

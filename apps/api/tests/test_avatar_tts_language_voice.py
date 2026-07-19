@@ -33,10 +33,20 @@ def test_default_business_key_resolves(monkeypatch):
 
 
 def test_configured_business_key_resolves(monkeypatch):
-    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_male_default", "provider-two")
+    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_male_default", "BV002_streaming")
     result = voice_registry.resolve_voice("zh_male_default", "zh-CN")
-    assert result.provider_voice_id == "provider-two"
+    assert result.requested_key == "zh_male_default"
+    assert result.resolved_key == "zh_male_default"
+    assert result.provider_voice_id == "BV002_streaming"
     assert result.used_fallback is False
+
+
+def test_unconfigured_male_voice_fails_without_female_fallback(monkeypatch):
+    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_female_default", "BV001_streaming")
+    with pytest.raises(HTTPException) as error:
+        voice_registry.resolve_voice("zh_male_default", "zh-CN")
+    assert error.value.status_code == 503
+    assert error.value.detail == "所选音色暂未配置，请选择其他音色。"
 
 
 def test_unconfigured_key_falls_back_to_default(monkeypatch):
@@ -64,6 +74,12 @@ def test_legacy_request_field_accepts_business_key():
     payload = TemplateAvatarGenerateRequest(avatar_template_id="business_female_01", voice_type="zh_female_default")
     assert payload.voice is None
     assert payload.voice_type == "zh_female_default"
+
+
+def test_male_business_key_is_normalized_without_provider_exposure():
+    result = voice_registry.normalize_legacy_voice_request("zh_male_default", None)
+    assert result.requested_key == "zh_male_default"
+    assert result.legacy_provider_voice_id is None
 
 
 @pytest.mark.parametrize("legacy_voice", ["BV001_streaming", "BV002_streaming"])
@@ -125,7 +141,14 @@ def test_all_voice_configuration_missing_fails_before_network():
     assert error.value.status_code == 503
 
 
-def test_synthesis_resolves_business_key_without_real_network(monkeypatch):
+@pytest.mark.parametrize(
+    ("voice_key", "setting_name", "provider_voice"),
+    [
+        ("zh_female_default", "volcengine_voice_zh_female_default", "BV001_streaming"),
+        ("zh_male_default", "volcengine_voice_zh_male_default", "BV002_streaming"),
+    ],
+)
+def test_synthesis_resolves_business_key_without_real_network(monkeypatch, voice_key, setting_name, provider_voice):
     captured = {}
 
     class FakeVolcengineTTSProvider:
@@ -140,7 +163,7 @@ def test_synthesis_resolves_business_key_without_real_network(monkeypatch):
                 "voice_type": kwargs["voice_type"],
             }
 
-    monkeypatch.setattr(voice_registry.settings, "volcengine_voice_zh_female_default", "provider-internal")
+    monkeypatch.setattr(voice_registry.settings, setting_name, provider_voice)
     monkeypatch.setattr(tts.settings, "voice_clone_provider", "volcengine")
     monkeypatch.setattr(tts, "VolcengineTTSProvider", FakeVolcengineTTSProvider)
     monkeypatch.setattr(tts, "upload_public_bytes", lambda *_args, **_kwargs: "https://storage.example/audio.mp3")
@@ -148,12 +171,12 @@ def test_synthesis_resolves_business_key_without_real_network(monkeypatch):
 
     result = asyncio.run(
         tts.synthesize_speech_to_storage(
-            object(), text="你好", language="zh-CN", voice_type="zh_female_default", speed_ratio=1.0
+            object(), text="你好", language="zh-CN", voice_type=voice_key, speed_ratio=1.0
         )
     )
 
-    assert captured["voice_type"] == "provider-internal"
-    assert result["voice"] == "zh_female_default"
+    assert captured["voice_type"] == provider_voice
+    assert result["voice"] == voice_key
     assert "voice_type" not in result
 
 

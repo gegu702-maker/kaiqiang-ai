@@ -106,12 +106,21 @@ def test_non_preview_debug_tts_preserves_existing_behavior(monkeypatch):
     assert calls == {"database": 1, "tts": 1}
 
 
-def test_safe_mode_tts_success_stops_before_task_or_gpu(monkeypatch):
+@pytest.mark.parametrize(
+    ("voice_key", "setting_name", "provider_voice"),
+    [
+        ("zh_female_default", "volcengine_voice_zh_female_default", "BV001_streaming"),
+        ("zh_male_default", "volcengine_voice_zh_male_default", "BV002_streaming"),
+    ],
+)
+def test_safe_mode_tts_success_stops_before_task_or_gpu(
+    monkeypatch, voice_key, setting_name, provider_voice
+):
     calls = {"template": 0, "task": 0, "process": 0, "gpu": 0, "musetalk": 0, "usage": 0, "provider": 0, "storage": 0}
 
     async def fake_provider_tts(_provider, **kwargs):
         calls["provider"] += 1
-        assert kwargs["voice_type"] == "preview-provider-voice"
+        assert kwargs["voice_type"] == provider_voice
         return {
             "audio_bytes": b"preview-audio",
             "extension": ".mp3",
@@ -129,7 +138,7 @@ def test_safe_mode_tts_success_stops_before_task_or_gpu(monkeypatch):
         return "https://preview-storage.example/voice.mp3"
 
     monkeypatch.setattr(tts_service.settings, "voice_clone_provider", "volcengine")
-    monkeypatch.setattr(tts_service.settings, "volcengine_voice_zh_female_default", "preview-provider-voice")
+    monkeypatch.setattr(tts_service.settings, setting_name, provider_voice)
     monkeypatch.setattr(tts_service.VolcengineTTSProvider, "synthesize", fake_provider_tts)
     monkeypatch.setattr(tts_service, "upload_public_bytes", fake_storage)
     monkeypatch.setattr(tts_service, "probe_audio_duration", lambda _audio: 1.2)
@@ -157,7 +166,7 @@ def test_safe_mode_tts_success_stops_before_task_or_gpu(monkeypatch):
             "avatar_template_id": "business_female_01",
             "script_text": "预览文案",
             "language": "zh-CN",
-            "voice": "zh_female_default",
+            "voice": voice_key,
             "speed_ratio": 1.0,
         },
     )
@@ -167,7 +176,7 @@ def test_safe_mode_tts_success_stops_before_task_or_gpu(monkeypatch):
         "success": True,
         "preview_safe_mode": True,
         "status": "tts_ready",
-        "voice": "zh_female_default",
+        "voice": voice_key,
         "language": "zh-CN",
         "audio_url": "https://preview-storage.example/voice.mp3",
         "task_id": None,
@@ -175,6 +184,48 @@ def test_safe_mode_tts_success_stops_before_task_or_gpu(monkeypatch):
         "message": "预览配音已生成，未创建视频任务。",
     }
     assert calls == {"template": 0, "task": 0, "process": 0, "gpu": 0, "musetalk": 0, "usage": 0, "provider": 1, "storage": 1}
+
+
+def test_safe_mode_unconfigured_male_voice_stops_before_provider_storage_or_task(monkeypatch):
+    calls = {"provider": 0, "storage": 0, "task": 0, "gpu": 0}
+
+    async def fake_provider(*_args, **_kwargs):
+        calls["provider"] += 1
+
+    async def fake_gpu(*_args, **_kwargs):
+        calls["gpu"] += 1
+
+    monkeypatch.setattr(tts_service.settings, "voice_clone_provider", "volcengine")
+    monkeypatch.setattr(tts_service.settings, "volcengine_voice_zh_female_default", "BV001_streaming")
+    monkeypatch.setattr(tts_service.settings, "volcengine_voice_zh_male_default", "")
+    monkeypatch.setattr(tts_service.VolcengineTTSProvider, "synthesize", fake_provider)
+    monkeypatch.setattr(
+        tts_service,
+        "upload_public_bytes",
+        lambda *_args, **_kwargs: calls.__setitem__("storage", calls["storage"] + 1),
+    )
+    monkeypatch.setattr(
+        avatar,
+        "_create_avatar_task",
+        lambda *_args, **_kwargs: calls.__setitem__("task", calls["task"] + 1),
+    )
+    monkeypatch.setattr(avatar, "ensure_gpu_ready", fake_gpu)
+
+    response = _client(monkeypatch).post(
+        "/api/avatar/template-generate",
+        headers={"Authorization": "Bearer test-token"},
+        json={
+            "avatar_template_id": "business_male_01",
+            "script_text": "预览男声文案",
+            "language": "zh-CN",
+            "voice": "zh_male_default",
+            "speed_ratio": 1.0,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "所选音色暂未配置，请选择其他音色。"
+    assert calls == {"provider": 0, "storage": 0, "task": 0, "gpu": 0}
 
 
 @pytest.mark.parametrize(

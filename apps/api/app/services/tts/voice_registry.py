@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TTS_LANGUAGE = "zh-CN"
 DEFAULT_VOICE_KEY = "zh_female_default"
+NON_FALLBACK_VOICE_KEYS = {"zh_male_default"}
 
 LEGACY_PROVIDER_VOICE_COMPATIBILITY = {
     "BV001_streaming": "BV001_streaming",
@@ -113,6 +114,9 @@ def resolve_voice(
     provider_voice_id = _configured_voice_id(requested_key)
     resolved_key = requested_key
     fallback_reason = ""
+
+    if not provider_voice_id and requested_key in NON_FALLBACK_VOICE_KEYS:
+        raise HTTPException(status_code=503, detail="所选音色暂未配置，请选择其他音色。")
 
     if not provider_voice_id:
         resolved_key = default_key
