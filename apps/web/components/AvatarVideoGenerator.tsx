@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, Download, Film, Loader2, Trash2, UploadCloud, Video } from "lucide-react";
+import { Check, Copy, Download, Film, Loader2, Pause, Play, Trash2, UploadCloud, Video } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -15,7 +15,7 @@ import {
   type AvatarGenerationCapabilities,
 } from "@/lib/avatarGenerationReadiness";
 import { avatarTemplates } from "@/lib/avatarTemplates";
-import { avatarVoiceGroups, avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY, getAvatarVoiceLanguage, type AvatarVoiceKey } from "@/lib/avatarVoiceOptions";
+import { avatarVoiceGroups, avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY, getAvatarVoiceLanguage, getAvatarVoicePreviewAudioPath, type AvatarVoiceKey } from "@/lib/avatarVoiceOptions";
 import { isPreviewEnvironment } from "@/lib/runtimeEnvironment";
 import { createClient } from "@/lib/supabase/client";
 import type { UsageSummary } from "@/lib/types";
@@ -97,6 +97,10 @@ const copy = {
     ttsPreviewGenerating: "试听生成中",
     ttsPreviewFailed: "试听生成失败",
     ttsPreviewReady: "试听音频已生成",
+    voicePreviewPlay: "试听",
+    voicePreviewPause: "暂停",
+    voicePreviewLoading: "加载中",
+    voicePreviewFailed: "试听失败，请稍后重试。",
     unsupportedTtsVoice: "当前语言暂无可用音色。",
     comingSoon: "即将上线",
     realismTitle: "真实度建议",
@@ -189,6 +193,10 @@ const copy = {
     ttsPreviewGenerating: "Generating preview",
     ttsPreviewFailed: "Preview failed",
     ttsPreviewReady: "Preview audio is ready",
+    voicePreviewPlay: "Preview",
+    voicePreviewPause: "Pause",
+    voicePreviewLoading: "Loading",
+    voicePreviewFailed: "Preview failed. Please retry later.",
     unsupportedTtsVoice: "No enabled voices are available for this language.",
     comingSoon: "Coming soon",
     realismTitle: "Realism tips",
@@ -284,6 +292,9 @@ export function AvatarVideoGenerator({
   const [resultSubtitleStatus, setResultSubtitleStatus] = useState<AvatarSubtitleStatus>("unknown");
   const [error, setError] = useState("");
   const [selectedVoice, setSelectedVoice] = useState<AvatarVoiceKey>(DEFAULT_AVATAR_VOICE_KEY);
+  const [voicePreviewPlaying, setVoicePreviewPlaying] = useState<AvatarVoiceKey | null>(null);
+  const [voicePreviewLoading, setVoicePreviewLoading] = useState<AvatarVoiceKey | null>(null);
+  const [voicePreviewError, setVoicePreviewError] = useState<AvatarVoiceKey | null>(null);
   const ttsLanguage = getAvatarVoiceLanguage(selectedVoice);
   const [ttsSpeedRatio, setTtsSpeedRatio] = useState(1);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
@@ -293,6 +304,7 @@ export function AvatarVideoGenerator({
   const [generationCapabilities, setGenerationCapabilities] = useState<AvatarGenerationCapabilities>(EMPTY_CAPABILITIES);
   const [avatarHealthMessage, setAvatarHealthMessage] = useState("");
   const [avatarHealthCheckedAt, setAvatarHealthCheckedAt] = useState<Date | null>(null);
+  const voicePreviewAudio = useRef<HTMLAudioElement | null>(null);
   const progressTimer = useRef<number | null>(null);
   const stageTimers = useRef<number[]>([]);
 
@@ -392,8 +404,57 @@ export function AvatarVideoGenerator({
     return () => {
       if (progressTimer.current) window.clearInterval(progressTimer.current);
       stageTimers.current.forEach((timer) => window.clearTimeout(timer));
+      voicePreviewAudio.current?.pause();
+      voicePreviewAudio.current = null;
     };
   }, [checkAvatarHealth, refreshTasks, refreshUsage]);
+
+  function stopVoicePreview() {
+    voicePreviewAudio.current?.pause();
+    voicePreviewAudio.current = null;
+    setVoicePreviewPlaying(null);
+    setVoicePreviewLoading(null);
+  }
+
+  async function handleVoicePreview(voiceKey: AvatarVoiceKey) {
+    setVoicePreviewError(null);
+    if (voicePreviewPlaying === voiceKey) {
+      stopVoicePreview();
+      return;
+    }
+    if (voicePreviewLoading === voiceKey) return;
+
+    stopVoicePreview();
+    setVoicePreviewLoading(voiceKey);
+    const audio = new Audio(getAvatarVoicePreviewAudioPath(voiceKey));
+    voicePreviewAudio.current = audio;
+    audio.addEventListener("ended", () => {
+      if (voicePreviewAudio.current === audio) {
+        setVoicePreviewPlaying(null);
+        setVoicePreviewLoading(null);
+      }
+    });
+    audio.addEventListener("error", () => {
+      if (voicePreviewAudio.current === audio) {
+        setVoicePreviewPlaying(null);
+        setVoicePreviewLoading(null);
+        setVoicePreviewError(voiceKey);
+      }
+    });
+    try {
+      await audio.play();
+      if (voicePreviewAudio.current === audio) {
+        setVoicePreviewLoading(null);
+        setVoicePreviewPlaying(voiceKey);
+      }
+    } catch {
+      if (voicePreviewAudio.current === audio) {
+        setVoicePreviewLoading(null);
+        setVoicePreviewPlaying(null);
+        setVoicePreviewError(voiceKey);
+      }
+    }
+  }
 
   function startProgress() {
     setProgress(8);
@@ -791,16 +852,38 @@ export function AvatarVideoGenerator({
                 <fieldset key={group.key}>
                   <legend className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{group.name[locale === "zh" ? "zh" : "en"]}</legend>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    {avatarVoiceOptions.filter((option) => option.group === group.key).map((option) => (
-                      <label key={option.key} className={`cursor-pointer rounded-md border p-3 transition ${selectedVoice === option.key ? "border-blue-500 bg-blue-50" : "border-slate-200 hover:border-blue-200"}`}>
-                        <input className="sr-only" type="radio" name="voice" value={option.key} checked={selectedVoice === option.key} onChange={() => setSelectedVoice(option.key)} />
-                        <span className="flex items-center justify-between gap-3">
-                          <span className="font-semibold text-slate-900">{option.name[locale === "zh" ? "zh" : "en"]}</span>
-                          {option.recommended ? <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs font-semibold text-white">{locale === "zh" ? "推荐" : "Recommended"}</span> : null}
-                        </span>
-                        <span className="mt-1 block text-sm text-slate-500">{option.description[locale === "zh" ? "zh" : "en"]}</span>
-                      </label>
-                    ))}
+                    {avatarVoiceOptions.filter((option) => option.group === group.key).map((option) => {
+                      const voiceName = option.name[locale === "zh" ? "zh" : "en"];
+                      const isVoicePreviewLoading = voicePreviewLoading === option.key;
+                      const isVoicePreviewPlaying = voicePreviewPlaying === option.key;
+                      const voiceInputId = `avatar-voice-${option.key}`;
+                      return (
+                        <div key={option.key} className={`rounded-md border p-3 transition ${selectedVoice === option.key ? "border-blue-500 bg-blue-50" : "border-slate-200 hover:border-blue-200"}`}>
+                          <input id={voiceInputId} className="sr-only" type="radio" name="voice" value={option.key} checked={selectedVoice === option.key} onChange={() => setSelectedVoice(option.key)} />
+                          <div className="flex items-start justify-between gap-3">
+                            <label htmlFor={voiceInputId} className="min-w-0 flex-1 cursor-pointer">
+                              <span className="flex items-center justify-between gap-3">
+                                <span className="font-semibold text-slate-900">{voiceName}</span>
+                                {option.recommended ? <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs font-semibold text-white">{locale === "zh" ? "推荐" : "Recommended"}</span> : null}
+                              </span>
+                              <span className="mt-1 block text-sm text-slate-500">{option.description[locale === "zh" ? "zh" : "en"]}</span>
+                            </label>
+                            <button
+                              type="button"
+                              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 transition hover:border-blue-300 hover:text-blue-700 disabled:cursor-wait disabled:text-slate-400"
+                              aria-label={`${isVoicePreviewPlaying ? current.voicePreviewPause : current.voicePreviewPlay}: ${voiceName}`}
+                              aria-pressed={isVoicePreviewPlaying}
+                              disabled={isVoicePreviewLoading}
+                              onClick={() => void handleVoicePreview(option.key)}
+                            >
+                              {isVoicePreviewLoading ? <Loader2 className="animate-spin" size={14} /> : isVoicePreviewPlaying ? <Pause size={14} /> : <Play size={14} />}
+                              {isVoicePreviewLoading ? current.voicePreviewLoading : isVoicePreviewPlaying ? current.voicePreviewPause : current.voicePreviewPlay}
+                            </button>
+                          </div>
+                          {voicePreviewError === option.key ? <p className="mt-2 text-xs text-red-600">{current.voicePreviewFailed}</p> : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 </fieldset>
               ))}

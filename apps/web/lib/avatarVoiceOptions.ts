@@ -39,3 +39,7 @@ export type AvatarVoiceKey = (typeof avatarVoiceOptions)[number]["key"];
 export function getAvatarVoiceLanguage(voiceKey: AvatarVoiceKey): AvatarVoiceLanguage {
   return avatarVoiceOptions.find((option) => option.key === voiceKey)?.language ?? "zh-CN";
 }
+
+export function getAvatarVoicePreviewAudioPath(voiceKey: AvatarVoiceKey): string {
+  return `/audio/voice-previews/${voiceKey}.mp3`;
+}
