@@ -8,7 +8,7 @@ import {
   getAvatarGenerationButtonLabelKey,
   parsePreviewTtsReadyResponse,
 } from "../avatarGenerationReadiness";
-import { avatarVoiceGroups, avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY, getAvatarVoiceLanguage } from "../avatarVoiceOptions";
+import { avatarVoiceGroups, avatarVoiceOptions, DEFAULT_AVATAR_VOICE_KEY, getAvatarVoiceLanguage, getAvatarVoicePreviewAudioPath } from "../avatarVoiceOptions";
 
 const previewReady = deriveAvatarGenerationCapabilities({
   previewEnvironment: true,
@@ -159,6 +159,15 @@ test("voice options expose 14 internal keys grouped by language while preserving
   assert.equal(getAvatarVoiceLanguage("en_energetic_male_jackson"), "en-US");
   assert.equal(getAvatarVoiceLanguage("ja_elegant_female"), "ja-JP");
   assert.equal(DEFAULT_AVATAR_VOICE_KEY, "zh_female_default");
+});
+
+test("voice preview audio paths are static public MP3 files keyed by internal voice key", () => {
+  for (const option of avatarVoiceOptions) {
+    const audioPath = getAvatarVoicePreviewAudioPath(option.key);
+    assert.equal(audioPath, `/audio/voice-previews/${option.key}.mp3`);
+    assert.equal(audioPath.includes("BV"), false);
+    assert.equal(audioPath.startsWith("http"), false);
+  }
 });
 
 test("all 12 new choices submit internal keys with their matching language", () => {
