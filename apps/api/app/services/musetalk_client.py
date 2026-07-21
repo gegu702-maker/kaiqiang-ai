@@ -14,11 +14,15 @@ from supabase import Client
 from app.core.config import settings
 from app.services.storage import upload_public_bytes
 from app.services.subtitles import (
+    MediaDurationError,
+    MediaInfo,
     SubtitleBurnError,
     build_subtitle_segments,
     burn_subtitles_to_video,
     normalize_script_text,
+    probe_media_info,
     probe_video_duration,
+    validate_stream_duration_alignment,
     write_ass_file,
 )
 
@@ -81,7 +85,14 @@ async def generate_avatar_video_with_musetalk(
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail=f"MuseTalk service request failed: {error}") from error
 
-    video_content, subtitle_status = _with_optional_subtitles(video_response.content, task_id=task_id, script_text=script_text)
+    output_media = _inspect_musetalk_output(video_response.content, task_id=task_id)
+    video_content, subtitle_status = _with_optional_subtitles(
+        video_response.content,
+        task_id=task_id,
+        script_text=script_text,
+    )
+    if subtitle_status != "burned":
+        _log_final_media(task_id, output_media, subtitle_status)
 
     result_url = upload_public_bytes(
         supabase,
@@ -125,6 +136,8 @@ def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text:
                 return video_content, "disabled"
             write_ass_file(segments, ass_path)
             burn_subtitles_to_video(input_path, ass_path, output_path, settings.ffmpeg_path)
+            final_media = probe_media_info(output_path, settings.ffmpeg_path)
+            _log_final_media(task_id, final_media, "burned")
             captioned = output_path.read_bytes()
             if not _looks_like_mp4(captioned):
                 raise HTTPException(status_code=500, detail="Captioned output is not a valid MP4 file")
@@ -136,6 +149,9 @@ def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text:
                 len(captioned),
             )
             return captioned, "burned"
+    except MediaDurationError as error:
+        logger.error("avatar_duration_guard_failed task_id=%s detail=%s", task_id, error.detail)
+        raise HTTPException(status_code=502, detail=error.detail) from error
     except SubtitleBurnError as error:
         logger.warning(
             "subtitle_burn_failed_diagnostic task_id=%s diagnostics=%s",
@@ -151,6 +167,40 @@ def _with_optional_subtitles(video_content: bytes, *, task_id: str, script_text:
         if settings.avatar_subtitle_fallback_on_error:
             return video_content, "fallback_original"
         raise
+
+
+def _inspect_musetalk_output(video_content: bytes, *, task_id: str) -> MediaInfo:
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = Path(tmp) / "musetalk-output.mp4"
+            input_path.write_bytes(video_content)
+            media = probe_media_info(input_path, settings.ffmpeg_path)
+            validate_stream_duration_alignment(media, stage="musetalk_output")
+    except MediaDurationError as error:
+        logger.error("avatar_duration_guard_failed task_id=%s detail=%s", task_id, error.detail)
+        raise HTTPException(status_code=502, detail=error.detail) from error
+    logger.info(
+        "MuseTalk output media task_id=%s video_duration=%.6f video_frames=%s video_fps=%.6f audio_duration=%s",
+        task_id,
+        media.video_duration,
+        media.video_frames,
+        media.fps,
+        f"{media.audio_duration:.6f}" if media.audio_duration is not None else "missing",
+    )
+    return media
+
+
+def _log_final_media(task_id: str, media: MediaInfo, subtitle_status: str) -> None:
+    logger.info(
+        "Avatar final media task_id=%s subtitle_status=%s video_duration=%.6f video_frames=%s "
+        "video_fps=%.6f audio_duration=%s",
+        task_id,
+        subtitle_status,
+        media.video_duration,
+        media.video_frames,
+        media.fps,
+        f"{media.audio_duration:.6f}" if media.audio_duration is not None else "missing",
+    )
 
 
 async def check_musetalk_health() -> dict[str, Any]:
