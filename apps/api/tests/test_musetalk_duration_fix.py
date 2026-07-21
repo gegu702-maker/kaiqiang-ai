@@ -181,6 +181,32 @@ def test_wrapper_normalizes_fractional_fps_to_stable_cfr(
     assert (prepared.read_bytes() == source.read_bytes()) is copied
 
 
+def test_cfr_command_is_compatible_with_ffmpeg_431(monkeypatch, tmp_path: Path, autodl_service):
+    captured = []
+    source = tmp_path / "fractional-input.mp4"
+    destination = tmp_path / "cfr-output.mp4"
+    source.write_bytes(b"synthetic")
+
+    monkeypatch.setattr(
+        autodl_service,
+        "_run_ffmpeg",
+        lambda command, label: captured.append((command, label)),
+    )
+    autodl_service._prepare_cfr_video(
+        source,
+        destination,
+        {"fps": 29.97, "is_cfr": True},
+        30,
+    )
+
+    assert len(captured) == 1
+    command, label = captured[0]
+    assert label == "video CFR normalization"
+    assert "-fps_mode" not in command
+    assert command[command.index("-vsync") + 1] == "cfr"
+    assert command[command.index("-vf") + 1] == "fps=30"
+
+
 @pytest.mark.parametrize(
     "video_duration",
     [1.0, 2.4, 3.0],

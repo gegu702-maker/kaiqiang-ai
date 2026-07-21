@@ -236,7 +236,7 @@ def _prepare_cfr_video(
         "-an",
         "-vf",
         f"fps={target_fps}",
-        "-fps_mode",
+        "-vsync",
         "cfr",
         "-c:v",
         "libx264",
