@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 import shutil
@@ -23,6 +24,24 @@ class SubtitleBurnError(RuntimeError):
     def __init__(self, message: str, diagnostics: dict) -> None:
         super().__init__(message)
         self.diagnostics = diagnostics
+
+
+class MediaDurationError(RuntimeError):
+    def __init__(self, detail: dict) -> None:
+        super().__init__(str(detail.get("message") or "Media duration validation failed"))
+        self.detail = detail
+
+
+@dataclass(frozen=True)
+class MediaInfo:
+    video_duration: float
+    audio_duration: float | None
+    fps: float
+    video_frames: int | None
+
+    @property
+    def frame_duration(self) -> float:
+        return 1.0 / self.fps if self.fps > 0 else 0.0
 
 
 PUNCTUATION_PATTERN = re.compile(r"([^。！？!?；;，,.\n]+[。！？!?；;，,.]?)")
@@ -151,6 +170,8 @@ def write_ass_file(
 def burn_subtitles_to_video(input_mp4: Path, ass_path: Path, output_mp4: Path, ffmpeg_path: str | None = None) -> None:
     ffmpeg = ffmpeg_path or settings.ffmpeg_path
     output_mp4.parent.mkdir(parents=True, exist_ok=True)
+    input_media = probe_media_info(input_mp4, ffmpeg)
+    validate_stream_duration_alignment(input_media, stage="subtitle_input")
     cmd = [
         ffmpeg,
         "-y",
@@ -176,7 +197,6 @@ def burn_subtitles_to_video(input_mp4: Path, ass_path: Path, output_mp4: Path, f
         "aac",
         "-b:a",
         "128k",
-        "-shortest",
         "-movflags",
         "+faststart",
         str(output_mp4),
@@ -217,9 +237,20 @@ def burn_subtitles_to_video(input_mp4: Path, ass_path: Path, output_mp4: Path, f
                 ffmpeg_path=ffmpeg,
             ),
         )
+    output_media = probe_media_info(output_mp4, ffmpeg)
+    try:
+        validate_stream_duration_alignment(output_media, stage="subtitle_output")
+        _validate_audio_preserved(input_media, output_media)
+    except MediaDurationError:
+        output_mp4.unlink(missing_ok=True)
+        raise
 
 
 def probe_video_duration(input_mp4: Path, ffmpeg_path: str | None = None) -> float:
+    return round(probe_media_info(input_mp4, ffmpeg_path).video_duration, 2)
+
+
+def probe_media_info(input_mp4: Path, ffmpeg_path: str | None = None) -> MediaInfo:
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
         candidate = (ffmpeg_path or settings.ffmpeg_path).replace("ffmpeg", "ffprobe")
@@ -230,9 +261,9 @@ def probe_video_duration(input_mp4: Path, ffmpeg_path: str | None = None) -> flo
             "-v",
             "error",
             "-show_entries",
-            "format=duration",
+            "format=duration:stream=codec_type,duration,r_frame_rate,avg_frame_rate,nb_frames",
             "-of",
-            "default=noprint_wrappers=1:nokey=1",
+            "json",
             str(input_mp4),
         ],
         capture_output=True,
@@ -240,13 +271,107 @@ def probe_video_duration(input_mp4: Path, ffmpeg_path: str | None = None) -> flo
         check=False,
         timeout=30,
     )
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail="Unable to probe video duration")
     try:
-        duration = float(result.stdout.strip())
-    except Exception as error:
+        data = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
         raise HTTPException(status_code=500, detail="Unable to probe video duration") from error
-    if not math.isfinite(duration) or duration <= 0:
+    format_duration = _safe_positive_float((data.get("format") or {}).get("duration"))
+    video_stream = next((stream for stream in data.get("streams", []) if stream.get("codec_type") == "video"), None)
+    audio_stream = next((stream for stream in data.get("streams", []) if stream.get("codec_type") == "audio"), None)
+    if not video_stream:
+        raise HTTPException(status_code=500, detail="Video stream missing")
+    video_duration = _safe_positive_float(video_stream.get("duration")) or format_duration
+    audio_duration = _safe_positive_float(audio_stream.get("duration")) if audio_stream else None
+    if audio_stream and not audio_duration:
+        audio_duration = format_duration
+    fps = _parse_rate(video_stream.get("avg_frame_rate")) or _parse_rate(video_stream.get("r_frame_rate"))
+    if not video_duration or not fps:
         raise HTTPException(status_code=500, detail="Invalid video duration")
-    return round(duration, 2)
+    return MediaInfo(
+        video_duration=video_duration,
+        audio_duration=audio_duration,
+        fps=fps,
+        video_frames=_safe_optional_int(video_stream.get("nb_frames")),
+    )
+
+
+def validate_stream_duration_alignment(media: MediaInfo, *, stage: str) -> None:
+    if media.audio_duration is None:
+        return
+    shortfall = media.audio_duration - media.video_duration
+    if shortfall > media.frame_duration + 0.001:
+        raise MediaDurationError(
+            {
+                "code": "avatar_video_shorter_than_audio",
+                "message": "Video stream is too short to preserve the complete audio track.",
+                "stage": stage,
+                "video_duration": round(media.video_duration, 6),
+                "audio_duration": round(media.audio_duration, 6),
+                "fps": round(media.fps, 6),
+                "video_frames": media.video_frames,
+                "max_shortfall": round(media.frame_duration, 6),
+                "actual_shortfall": round(shortfall, 6),
+            }
+        )
+    if stage == "subtitle_output" and -shortfall > media.frame_duration + 0.001:
+        raise MediaDurationError(
+            {
+                "code": "avatar_final_stream_duration_mismatch",
+                "message": "Final video and audio stream durations differ by more than one frame.",
+                "stage": stage,
+                "video_duration": round(media.video_duration, 6),
+                "audio_duration": round(media.audio_duration, 6),
+                "fps": round(media.fps, 6),
+                "video_frames": media.video_frames,
+                "max_difference": round(media.frame_duration, 6),
+                "actual_difference": round(abs(shortfall), 6),
+            }
+        )
+
+
+def _validate_audio_preserved(input_media: MediaInfo, output_media: MediaInfo) -> None:
+    if input_media.audio_duration is None or output_media.audio_duration is None:
+        return
+    lost_audio = input_media.audio_duration - output_media.audio_duration
+    tolerance = max(input_media.frame_duration, output_media.frame_duration) + 0.001
+    if lost_audio > tolerance:
+        raise MediaDurationError(
+            {
+                "code": "avatar_audio_truncated_during_subtitle_burn",
+                "message": "Subtitle rendering shortened the audio track.",
+                "stage": "subtitle_output",
+                "input_audio_duration": round(input_media.audio_duration, 6),
+                "output_audio_duration": round(output_media.audio_duration, 6),
+                "lost_audio_duration": round(lost_audio, 6),
+                "max_allowed_loss": round(tolerance, 6),
+            }
+        )
+
+
+def _parse_rate(value: object) -> float:
+    try:
+        numerator, denominator = str(value or "0/0").split("/", 1)
+        parsed = float(numerator) / float(denominator)
+        return parsed if math.isfinite(parsed) and parsed > 0 else 0.0
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def _safe_positive_float(value: object) -> float:
+    try:
+        parsed = float(value or 0)
+        return parsed if math.isfinite(parsed) and parsed > 0 else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _safe_optional_int(value: object) -> int | None:
+    try:
+        return int(value) if value not in {None, "", "N/A"} else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _wrap_text(text: str, max_line_chars: int) -> list[str]:
