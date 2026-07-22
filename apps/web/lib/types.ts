@@ -273,7 +273,7 @@ export type VideoLinkResolveResult = {
   webpage_url: string;
   downloadable: boolean;
   fallback_reason: string;
-  error_code?: ViralLinkErrorCode | "";
+  error_code?: ViralLinkErrorCode | string;
   message?: string;
   fallback_available?: boolean;
   fallback_options?: string[];
@@ -328,7 +328,11 @@ export type ViralPipelineResult = {
   success?: boolean;
   status: ViralPipelineStatus;
   failed_at: ViralPipelineStatus | "";
-  error_code?: ViralLinkErrorCode | "";
+  error_code?: ViralLinkErrorCode | string;
+  code?: string;
+  stage?: ViralPipelineStatus | string;
+  retryable?: boolean;
+  request_id?: string;
   message?: string;
   fallback_available?: boolean;
   fallback_options?: string[];
@@ -363,5 +367,13 @@ export type ViralPipelineResult = {
     fallback: boolean;
     prompt_input_chars: number;
     output_chars: number;
+  };
+  diagnostic?: {
+    http_status?: number | null;
+    response_length?: number;
+    schema_error?: string;
+    provider?: string;
+    error?: string;
+    exception_type?: string;
   };
 };

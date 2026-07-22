@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import re
 from typing import Any
 
@@ -9,6 +10,30 @@ import httpx
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.services.viral_diagnostics import current_request_id
+
+
+logger = logging.getLogger(__name__)
+
+
+class LLMProviderError(Exception):
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        retryable: bool,
+        http_status: int | None = None,
+        response_length: int = 0,
+        schema_error: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+        self.http_status = http_status
+        self.response_length = response_length
+        self.schema_error = schema_error
 
 
 def _strip_code_fence(value: str) -> str:
@@ -80,7 +105,8 @@ def safe_parse_json_response(raw: str) -> dict[str, Any]:
         if isinstance(data, dict):
             return data
 
-    raise ValueError("Model response did not contain a usable JSON object.") from last_error
+    detail = str(last_error or "unknown JSON error")
+    raise ValueError(f"Model response did not contain a usable JSON object: {detail}") from last_error
 
 
 class LLMProvider:
@@ -121,31 +147,159 @@ class LLMProvider:
         provider_name: str,
         max_tokens: int,
     ) -> dict[str, Any]:
+        request_id = current_request_id()
         if not api_key:
-            raise HTTPException(status_code=500, detail=f"{provider_name} API Key 未配置，无法生成 AI 文本。")
-
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{base_url}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": model,
-                    "max_tokens": max_tokens,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                    ],
-                },
+            raise LLMProviderError(
+                code="llm_credentials_missing",
+                message=f"{provider_name} API Key 未配置。",
+                retryable=False,
             )
-        if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"{provider_name} generation failed: {response.text}")
 
-        raw = response.json()["choices"][0]["message"]["content"]
+        async def request_completion(messages: list[dict[str, str]], *, attempt: str) -> tuple[str, int, str]:
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(90, connect=15)) as client:
+                    response = await client.post(
+                        f"{base_url}/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json={
+                            "model": model,
+                            "max_tokens": max_tokens,
+                            "response_format": {"type": "json_object"},
+                            "messages": messages,
+                        },
+                    )
+            except httpx.TimeoutException as error:
+                logger.warning(
+                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=timeout",
+                    request_id,
+                    provider_name,
+                    model,
+                    attempt,
+                )
+                raise LLMProviderError(code="llm_timeout", message="AI 服务调用超时。", retryable=True) from error
+            except httpx.HTTPError as error:
+                logger.warning(
+                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=network_error type=%s",
+                    request_id,
+                    provider_name,
+                    model,
+                    attempt,
+                    type(error).__name__,
+                )
+                raise LLMProviderError(code="llm_network_error", message="AI 服务网络调用失败。", retryable=True) from error
+
+            response_length = len(response.content)
+            if response.status_code >= 400:
+                logger.warning(
+                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=http_error http_status=%s response_length=%s",
+                    request_id,
+                    provider_name,
+                    model,
+                    attempt,
+                    response.status_code,
+                    response_length,
+                )
+                raise LLMProviderError(
+                    code="llm_http_error",
+                    message=f"AI 服务返回 HTTP {response.status_code}。",
+                    retryable=response.status_code == 429 or response.status_code >= 500,
+                    http_status=response.status_code,
+                    response_length=response_length,
+                )
+            try:
+                body = response.json()
+                choice = body["choices"][0]
+                raw = choice["message"]["content"]
+                finish_reason = str(choice.get("finish_reason") or "")
+                if not isinstance(raw, str):
+                    raise TypeError("message.content is not a string")
+            except (ValueError, KeyError, IndexError, TypeError) as error:
+                diagnostic = f"{type(error).__name__}: {error}"[:300]
+                logger.warning(
+                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=envelope_error http_status=%s response_length=%s schema_error=%r",
+                    request_id,
+                    provider_name,
+                    model,
+                    attempt,
+                    response.status_code,
+                    response_length,
+                    diagnostic,
+                )
+                raise LLMProviderError(
+                    code="llm_response_schema_error",
+                    message="AI 响应格式错误。",
+                    retryable=True,
+                    http_status=response.status_code,
+                    response_length=response_length,
+                    schema_error=diagnostic,
+                ) from error
+            logger.info(
+                "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=received http_status=%s response_length=%s content_length=%s finish_reason=%s",
+                request_id,
+                provider_name,
+                model,
+                attempt,
+                response.status_code,
+                response_length,
+                len(raw),
+                finish_reason,
+            )
+            return raw, response.status_code, finish_reason
+
+        raw, http_status, finish_reason = await request_completion(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            attempt="initial",
+        )
         try:
             return safe_parse_json_response(raw)
-        except ValueError as error:
-            raise HTTPException(status_code=502, detail="AI 拆解结果解析失败，请稍后重试，或粘贴原文案继续分析。") from error
+        except ValueError as initial_error:
+            initial_schema_error = str(initial_error)[:300]
+            logger.warning(
+                "viral_llm request_id=%s provider=%s model=%s attempt=initial outcome=parse_error http_status=%s content_length=%s finish_reason=%s schema_error=%r",
+                request_id,
+                provider_name,
+                model,
+                http_status,
+                len(raw),
+                finish_reason,
+                initial_schema_error,
+            )
+
+        repaired_raw, repaired_status, repaired_finish = await request_completion(
+            [
+                {
+                    "role": "system",
+                    "content": "修复下面的模型输出，使其成为语义不变、完整且可解析的 JSON 对象。只输出 JSON；不得解释或补造事实。",
+                },
+                {"role": "user", "content": raw},
+            ],
+            attempt="format_repair",
+        )
+        try:
+            return safe_parse_json_response(repaired_raw)
+        except ValueError as repair_error:
+            schema_error = str(repair_error)[:300]
+            logger.warning(
+                "viral_llm request_id=%s provider=%s model=%s attempt=format_repair outcome=parse_error http_status=%s content_length=%s finish_reason=%s schema_error=%r",
+                request_id,
+                provider_name,
+                model,
+                repaired_status,
+                len(repaired_raw),
+                repaired_finish,
+                schema_error,
+            )
+            raise LLMProviderError(
+                code="llm_response_parse_failed",
+                message="AI 响应格式错误，自动修复一次后仍无法解析。",
+                retryable=True,
+                http_status=repaired_status,
+                response_length=len(repaired_raw),
+                schema_error=schema_error,
+            ) from repair_error
 
     def _mock(self, payload: dict[str, Any]) -> dict[str, Any]:
         product_name = payload.get("product_name", "商品")

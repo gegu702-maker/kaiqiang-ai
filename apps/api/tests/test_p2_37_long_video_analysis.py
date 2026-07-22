@@ -243,6 +243,10 @@ def test_oversized_and_interrupted_uploads_return_structured_errors(monkeypatch)
     )
     assert interrupted["error_code"] == "upload_interrupted"
     assert "connection lost" in interrupted["fallback_reason"]
+    assert interrupted["code"] == "upload_interrupted"
+    assert interrupted["stage"] == "pending"
+    assert interrupted["retryable"] is True
+    assert "request_id" in interrupted
 
 
 def test_frontend_upload_has_progress_and_structured_network_errors():
@@ -255,6 +259,9 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "上传进度：" in component_source
     assert "文件大小：" in component_source
     assert "仅基于公开信息（非完整拆解）" in component_source
+    assert "ASR 模型不可用" in component_source
+    assert "AI 响应格式错误" in component_source
+    assert "请求 ID：" in component_source
 
 
 def test_real_multipart_12_7mb_route_and_cors(monkeypatch):

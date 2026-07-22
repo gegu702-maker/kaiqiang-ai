@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from typing import Literal
 
@@ -12,8 +13,10 @@ from app.core.supabase import get_supabase
 from app.services.video_link_resolver import check_video_link, resolve_video_link
 from app.services.viral_analyzer import analyze_viral_script
 from app.services.viral_pipeline import run_uploaded_viral_pipeline, run_viral_pipeline
+from app.services.viral_diagnostics import bind_request_id, new_request_id, reset_request_id
 
 router = APIRouter(prefix="/viral", tags=["viral"])
+logger = logging.getLogger(__name__)
 
 
 class ViralAnalyzeRequest(BaseModel):
@@ -43,6 +46,29 @@ def _is_pipeline_tester(email: str | None) -> bool:
     return not allowed or email.lower() in allowed
 
 
+def _pipeline_failure(*, request_id: str, code: str, stage: str, message: str, retryable: bool) -> dict:
+    return {
+        "ok": False,
+        "success": False,
+        "status": "failed",
+        "failed_at": stage,
+        "error_code": code,
+        "code": code,
+        "stage": stage,
+        "message": message,
+        "retryable": retryable,
+        "request_id": request_id,
+        "fallback_available": True,
+        "fallback_options": ["upload_video", "paste_text"],
+        "fallback_reason": message,
+        "project_id": "",
+        "transcript": "",
+        "analysis": None,
+        "rewrites": [],
+        "metadata": {},
+    }
+
+
 @router.post("/link/resolve")
 async def resolve_viral_link(
     payload: ViralLinkResolveRequest,
@@ -69,24 +95,18 @@ async def run_viral_agent_pipeline(
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> dict:
+    request_id = new_request_id()
+    context_token = bind_request_id(request_id)
     user = get_authenticated_user(supabase, token)
     if not _is_pipeline_tester(user.get("email")):
-        return {
-            "ok": False,
-            "success": False,
-            "status": "failed",
-            "failed_at": "pending",
-            "error_code": "unknown_error",
-            "message": "自动解析内测中，请上传视频或粘贴文案继续分析。",
-            "fallback_available": True,
-            "fallback_options": ["upload_video", "paste_text"],
-            "fallback_reason": "自动解析内测中，请上传视频或粘贴文案继续分析。",
-            "project_id": "",
-            "transcript": "",
-            "analysis": None,
-            "rewrites": [],
-            "metadata": {},
-        }
+        reset_request_id(context_token)
+        return _pipeline_failure(
+            request_id=request_id,
+            code="tester_not_allowed",
+            stage="pending",
+            message="自动解析内测中，请上传视频或粘贴文案继续分析。",
+            retryable=False,
+        )
     try:
         return await asyncio.wait_for(
             run_viral_pipeline(
@@ -102,22 +122,25 @@ async def run_viral_agent_pipeline(
             timeout=settings.viral_pipeline_timeout_seconds,
         )
     except asyncio.TimeoutError:
-        return {
-            "ok": False,
-            "success": False,
-            "status": "failed",
-            "failed_at": "transcribing",
-            "error_code": "resolver_timeout",
-            "message": "链接检查超时，请稍后重试，或使用上传/粘贴方式。",
-            "fallback_available": True,
-            "fallback_options": ["upload_video", "paste_text"],
-            "fallback_reason": "自动解析超时，请上传视频继续分析。",
-            "project_id": "",
-            "transcript": "",
-            "analysis": None,
-            "rewrites": [],
-            "metadata": {},
-        }
+        logger.warning("viral_pipeline request_id=%s stage=pipeline outcome=timeout", request_id)
+        return _pipeline_failure(
+            request_id=request_id,
+            code="pipeline_timeout",
+            stage="analyzing",
+            message="链接拆解处理超时。",
+            retryable=True,
+        )
+    except Exception as error:
+        logger.exception("viral_pipeline request_id=%s stage=pipeline outcome=unexpected_failure", request_id)
+        return _pipeline_failure(
+            request_id=request_id,
+            code="pipeline_unexpected_error",
+            stage="analyzing",
+            message=f"拆解流程发生未预期错误（{type(error).__name__}）。",
+            retryable=True,
+        )
+    finally:
+        reset_request_id(context_token)
 
 
 @router.post("/analyze")
@@ -149,6 +172,8 @@ async def run_uploaded_viral_agent_pipeline(
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> dict:
+    request_id = new_request_id()
+    context_token = bind_request_id(request_id)
     user = get_authenticated_user(supabase, token)
     try:
         return await asyncio.wait_for(
@@ -165,21 +190,26 @@ async def run_uploaded_viral_agent_pipeline(
             timeout=settings.viral_pipeline_timeout_seconds,
         )
     except asyncio.TimeoutError:
-        return {
-            "ok": False,
-            "success": False,
-            "status": "failed",
-            "failed_at": "transcribing",
-            "error_code": "pipeline_timeout",
-            "message": "上传视频分析超时，未静默降级。",
-            "fallback_available": True,
-            "fallback_options": ["paste_text"],
-            "fallback_reason": "上传视频分析超时，请重试或粘贴完整转写稿。",
-            "project_id": "",
-            "transcript": "",
-            "analysis": None,
-            "rewrites": [],
-            "metadata": {},
-            "source_type": "uploaded_video_asr",
-            "degraded": False,
-        }
+        logger.warning("viral_pipeline request_id=%s stage=upload_pipeline outcome=timeout", request_id)
+        result = _pipeline_failure(
+            request_id=request_id,
+            code="pipeline_timeout",
+            stage="transcribing",
+            message="上传视频分析超时，未静默降级。",
+            retryable=True,
+        )
+        result.update({"fallback_options": ["paste_text"], "source_type": "uploaded_video_asr", "degraded": False})
+        return result
+    except Exception as error:
+        logger.exception("viral_pipeline request_id=%s stage=upload_pipeline outcome=unexpected_failure", request_id)
+        result = _pipeline_failure(
+            request_id=request_id,
+            code="pipeline_unexpected_error",
+            stage="processing",
+            message=f"上传视频处理发生未预期错误（{type(error).__name__}）。",
+            retryable=True,
+        )
+        result.update({"fallback_options": ["paste_text"], "source_type": "uploaded_video_asr", "degraded": False})
+        return result
+    finally:
+        reset_request_id(context_token)

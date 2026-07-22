@@ -244,31 +244,52 @@ export function ViralAnalyzerClient({
     return payload?.message || payload?.fallback_reason || linkCheckCopy.checkFailed;
   }
 
-  function friendlyPipelineMessage(payload: Pick<ViralPipelineResult, "failed_at" | "error_code" | "message" | "fallback_reason">) {
+  function friendlyPipelineMessage(
+    payload: Pick<ViralPipelineResult, "failed_at" | "error_code" | "code" | "stage" | "message" | "fallback_reason" | "request_id" | "retryable">,
+  ) {
+    const code = payload.code || payload.error_code || "unknown_error";
+    const stage = payload.stage || payload.failed_at || "failed";
+    const stageLabels: Record<string, string> = {
+      pending: "上传接收失败",
+      resolving_link: "链接解析失败",
+      downloading_video: "平台视频下载失败",
+      extracting_audio: "音频提取失败",
+      transcribing: "语音转写失败",
+      analyzing: "AI 拆解失败",
+      rewriting: "改写生成失败",
+      processing: "视频处理失败",
+      metadata_fallback: "公开信息拆解失败",
+    };
+    const codeLabels: Record<string, string> = {
+      asr_dependency_missing: "ASR 依赖不可用",
+      asr_model_unavailable: "ASR 模型不可用",
+      asr_transcription_failed: "ASR 推理失败",
+      asr_empty_transcript: "未识别到语音内容",
+      audio_extraction_failed: "音频提取失败",
+      media_probe_failed: "视频信息读取失败",
+      llm_credentials_missing: "AI 服务凭据缺失",
+      llm_timeout: "AI 服务调用超时",
+      llm_network_error: "AI 服务网络失败",
+      llm_http_error: "AI 服务调用失败",
+      llm_response_schema_error: "AI 响应结构错误",
+      llm_response_parse_failed: "AI 响应格式错误",
+      pipeline_timeout: "处理超时",
+    };
+    const title = codeLabels[code] || stageLabels[stage] || "拆解失败";
+    const detail = payload.message || payload.fallback_reason || "服务端未返回具体原因。";
+    const requestLine = payload.request_id ? `请求 ID：${payload.request_id}` : "";
+    const retryLine = payload.retryable === true ? "可重试：是" : payload.retryable === false ? "可重试：否" : "";
     if (
       payload.error_code === "not_downloadable" &&
       (payload.failed_at === "downloading_video" || payload.failed_at === "resolving_link")
     ) {
       return "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。";
     }
-    if (payload.failed_at === "transcribing") {
-      return payload.fallback_reason || payload.message || "视频读取成功，但语音转文字失败，未执行静默降级。";
-    }
-    if (payload.failed_at === "analyzing") {
-      return "文案提取成功，但拆解失败，请稍后重试或粘贴文案继续分析。";
-    }
-    return friendlyLinkMessage({
-      error_code: payload.error_code,
-      message: payload.message,
-      fallback_reason: payload.fallback_reason,
-    });
+    return [`${title}（${code} / ${stage}）`, detail, retryLine, requestLine].filter(Boolean).join("\n");
   }
 
   function friendlyError(error: unknown) {
     const message = error instanceof Error ? error.message : "";
-    if (/DeepSeek returned invalid JSON|API request failed|unknown_error/i.test(message)) {
-      return "AI 拆解结果解析失败，请稍后重试，或粘贴原文案继续分析。";
-    }
     return message || t.failedError;
   }
 

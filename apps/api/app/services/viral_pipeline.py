@@ -9,13 +9,14 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
 from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.services.asr_service import transcribe_audio
-from app.services.llm_provider import LLMProvider
+from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.core.config import settings
+from app.services.viral_diagnostics import current_request_id
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio, probe_media_duration
 from app.services.video_link_resolver import resolve_video_link
 from app.services.viral_analyzer import FINAL_REWRITE_LIMIT, analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, smooth_spoken_script
@@ -65,13 +66,20 @@ def _failed(
     fallback_reason: str,
     metadata: dict[str, Any] | None = None,
     error_code: str = "unknown_error",
+    retryable: bool = False,
+    diagnostic: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    request_id = current_request_id()
     return {
         "ok": False,
         "success": False,
         "status": ViralPipelineStatus.FAILED,
         "failed_at": status,
         "error_code": error_code,
+        "code": error_code,
+        "stage": status,
+        "retryable": retryable,
+        "request_id": request_id,
         "message": fallback_reason,
         "fallback_available": True,
         "fallback_options": FALLBACK_OPTIONS,
@@ -81,7 +89,53 @@ def _failed(
         "analysis": None,
         "rewrites": [],
         "metadata": metadata or {},
+        "diagnostic": diagnostic or {},
     }
+
+
+def _analysis_error_result(
+    error: Exception,
+    *,
+    metadata: dict[str, Any],
+    source_type: str,
+) -> dict[str, Any]:
+    if isinstance(error, LLMProviderError):
+        diagnostic = {
+            "http_status": error.http_status,
+            "response_length": error.response_length,
+            "schema_error": error.schema_error,
+        }
+        code = error.code
+        message = error.message
+        retryable = error.retryable
+    elif isinstance(error, HTTPException):
+        detail = error.detail
+        message = str(detail.get("message") if isinstance(detail, dict) else detail)
+        code = str(detail.get("code") if isinstance(detail, dict) else "analysis_http_error")
+        retryable = error.status_code >= 500
+        diagnostic = {"http_status": error.status_code, "response_length": 0, "schema_error": ""}
+    else:
+        message = "AI 拆解阶段发生未预期错误。"
+        code = "analysis_unexpected_error"
+        retryable = True
+        diagnostic = {"exception_type": type(error).__name__}
+    logger.exception(
+        "viral_pipeline request_id=%s stage=analyzing outcome=failed code=%s retryable=%s diagnostic=%s",
+        current_request_id(),
+        code,
+        retryable,
+        diagnostic,
+    )
+    result = _failed(
+        status=ViralPipelineStatus.ANALYZING,
+        fallback_reason=message,
+        metadata=metadata,
+        error_code=code,
+        retryable=retryable,
+        diagnostic=diagnostic,
+    )
+    result.update({"source_type": source_type, "degraded": source_type.endswith("fallback")})
+    return result
 
 
 def _analysis_payload(analysis: dict[str, Any]) -> dict[str, Any]:
@@ -370,6 +424,13 @@ async def _process_video_path(
     source_type: str,
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
+    request_id = current_request_id()
+    logger.info(
+        "viral_pipeline request_id=%s stage=media_probe outcome=started source_type=%s video_bytes=%s",
+        request_id,
+        source_type,
+        video_path.stat().st_size if video_path.exists() else -1,
+    )
     duration = float(metadata.get("duration") or 0.0)
     if not duration:
         try:
@@ -384,6 +445,11 @@ async def _process_video_path(
             result.update({"source_type": source_type, "degraded": False})
             return result
         metadata["duration"] = duration
+    logger.info(
+        "viral_pipeline request_id=%s stage=media_probe outcome=completed duration_seconds=%.3f",
+        request_id,
+        duration,
+    )
     if duration > settings.viral_max_video_duration_seconds:
         return _failed(
             status=ViralPipelineStatus.EXTRACTING_AUDIO,
@@ -392,6 +458,7 @@ async def _process_video_path(
             error_code="video_too_long",
         )
 
+    logger.info("viral_pipeline request_id=%s stage=extracting_audio outcome=started", request_id)
     try:
         audio_path = await extract_audio(video_path, work_dir)
     except RuntimeError as error:
@@ -404,14 +471,28 @@ async def _process_video_path(
         result["source_type"] = source_type
         result["degraded"] = False
         return result
+    logger.info(
+        "viral_pipeline request_id=%s stage=extracting_audio outcome=completed audio_bytes=%s",
+        request_id,
+        audio_path.stat().st_size if audio_path.exists() else -1,
+    )
 
     asr = await transcribe_audio(audio_path, language)
     if not asr.ok:
+        logger.warning(
+            "viral_pipeline request_id=%s stage=transcribing outcome=failed code=%s retryable=%s diagnostic=%r",
+            request_id,
+            asr.error_code or "asr_failed",
+            asr.retryable,
+            asr.diagnostic,
+        )
         result = _failed(
             status=ViralPipelineStatus.TRANSCRIBING,
             fallback_reason=asr.fallback_reason,
             metadata=metadata,
-            error_code="asr_failed",
+            error_code=asr.error_code or "asr_failed",
+            retryable=asr.retryable,
+            diagnostic={"provider": asr.provider, "error": asr.diagnostic},
         )
         result.update({"source_type": source_type, "degraded": False, "asr_provider": asr.provider})
         return result
@@ -423,16 +504,26 @@ async def _process_video_path(
     coverage_ratio = asr.coverage_seconds / duration if duration else 1.0
     degraded = bool(duration and coverage_ratio < 0.8)
     warning = f"ASR 仅覆盖到 {asr.coverage_seconds:.1f}/{duration:.1f} 秒，结果可能不完整。" if degraded else ""
-    analysis = await analyze_viral_script(
-        supabase,
-        user_id=user_id,
-        email=email,
-        source_url=source_url,
-        raw_script=asr.transcript,
-        industry=industry,
-        language=language,
-        rewrite_length=rewrite_length,
+    logger.info(
+        "viral_pipeline request_id=%s stage=analyzing outcome=started transcript_chars=%s segment_count=%s coverage_seconds=%.3f",
+        request_id,
+        len(asr.transcript),
+        len(timeline),
+        asr.coverage_seconds,
     )
+    try:
+        analysis = await analyze_viral_script(
+            supabase,
+            user_id=user_id,
+            email=email,
+            source_url=source_url,
+            raw_script=asr.transcript,
+            industry=industry,
+            language=language,
+            rewrite_length=rewrite_length,
+        )
+    except Exception as error:
+        return _analysis_error_result(error, metadata=metadata, source_type=source_type)
     rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(
         transcript=asr.transcript,
         analysis=analysis,
@@ -473,6 +564,10 @@ async def _process_video_path(
         "warning": warning,
         "asr_provider": asr.provider,
         "diagnostics": diagnostics,
+        "code": "",
+        "stage": ViralPipelineStatus.READY,
+        "retryable": False,
+        "request_id": request_id,
     }
 
 
@@ -496,16 +591,24 @@ async def _metadata_fallback_analysis(
             error_code="insufficient_metadata",
         )
 
-    analysis = await analyze_viral_script(
-        supabase,
-        user_id=user_id,
-        email=email,
-        source_url=str(metadata.get("webpage_url") or source_url),
-        raw_script=transcript,
-        industry=industry,
-        language=language,
-        rewrite_length=rewrite_length,
+    logger.info(
+        "viral_pipeline request_id=%s stage=analyzing outcome=started source_type=link_metadata_fallback transcript_chars=%s",
+        current_request_id(),
+        len(transcript),
     )
+    try:
+        analysis = await analyze_viral_script(
+            supabase,
+            user_id=user_id,
+            email=email,
+            source_url=str(metadata.get("webpage_url") or source_url),
+            raw_script=transcript,
+            industry=industry,
+            language=language,
+            rewrite_length=rewrite_length,
+        )
+    except Exception as error:
+        return _analysis_error_result(error, metadata=metadata, source_type="link_metadata_fallback")
     rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=transcript, analysis=analysis, language=language, rewrite_length=rewrite_length)
     project_id = str(analysis.get("project_id") or uuid4())
     _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
@@ -563,16 +666,24 @@ async def _share_text_fallback_analysis(
             error_code="insufficient_metadata",
         )
 
-    analysis = await analyze_viral_script(
-        supabase,
-        user_id=user_id,
-        email=email,
-        source_url=source_url,
-        raw_script=share_text,
-        industry=industry,
-        language=language,
-        rewrite_length=rewrite_length,
+    logger.info(
+        "viral_pipeline request_id=%s stage=analyzing outcome=started source_type=share_text_fallback transcript_chars=%s",
+        current_request_id(),
+        len(share_text),
     )
+    try:
+        analysis = await analyze_viral_script(
+            supabase,
+            user_id=user_id,
+            email=email,
+            source_url=source_url,
+            raw_script=share_text,
+            industry=industry,
+            language=language,
+            rewrite_length=rewrite_length,
+        )
+    except Exception as error:
+        return _analysis_error_result(error, metadata=metadata or {}, source_type="share_text_fallback")
     rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=share_text, analysis=analysis, language=language, rewrite_length=rewrite_length)
     project_id = str(analysis.get("project_id") or uuid4())
     _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
@@ -607,6 +718,10 @@ async def _share_text_fallback_analysis(
         "degraded": True,
         "warning": SHARE_TEXT_FALLBACK_WARNING,
         "diagnostics": diagnostics,
+        "code": "",
+        "stage": ViralPipelineStatus.READY,
+        "retryable": False,
+        "request_id": current_request_id(),
     }
 
 
@@ -647,7 +762,15 @@ async def run_uploaded_viral_pipeline(
                 status=ViralPipelineStatus.PENDING,
                 fallback_reason=f"上传流读取中断：{error}",
                 error_code="upload_interrupted",
+                retryable=True,
             )
+        logger.info(
+            "viral_pipeline request_id=%s stage=upload_received outcome=completed filename_suffix=%s uploaded_bytes=%s expected_bytes=%s",
+            current_request_id(),
+            suffix,
+            total,
+            getattr(upload, "size", None) if getattr(upload, "size", None) is not None else -1,
+        )
         metadata = {
             "platform": "upload",
             "title": Path(upload.filename or "上传视频").stem,
@@ -673,6 +796,11 @@ async def run_uploaded_viral_pipeline(
     finally:
         await upload.close()
         shutil.rmtree(work_dir, ignore_errors=True)
+        logger.info(
+            "viral_pipeline request_id=%s stage=cleanup outcome=completed temp_exists=%s",
+            current_request_id(),
+            work_dir.exists(),
+        )
 
 
 async def run_viral_pipeline(
@@ -688,6 +816,7 @@ async def run_viral_pipeline(
 ) -> dict[str, Any]:
     work_dir = Path(tempfile.mkdtemp(prefix="viral-agent-"))
     try:
+        logger.info("viral_pipeline request_id=%s stage=resolving_link outcome=started", current_request_id())
         share_text = extract_share_text_from_input(raw_input or source_url)
         status = ViralPipelineStatus.RESOLVING_LINK
         resolved = await resolve_video_link(source_url)
@@ -700,6 +829,17 @@ async def run_viral_pipeline(
             "webpage_url": resolved.get("webpage_url", source_url),
             "downloadable": resolved.get("downloadable", False),
         }
+        logger.info(
+            "viral_pipeline request_id=%s stage=resolving_link outcome=completed ok=%s platform=%s duration_seconds=%s downloadable=%s title_chars=%s description_chars=%s error_code=%s",
+            current_request_id(),
+            bool(resolved.get("ok")),
+            metadata["platform"],
+            metadata["duration"],
+            metadata["downloadable"],
+            len(str(metadata["title"] or "")),
+            len(str(metadata["description"] or "")),
+            resolved.get("error_code") or "",
+        )
         if not resolved.get("ok") or not resolved.get("downloadable"):
             if _has_enough_metadata_text(share_text):
                 return await _share_text_fallback_analysis(
@@ -733,6 +873,7 @@ async def run_viral_pipeline(
             )
 
         status = ViralPipelineStatus.DOWNLOADING_VIDEO
+        logger.info("viral_pipeline request_id=%s stage=downloading_video outcome=started", current_request_id())
         downloaded = await download_video(str(resolved.get("webpage_url") or source_url), work_dir)
         metadata.update(
             {
@@ -745,6 +886,11 @@ async def run_viral_pipeline(
             }
         )
         if not downloaded.ok or not downloaded.video_path:
+            logger.warning(
+                "viral_pipeline request_id=%s stage=downloading_video outcome=fallback reason_code=%s",
+                current_request_id(),
+                getattr(downloaded, "error_code", "") or "not_downloadable",
+            )
             metadata["downloadable"] = False
             return await _metadata_fallback_analysis(
                 supabase,
@@ -772,3 +918,8 @@ async def run_viral_pipeline(
         )
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+        logger.info(
+            "viral_pipeline request_id=%s stage=cleanup outcome=completed temp_exists=%s",
+            current_request_id(),
+            work_dir.exists(),
+        )
