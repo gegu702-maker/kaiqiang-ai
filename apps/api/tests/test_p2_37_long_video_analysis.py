@@ -67,8 +67,9 @@ def _analysis(script_size=140):
     }
 
 
-@pytest.mark.parametrize("duration", [30.0, 90.0, 170.333])
+@pytest.mark.parametrize("duration", [30.0, 90.0, 119.0, 170.3, 600.0])
 def test_short_medium_long_video_keep_full_asr_timeline(monkeypatch, tmp_path: Path, duration: float):
+    monkeypatch.setattr(viral_pipeline.settings, "viral_max_video_duration_seconds", 600)
     video = tmp_path / "video.mp4"
     video.write_bytes(b"video")
     monkeypatch.setattr(viral_pipeline, "extract_audio", lambda *_args: asyncio.sleep(0, result=tmp_path / "audio.wav"))
@@ -108,6 +109,39 @@ def test_short_medium_long_video_keep_full_asr_timeline(monkeypatch, tmp_path: P
     assert len(result["timeline"]) == 2
     assert result["diagnostics"]["asr_coverage_seconds"] == pytest.approx(duration, abs=0.001)
     assert result["degraded"] is False
+
+
+def test_video_just_over_configured_limit_is_structured_and_not_processed(monkeypatch, tmp_path: Path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(viral_pipeline.settings, "viral_max_video_duration_seconds", 600)
+
+    async def must_not_extract(*_args, **_kwargs):
+        raise AssertionError("over-limit video must not enter audio extraction")
+
+    monkeypatch.setattr(viral_pipeline, "extract_audio", must_not_extract)
+    result = asyncio.run(
+        viral_pipeline._process_video_path(
+            _Supabase(),
+            video_path=video,
+            work_dir=tmp_path,
+            user_id="u1",
+            email="u@example.com",
+            source_url="",
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+            source_type="uploaded_video_asr",
+            metadata={"duration": 600.1},
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "video_too_long"
+    assert result["stage"] == "extracting_audio"
+    assert result["retryable"] is False
+    assert "600.1" in result["message"] and "600 秒" in result["message"]
+    assert result["diagnostic"] == {"actual_duration_seconds": 600.1, "allowed_duration_seconds": 600}
 
 
 def test_partial_asr_is_explicit_and_complete_failure_stops(monkeypatch, tmp_path: Path):
@@ -214,6 +248,7 @@ def test_12_7mb_upload_reaches_video_processing(monkeypatch):
 
     async def fake_process(*_args, **kwargs):
         observed["size"] = kwargs["video_path"].stat().st_size
+        observed["work_dir"] = kwargs["work_dir"]
         return {"ok": True, "diagnostics": {"video_duration_seconds": 170.0, "asr_coverage_seconds": 170.0}}
 
     monkeypatch.setattr(viral_pipeline, "_process_video_path", fake_process)
@@ -224,6 +259,7 @@ def test_12_7mb_upload_reaches_video_processing(monkeypatch):
     )
     assert result["ok"] is True
     assert observed["size"] == 13_299_712
+    assert not observed["work_dir"].exists()
     assert upload.closed is True
 
 

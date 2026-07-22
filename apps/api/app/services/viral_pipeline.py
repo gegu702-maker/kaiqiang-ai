@@ -456,6 +456,11 @@ async def _process_video_path(
             fallback_reason=f"视频时长 {duration:.1f} 秒，超过 {settings.viral_max_video_duration_seconds} 秒限制。",
             metadata=metadata,
             error_code="video_too_long",
+            retryable=False,
+            diagnostic={
+                "actual_duration_seconds": round(duration, 3),
+                "allowed_duration_seconds": settings.viral_max_video_duration_seconds,
+            },
         )
 
     logger.info("viral_pipeline request_id=%s stage=extracting_audio outcome=started", request_id)

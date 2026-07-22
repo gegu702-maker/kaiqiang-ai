@@ -123,7 +123,7 @@ async def extract_audio(video_path: Path, work_dir: Path) -> Path:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=min(settings.viral_pipeline_timeout_seconds, 120),
+            timeout=min(settings.viral_pipeline_timeout_seconds, 600),
         )
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         detail = error.stderr if isinstance(error, subprocess.CalledProcessError) else str(error)

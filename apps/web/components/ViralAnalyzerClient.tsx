@@ -267,6 +267,7 @@ export function ViralAnalyzerClient({
       asr_empty_transcript: "未识别到语音内容",
       audio_extraction_failed: "音频提取失败",
       media_probe_failed: "视频信息读取失败",
+      video_too_long: "视频时长超过上限",
       llm_credentials_missing: "AI 服务凭据缺失",
       llm_timeout: "AI 服务调用超时",
       llm_network_error: "AI 服务网络失败",

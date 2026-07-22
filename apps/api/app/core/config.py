@@ -82,9 +82,9 @@ class Settings(BaseSettings):
     faster_whisper_model_size: str = Field("small", validation_alias=AliasChoices("FASTER_WHISPER_MODEL_SIZE", "ASR_MODEL_SIZE"))
     faster_whisper_device: str = Field("cpu", validation_alias=AliasChoices("FASTER_WHISPER_DEVICE", "ASR_DEVICE"))
     faster_whisper_compute_type: str = Field("int8", validation_alias=AliasChoices("FASTER_WHISPER_COMPUTE_TYPE", "ASR_COMPUTE_TYPE"))
-    viral_max_video_duration_seconds: int = 1800
+    viral_max_video_duration_seconds: int = 600
     viral_max_download_mb: int = 500
-    viral_pipeline_timeout_seconds: int = 600
+    viral_pipeline_timeout_seconds: int = 1800
     viral_pipeline_allowed_emails: str = ""
     douyin_cookie_file: str = ""
     elevenlabs_api_key: str = ""
