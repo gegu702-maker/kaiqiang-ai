@@ -9,10 +9,20 @@ from app.core.config import settings
 
 
 @dataclass
+class ASRSegment:
+    start: float
+    end: float
+    text: str
+
+
+@dataclass
 class ASRResult:
     ok: bool
     transcript: str = ""
     fallback_reason: str = ""
+    segments: list[ASRSegment] | None = None
+    coverage_seconds: float = 0.0
+    provider: str = "faster-whisper"
 
 
 def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResult:
@@ -28,13 +38,19 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResul
             vad_filter=True,
             beam_size=5,
         )
-        transcript = "".join(segment.text.strip() for segment in segments).strip()
+        normalized_segments = [
+            ASRSegment(start=float(segment.start), end=float(segment.end), text=segment.text.strip())
+            for segment in segments
+            if segment.text.strip()
+        ]
+        transcript = "\n".join(segment.text for segment in normalized_segments).strip()
     except Exception:
         return ASRResult(ok=False, fallback_reason="该视频暂不支持自动转写，请上传视频继续分析。")
 
     if not transcript:
         return ASRResult(ok=False, fallback_reason="未识别到可用语音内容，请上传更清晰的视频或粘贴文案继续分析。")
-    return ASRResult(ok=True, transcript=transcript)
+    coverage_seconds = max((segment.end for segment in normalized_segments), default=0.0)
+    return ASRResult(ok=True, transcript=transcript, segments=normalized_segments, coverage_seconds=coverage_seconds)
 
 
 @lru_cache(maxsize=1)

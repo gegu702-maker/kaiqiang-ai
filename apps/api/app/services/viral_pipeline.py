@@ -2,20 +2,25 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import logging
 from enum import Enum
 from pathlib import Path
 import re
 from typing import Any
 from uuid import uuid4
 
+from fastapi import UploadFile
 from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.services.asr_service import transcribe_audio
 from app.services.llm_provider import LLMProvider
-from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio
+from app.core.config import settings
+from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio, probe_media_duration
 from app.services.video_link_resolver import resolve_video_link
 from app.services.viral_analyzer import FINAL_REWRITE_LIMIT, analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, smooth_spoken_script
+
+logger = logging.getLogger(__name__)
 
 
 class ViralPipelineStatus(str, Enum):
@@ -86,6 +91,10 @@ def _analysis_payload(analysis: dict[str, Any]) -> dict[str, Any]:
         "selling_points": analysis.get("selling_points", []),
         "structure": analysis.get("structure", []),
         "template": analysis.get("template", ""),
+        "core_points": analysis.get("core_points", []),
+        "arguments": analysis.get("arguments", []),
+        "cases": analysis.get("cases", []),
+        "data_points": analysis.get("data_points", []),
     }
 
 
@@ -273,7 +282,12 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
     )
 
 
-async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], language: str) -> list[dict[str, str]]:
+async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], language: str, rewrite_length: str = "short") -> list[dict[str, str]]:
+    length_guidance = {
+        "short": "30–60 秒，中文约 120–240 字",
+        "medium": "60–120 秒，中文约 240–500 字",
+        "full": "完整版，保留原内容主要观点、论据、案例和数据；长视频中文通常 500–1200 字",
+    }.get(rewrite_length, "30–60 秒，中文约 120–240 字")
     payload = {
         "language": LANGUAGE_LABELS.get(language, "中文"),
         "transcript": transcript,
@@ -286,7 +300,8 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
             "必须像真人直接对观众说话，少用书面总结和方法论标题",
             "多用短句和自然转折，避免连续堆叠“真正、背后、结构、价值、逻辑”等抽象词",
             "不要把每条都写成“先...再...最后...”的教学提纲，除非句子本身像口播",
-            "每条建议 100-160 个中文字符，信息要具体但不要编造事实",
+            "信息要具体但不要编造事实",
+            f"本次长度必须符合：{length_guidance}",
             "避免承诺绝对收益",
             "每个版本都要有明确口播节奏",
             "只生成 3 条高质量版本：版本A热点反差版、版本B用户痛点版、版本C商业机会版",
@@ -305,6 +320,7 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
         data = await LLMProvider().generate_json(
             system="你是短视频爆款仿写编导。你只输出合法 JSON，并生成适合数字人口播的原创口播稿。",
             payload=payload,
+            max_tokens=8000 if rewrite_length == "full" else 5000,
         )
     except Exception:
         return _fallback_rewrites(analysis, transcript)
@@ -320,6 +336,136 @@ def _update_project_rewrites(supabase: Client, *, project_id: str, rewrites: lis
         pass
 
 
+def _format_timestamp(seconds: float) -> str:
+    minutes, remainder = divmod(max(seconds, 0.0), 60)
+    return f"{int(minutes):02d}:{int(remainder):02d}"
+
+
+def _log_diagnostics(diagnostics: dict[str, Any]) -> None:
+    logger.info(
+        "viral_analysis_diagnostics source_type=%s video_duration_seconds=%s asr_coverage_seconds=%s "
+        "transcript_chars=%s segment_count=%s fallback=%s prompt_input_chars=%s output_chars=%s",
+        diagnostics.get("source_type"),
+        diagnostics.get("video_duration_seconds"),
+        diagnostics.get("asr_coverage_seconds"),
+        diagnostics.get("transcript_chars"),
+        diagnostics.get("segment_count"),
+        diagnostics.get("fallback"),
+        diagnostics.get("prompt_input_chars"),
+        diagnostics.get("output_chars"),
+    )
+
+
+async def _process_video_path(
+    supabase: Client,
+    *,
+    video_path: Path,
+    work_dir: Path,
+    user_id: str,
+    email: str,
+    source_url: str,
+    industry: str,
+    language: str,
+    rewrite_length: str,
+    source_type: str,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    duration = float(metadata.get("duration") or 0.0)
+    if not duration:
+        duration = await probe_media_duration(video_path)
+        metadata["duration"] = duration
+    if duration > settings.viral_max_video_duration_seconds:
+        return _failed(
+            status=ViralPipelineStatus.EXTRACTING_AUDIO,
+            fallback_reason=f"视频时长 {duration:.1f} 秒，超过 {settings.viral_max_video_duration_seconds} 秒限制。",
+            metadata=metadata,
+            error_code="video_too_long",
+        )
+
+    try:
+        audio_path = await extract_audio(video_path, work_dir)
+    except RuntimeError as error:
+        result = _failed(
+            status=ViralPipelineStatus.EXTRACTING_AUDIO,
+            fallback_reason=str(error),
+            metadata=metadata,
+            error_code="audio_extraction_failed",
+        )
+        result["source_type"] = source_type
+        result["degraded"] = False
+        return result
+
+    asr = await transcribe_audio(audio_path, language)
+    if not asr.ok:
+        result = _failed(
+            status=ViralPipelineStatus.TRANSCRIBING,
+            fallback_reason=asr.fallback_reason,
+            metadata=metadata,
+            error_code="asr_failed",
+        )
+        result.update({"source_type": source_type, "degraded": False, "asr_provider": asr.provider})
+        return result
+
+    timeline = [
+        {"start": segment.start, "end": segment.end, "timestamp": f"{_format_timestamp(segment.start)}–{_format_timestamp(segment.end)}", "text": segment.text}
+        for segment in (asr.segments or [])
+    ]
+    coverage_ratio = asr.coverage_seconds / duration if duration else 1.0
+    degraded = bool(duration and coverage_ratio < 0.8)
+    warning = f"ASR 仅覆盖到 {asr.coverage_seconds:.1f}/{duration:.1f} 秒，结果可能不完整。" if degraded else ""
+    analysis = await analyze_viral_script(
+        supabase,
+        user_id=user_id,
+        email=email,
+        source_url=source_url,
+        raw_script=asr.transcript,
+        industry=industry,
+        language=language,
+        rewrite_length=rewrite_length,
+    )
+    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(
+        transcript=asr.transcript,
+        analysis=analysis,
+        language=language,
+        rewrite_length=rewrite_length,
+    )
+    project_id = str(analysis.get("project_id") or uuid4())
+    diagnostics = {
+        "source_type": source_type,
+        "video_duration_seconds": round(duration, 3),
+        "asr_coverage_seconds": round(asr.coverage_seconds, 3),
+        "transcript_chars": len(asr.transcript),
+        "segment_count": len(timeline),
+        "fallback": False,
+        "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
+        "output_chars": sum(len(item.get("script", "")) for item in rewrites),
+    }
+    _log_diagnostics(diagnostics)
+    return {
+        "ok": True,
+        "success": True,
+        "status": ViralPipelineStatus.READY,
+        "failed_at": "",
+        "error_code": "",
+        "message": "",
+        "fallback_available": False,
+        "fallback_options": [],
+        "fallback_reason": "",
+        "project_id": project_id,
+        "transcript": asr.transcript,
+        "timeline": timeline,
+        "analysis": _analysis_payload(analysis),
+        "rewrites": rewrites,
+        "metadata": metadata,
+        "source_type": source_type,
+        "analysis_quality": "partial" if degraded else "full",
+        "degraded": degraded,
+        "warning": warning,
+        "asr_provider": asr.provider,
+        "diagnostics": diagnostics,
+    }
+
+
 async def _metadata_fallback_analysis(
     supabase: Client,
     *,
@@ -329,6 +475,7 @@ async def _metadata_fallback_analysis(
     metadata: dict[str, Any],
     industry: str,
     language: str,
+    rewrite_length: str = "short",
 ) -> dict[str, Any]:
     transcript = _metadata_text(metadata)
     if not _has_enough_metadata_text(transcript):
@@ -347,10 +494,22 @@ async def _metadata_fallback_analysis(
         raw_script=transcript,
         industry=industry,
         language=language,
+        rewrite_length=rewrite_length,
     )
-    rewrites = await _generate_nine_rewrites(transcript=transcript, analysis=analysis, language=language)
+    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=transcript, analysis=analysis, language=language, rewrite_length=rewrite_length)
     project_id = str(analysis.get("project_id") or uuid4())
     _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
+    diagnostics = {
+        "source_type": "link_metadata_fallback",
+        "video_duration_seconds": float(metadata.get("duration") or 0),
+        "asr_coverage_seconds": 0.0,
+        "transcript_chars": len(transcript),
+        "segment_count": 0,
+        "fallback": True,
+        "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
+        "output_chars": sum(len(item.get("script", "")) for item in rewrites),
+    }
+    _log_diagnostics(diagnostics)
     return {
         "ok": True,
         "success": True,
@@ -368,7 +527,9 @@ async def _metadata_fallback_analysis(
         "metadata": metadata,
         "source_type": "link_metadata_fallback",
         "analysis_quality": "partial",
+        "degraded": True,
         "warning": METADATA_FALLBACK_WARNING,
+        "diagnostics": diagnostics,
     }
 
 
@@ -382,6 +543,7 @@ async def _share_text_fallback_analysis(
     metadata: dict[str, Any] | None,
     industry: str,
     language: str,
+    rewrite_length: str = "short",
 ) -> dict[str, Any]:
     if not _has_enough_metadata_text(share_text):
         return _failed(
@@ -399,10 +561,22 @@ async def _share_text_fallback_analysis(
         raw_script=share_text,
         industry=industry,
         language=language,
+        rewrite_length=rewrite_length,
     )
-    rewrites = await _generate_nine_rewrites(transcript=share_text, analysis=analysis, language=language)
+    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=share_text, analysis=analysis, language=language, rewrite_length=rewrite_length)
     project_id = str(analysis.get("project_id") or uuid4())
     _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
+    diagnostics = {
+        "source_type": "share_text_fallback",
+        "video_duration_seconds": float((metadata or {}).get("duration") or 0),
+        "asr_coverage_seconds": 0.0,
+        "transcript_chars": len(share_text),
+        "segment_count": 0,
+        "fallback": True,
+        "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
+        "output_chars": sum(len(item.get("script", "")) for item in rewrites),
+    }
+    _log_diagnostics(diagnostics)
     return {
         "ok": True,
         "success": True,
@@ -420,8 +594,68 @@ async def _share_text_fallback_analysis(
         "metadata": metadata or {},
         "source_type": "share_text_fallback",
         "analysis_quality": "partial",
+        "degraded": True,
         "warning": SHARE_TEXT_FALLBACK_WARNING,
+        "diagnostics": diagnostics,
     }
+
+
+async def run_uploaded_viral_pipeline(
+    supabase: Client,
+    *,
+    upload: UploadFile,
+    user_id: str,
+    email: str,
+    source_url: str,
+    industry: str,
+    language: str,
+    rewrite_length: str,
+) -> dict[str, Any]:
+    """Analyze an uploaded file directly. The file is never persisted to Storage."""
+    work_dir = Path(tempfile.mkdtemp(prefix="viral-upload-"))
+    suffix = Path(upload.filename or "upload.mp4").suffix.lower()
+    if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        return _failed(status=ViralPipelineStatus.PENDING, fallback_reason="不支持的视频格式。", error_code="unsupported_video_format")
+    video_path = work_dir / f"source{suffix}"
+    max_bytes = settings.viral_max_download_mb * 1024 * 1024
+    total = 0
+    try:
+        with video_path.open("wb") as target:
+            while chunk := await upload.read(1024 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    return _failed(
+                        status=ViralPipelineStatus.PENDING,
+                        fallback_reason=f"视频超过 {settings.viral_max_download_mb}MB 限制。",
+                        error_code="video_too_large",
+                    )
+                target.write(chunk)
+        metadata = {
+            "platform": "upload",
+            "title": Path(upload.filename or "上传视频").stem,
+            "description": "",
+            "duration": 0,
+            "thumbnail": "",
+            "webpage_url": source_url,
+            "downloadable": True,
+        }
+        return await _process_video_path(
+            supabase,
+            video_path=video_path,
+            work_dir=work_dir,
+            user_id=user_id,
+            email=email,
+            source_url=source_url,
+            industry=industry,
+            language=language,
+            rewrite_length=rewrite_length,
+            source_type="uploaded_video_asr",
+            metadata=metadata,
+        )
+    finally:
+        await upload.close()
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 async def run_viral_pipeline(
@@ -433,30 +667,11 @@ async def run_viral_pipeline(
     industry: str,
     language: str,
     raw_input: str = "",
+    rewrite_length: str = "short",
 ) -> dict[str, Any]:
     work_dir = Path(tempfile.mkdtemp(prefix="viral-agent-"))
     try:
         share_text = extract_share_text_from_input(raw_input or source_url)
-        if _has_enough_metadata_text(share_text):
-            return await _share_text_fallback_analysis(
-                supabase,
-                user_id=user_id,
-                email=email,
-                source_url=source_url,
-                share_text=share_text,
-                metadata={
-                    "platform": "douyin" if "douyin" in source_url.lower() else "unknown",
-                    "title": share_text[:120],
-                    "description": share_text,
-                    "duration": 0,
-                    "thumbnail": "",
-                    "webpage_url": source_url,
-                    "downloadable": False,
-                },
-                industry=industry,
-                language=language,
-            )
-
         status = ViralPipelineStatus.RESOLVING_LINK
         resolved = await resolve_video_link(source_url)
         metadata = {
@@ -468,18 +683,19 @@ async def run_viral_pipeline(
             "webpage_url": resolved.get("webpage_url", source_url),
             "downloadable": resolved.get("downloadable", False),
         }
-        metadata_transcript = _metadata_text(metadata)
-        if _has_enough_metadata_text(metadata_transcript):
-            return await _metadata_fallback_analysis(
-                supabase,
-                user_id=user_id,
-                email=email,
-                source_url=source_url,
-                metadata=metadata,
-                industry=industry,
-                language=language,
-            )
         if not resolved.get("ok") or not resolved.get("downloadable"):
+            if _has_enough_metadata_text(share_text):
+                return await _share_text_fallback_analysis(
+                    supabase,
+                    user_id=user_id,
+                    email=email,
+                    source_url=source_url,
+                    share_text=share_text,
+                    metadata=metadata,
+                    industry=industry,
+                    language=language,
+                    rewrite_length=rewrite_length,
+                )
             if resolved.get("ok") and (resolved.get("error_code") == "not_downloadable" or not resolved.get("downloadable")):
                 metadata["downloadable"] = False
                 return await _metadata_fallback_analysis(
@@ -490,6 +706,7 @@ async def run_viral_pipeline(
                     metadata=metadata,
                     industry=industry,
                     language=language,
+                    rewrite_length=rewrite_length,
                 )
             return _failed(
                 status=status,
@@ -520,68 +737,21 @@ async def run_viral_pipeline(
                 metadata=metadata,
                 industry=industry,
                 language=language,
+                rewrite_length=rewrite_length,
             )
 
-        status = ViralPipelineStatus.EXTRACTING_AUDIO
-        try:
-            audio_path = await extract_audio(downloaded.video_path, work_dir)
-        except RuntimeError:
-            metadata["downloadable"] = False
-            return await _metadata_fallback_analysis(
-                supabase,
-                user_id=user_id,
-                email=email,
-                source_url=source_url,
-                metadata=metadata,
-                industry=industry,
-                language=language,
-            )
-
-        status = ViralPipelineStatus.TRANSCRIBING
-        asr = await transcribe_audio(audio_path, language)
-        if not asr.ok:
-            metadata["downloadable"] = False
-            return await _metadata_fallback_analysis(
-                supabase,
-                user_id=user_id,
-                email=email,
-                source_url=source_url,
-                metadata=metadata,
-                industry=industry,
-                language=language,
-            )
-
-        status = ViralPipelineStatus.ANALYZING
-        analysis = await analyze_viral_script(
+        return await _process_video_path(
             supabase,
+            video_path=downloaded.video_path,
+            work_dir=work_dir,
             user_id=user_id,
             email=email,
             source_url=str(metadata.get("webpage_url") or source_url),
-            raw_script=asr.transcript,
             industry=industry,
             language=language,
+            rewrite_length=rewrite_length,
+            source_type="link_video_asr",
+            metadata=metadata,
         )
-
-        status = ViralPipelineStatus.REWRITING
-        rewrites = await _generate_nine_rewrites(transcript=asr.transcript, analysis=analysis, language=language)
-        project_id = str(analysis.get("project_id") or uuid4())
-        _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
-
-        return {
-            "ok": True,
-            "success": True,
-            "status": ViralPipelineStatus.READY,
-            "failed_at": "",
-            "error_code": "",
-            "message": "",
-            "fallback_available": False,
-            "fallback_options": [],
-            "fallback_reason": "",
-            "project_id": project_id,
-            "transcript": asr.transcript,
-            "analysis": _analysis_payload(analysis),
-            "rewrites": rewrites,
-            "metadata": metadata,
-        }
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

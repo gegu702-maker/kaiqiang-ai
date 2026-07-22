@@ -251,6 +251,10 @@ export type ViralAnalyzeResult = {
   structure: string[];
   template: string;
   rewrites: ViralRewrite[];
+  core_points?: string[];
+  arguments?: string[];
+  cases?: string[];
+  data_points?: string[];
   quota?: {
     plan: PlanCode;
     used: number;
@@ -312,6 +316,13 @@ export type ViralPipelineMetadata = {
   downloadable: boolean;
 };
 
+export type ViralTimelineSegment = {
+  start: number;
+  end: number;
+  timestamp: string;
+  text: string;
+};
+
 export type ViralPipelineResult = {
   ok: boolean;
   success?: boolean;
@@ -330,10 +341,27 @@ export type ViralPipelineResult = {
     selling_points: string[];
     structure: string[];
     template: string;
+    core_points?: string[];
+    arguments?: string[];
+    cases?: string[];
+    data_points?: string[];
   } | null;
   rewrites: ViralRewrite[];
   metadata: ViralPipelineMetadata;
   source_type?: "video_asr" | "link_metadata_fallback" | string;
   analysis_quality?: "full" | "partial" | string;
   warning?: string;
+  timeline?: ViralTimelineSegment[];
+  degraded?: boolean;
+  asr_provider?: string;
+  diagnostics?: {
+    source_type: string;
+    video_duration_seconds: number;
+    asr_coverage_seconds: number;
+    transcript_chars: number;
+    segment_count: number;
+    fallback: boolean;
+    prompt_input_chars: number;
+    output_chars: number;
+  };
 };

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -128,3 +129,31 @@ async def extract_audio(video_path: Path, work_dir: Path) -> Path:
         detail = error.stderr if isinstance(error, subprocess.CalledProcessError) else str(error)
         raise RuntimeError(f"音频提取失败：{detail}") from error
     return audio_path
+
+
+async def probe_media_duration(video_path: Path) -> float:
+    """Return container duration without decoding or uploading the media."""
+    ffmpeg_name = Path(settings.ffmpeg_path)
+    ffprobe_path = str(ffmpeg_name.with_name("ffprobe.exe" if ffmpeg_name.suffix.lower() == ".exe" else "ffprobe"))
+    command = [
+        ffprobe_path,
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "json",
+        str(video_path),
+    ]
+    try:
+        completed = await asyncio.to_thread(
+            subprocess.run,
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return float(json.loads(completed.stdout)["format"]["duration"])
+    except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"无法读取视频时长：{error}") from error

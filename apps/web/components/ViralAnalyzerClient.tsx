@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { analyzeViralScript, checkVideoLink, runViralPipeline } from "@/lib/api";
+import { analyzeViralScript, checkVideoLink, runUploadedViralPipeline, runViralPipeline } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 import type { ViralAnalyzeResult, ViralIndustry, ViralLinkErrorCode, ViralPipelineResult, VideoLinkResolveResult } from "@/lib/types";
 
@@ -142,6 +142,10 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
     selling_points: payload.analysis.selling_points,
     structure: payload.analysis.structure,
     template: payload.analysis.template,
+    core_points: payload.analysis.core_points,
+    arguments: payload.analysis.arguments,
+    cases: payload.analysis.cases,
+    data_points: payload.analysis.data_points,
     rewrites: payload.rewrites,
   };
 }
@@ -165,12 +169,16 @@ export function ViralAnalyzerClient({
   const [industry, setIndustry] = useState<ViralIndustry>("ecommerce");
   const [sourceUrl, setSourceUrl] = useState("");
   const [rawScript, setRawScript] = useState("");
-  const [videoFileName, setVideoFileName] = useState("");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [rewriteLength, setRewriteLength] = useState<"short" | "medium" | "full">("short");
   const [result, setResult] = useState<ViralAnalyzeResult | null>(null);
   const [linkCheck, setLinkCheck] = useState<VideoLinkResolveResult | null>(null);
   const [pipelineMetadata, setPipelineMetadata] = useState<ViralPipelineResult["metadata"] | null>(null);
   const [pipelineSourceType, setPipelineSourceType] = useState<string>("");
   const [pipelineWarning, setPipelineWarning] = useState("");
+  const [pipelineTranscript, setPipelineTranscript] = useState("");
+  const [pipelineTimeline, setPipelineTimeline] = useState<ViralPipelineResult["timeline"]>([]);
+  const [pipelineDiagnostics, setPipelineDiagnostics] = useState<ViralPipelineResult["diagnostics"]>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -242,7 +250,7 @@ export function ViralAnalyzerClient({
       return "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。";
     }
     if (payload.failed_at === "transcribing") {
-      return "视频读取成功，但语音转文字失败。已优先使用链接公开信息拆解，补充原文案可提升准确度。";
+      return payload.fallback_reason || payload.message || "视频读取成功，但语音转文字失败，未执行静默降级。";
     }
     if (payload.failed_at === "analyzing") {
       return "文案提取成功，但拆解失败，请稍后重试或粘贴文案继续分析。";
@@ -292,6 +300,9 @@ export function ViralAnalyzerClient({
     setPipelineMetadata(null);
     setPipelineSourceType("");
     setPipelineWarning("");
+    setPipelineTranscript("");
+    setPipelineTimeline([]);
+    setPipelineDiagnostics(undefined);
     setChecking(true);
     try {
       const accessToken = await getSessionToken();
@@ -314,6 +325,9 @@ export function ViralAnalyzerClient({
     setPipelineMetadata(null);
     setPipelineSourceType("");
     setPipelineWarning("");
+    setPipelineTranscript("");
+    setPipelineTimeline([]);
+    setPipelineDiagnostics(undefined);
     setLoading(true);
     try {
       const accessToken = await getSessionToken();
@@ -321,6 +335,28 @@ export function ViralAnalyzerClient({
       const scriptLooksLikeUrl = looksLikeUrl(rawScript);
       const hasManualScript = rawScript.trim() && !scriptLooksLikeUrl;
       const linkCandidate = sourceLooksLikeUrl ? sourceUrl : scriptLooksLikeUrl ? rawScript : "";
+
+      if (videoFile) {
+        setRunStage("pipeline");
+        const formData = new FormData();
+        formData.set("video_file", videoFile);
+        formData.set("source_url", linkCandidate);
+        formData.set("industry", industry);
+        formData.set("language", language);
+        formData.set("rewrite_length", rewriteLength);
+        const pipeline = await runUploadedViralPipeline(formData, accessToken);
+        if (!pipeline.ok) throw new Error(friendlyPipelineMessage(pipeline));
+        const pipelineResult = pipelineToAnalyzeResult(pipeline);
+        if (!pipelineResult) throw new Error(linkCheckCopy.pipelineEmpty);
+        setPipelineMetadata(pipeline.metadata);
+        setPipelineSourceType(pipeline.source_type || "");
+        setPipelineWarning(pipeline.warning || "");
+        setPipelineTranscript(pipeline.transcript || "");
+        setPipelineTimeline(pipeline.timeline || []);
+        setPipelineDiagnostics(pipeline.diagnostics);
+        setResult(pipelineResult);
+        return;
+      }
 
       if (linkCandidate && !hasManualScript) {
         setRunStage("checking");
@@ -336,6 +372,7 @@ export function ViralAnalyzerClient({
             raw_input: sourceUrl.trim() || rawScript.trim() || linkCandidate,
             industry,
             language,
+            rewrite_length: rewriteLength,
           },
           accessToken,
         );
@@ -349,6 +386,9 @@ export function ViralAnalyzerClient({
         setPipelineMetadata(pipeline.metadata);
         setPipelineSourceType(pipeline.source_type || "");
         setPipelineWarning(pipeline.warning || "");
+        setPipelineTranscript(pipeline.transcript || "");
+        setPipelineTimeline(pipeline.timeline || []);
+        setPipelineDiagnostics(pipeline.diagnostics);
         setResult(pipelineResult);
         return;
       }
@@ -364,6 +404,7 @@ export function ViralAnalyzerClient({
           raw_script: rawScript,
           industry,
           language,
+          rewrite_length: rewriteLength,
         },
         accessToken,
       );
@@ -435,7 +476,7 @@ export function ViralAnalyzerClient({
                 </span>
                 <textarea
                   className="min-h-44 w-full min-w-0 resize-y rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan/60"
-                  maxLength={6000}
+                  maxLength={120000}
                   value={rawScript}
                   onChange={(event) => setRawScript(event.target.value)}
                   placeholder={t.scriptPlaceholder}
@@ -452,9 +493,22 @@ export function ViralAnalyzerClient({
                   className="mt-3 block w-full min-w-0 text-sm text-slate-400 file:mr-4 file:rounded-md file:border-0 file:bg-cyan file:px-4 file:py-2 file:text-sm file:font-semibold file:text-ink hover:file:bg-cyan/90"
                   type="file"
                   accept="video/mp4,video/quicktime,video/webm"
-                  onChange={(event) => setVideoFileName(event.target.files?.[0]?.name ?? "")}
+                  onChange={(event) => setVideoFile(event.target.files?.[0] ?? null)}
                 />
-                {videoFileName ? <span className="mt-2 block truncate text-xs text-slate-500">{videoFileName}</span> : null}
+                {videoFile ? <span className="mt-2 block truncate text-xs text-slate-500">{videoFile.name}</span> : null}
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-semibold text-white">改写长度</span>
+                <select
+                  className="h-11 w-full rounded-md border border-white/10 bg-ink/70 px-3 text-sm text-slate-100 outline-none focus:border-cyan/60"
+                  value={rewriteLength}
+                  onChange={(event) => setRewriteLength(event.target.value as "short" | "medium" | "full")}
+                >
+                  <option value="short">短版（约 30–60 秒）</option>
+                  <option value="medium">中版（约 60–120 秒）</option>
+                  <option value="full">完整版（尽量保留主要信息）</option>
+                </select>
               </label>
 
               <div className={isWorkspace ? "grid gap-3" : "grid gap-3 sm:grid-cols-2"}>
@@ -557,8 +611,9 @@ export function ViralAnalyzerClient({
                       {pipelineMetadata.title ? <p className="break-words font-semibold text-white [overflow-wrap:anywhere]">{pipelineMetadata.title}</p> : null}
                       <p>平台：{pipelineMetadata.platform || "douyin"}</p>
                       {pipelineMetadata.duration ? <p>时长：{pipelineMetadata.duration}秒</p> : null}
-                      {pipelineSourceType === "link_metadata_fallback" ? <p>分析来源：链接公开信息</p> : null}
+                      <p>分析来源：{pipelineSourceType === "uploaded_video_asr" ? "上传视频完整音轨" : pipelineSourceType === "link_video_asr" ? "链接视频音轨" : "链接公开信息（降级）"}</p>
                       <p>视频读取：{pipelineMetadata.downloadable ? "可用" : "受限，当前使用链接公开信息分析"}</p>
+                      {pipelineDiagnostics ? <p>ASR 覆盖：{pipelineDiagnostics.asr_coverage_seconds.toFixed(1)} / {pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；转写 {pipelineDiagnostics.transcript_chars} 字；{pipelineDiagnostics.segment_count} 段</p> : null}
                     </div>
                   </div>
                 </div>
@@ -572,7 +627,13 @@ export function ViralAnalyzerClient({
               <ResultCard title={t.hook}>{result.hook}</ResultCard>
               <ListCard title={t.sellingPoints} items={result.selling_points} />
               <ListCard title={t.structure} items={result.structure} />
+              {result.core_points?.length ? <ListCard title="核心观点" items={result.core_points} /> : null}
+              {result.arguments?.length ? <ListCard title="论据与逻辑" items={result.arguments} /> : null}
+              {result.cases?.length ? <ListCard title="案例" items={result.cases} /> : null}
+              {result.data_points?.length ? <ListCard title="数据" items={result.data_points} /> : null}
               <ResultCard title={t.template}>{result.template}</ResultCard>
+              {pipelineTimeline?.length ? <ListCard title="时间轴 / 分段" items={pipelineTimeline.map((item) => `${item.timestamp} ${item.text}`)} /> : null}
+              {pipelineTranscript ? <ResultCard title="完整转写稿"><span className="whitespace-pre-wrap">{pipelineTranscript}</span></ResultCard> : null}
 
               <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
                 <h2 className="text-lg font-semibold text-white">{t.rewrites}</h2>
@@ -650,7 +711,7 @@ export function ViralAnalyzerClient({
   );
 }
 
-function ResultCard({ title, children }: { title: string; children: string }) {
+function ResultCard({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
       <h2 className="break-words text-lg font-semibold text-white [overflow-wrap:anywhere]">{title}</h2>

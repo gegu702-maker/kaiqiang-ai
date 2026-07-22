@@ -601,7 +601,40 @@ def validate_viral_analysis_payload(payload: dict[str, Any], *, language: str) -
         "structure": structure,
         "template": template,
         "rewrites": normalized_rewrites,
+        "core_points": _list_of_strings(payload.get("core_points"), selling_points),
+        "arguments": _list_of_strings(payload.get("arguments"), structure),
+        "cases": _list_of_strings(payload.get("cases"), []),
+        "data_points": _list_of_strings(payload.get("data_points"), []),
     }
+
+
+def _chunk_script(text: str, size: int = 5000) -> list[str]:
+    return [text[index : index + size] for index in range(0, len(text), size)] or [""]
+
+
+async def _build_hierarchical_input(raw_script: str, output_language: str) -> tuple[str, int, int]:
+    """Summarize every long-text chunk before final synthesis; never slice away the tail."""
+    chunks = _chunk_script(raw_script)
+    if len(chunks) == 1:
+        return raw_script, 0, 1
+    summaries: list[str] = []
+    prompt_chars = 0
+    for index, chunk in enumerate(chunks):
+        payload = {
+            "part": index + 1,
+            "total_parts": len(chunks),
+            "transcript_chunk": chunk,
+            "requirements": ["保留该段全部观点、论据、案例、数字与因果关系", "不要泛化，不要补写原文没有的事实"],
+            "schema": {"summary": "高密度分段摘要"},
+        }
+        prompt_chars += len(chunk)
+        data = await LLMProvider().generate_json(
+            system=f"你是长视频分段信息抽取专家。使用{output_language}，只输出 JSON。",
+            payload=payload,
+            max_tokens=3000,
+        )
+        summaries.append(f"[第{index + 1}/{len(chunks)}段]\n{str(data.get('summary') or chunk).strip()}")
+    return "\n\n".join(summaries), prompt_chars, len(chunks)
 
 
 async def analyze_viral_script(
@@ -613,6 +646,7 @@ async def analyze_viral_script(
     raw_script: str = "",
     industry: str,
     language: str,
+    rewrite_length: str = "short",
 ) -> dict[str, Any]:
     source_url = source_url.strip()
     raw_script = raw_script.strip()
@@ -624,11 +658,19 @@ async def analyze_viral_script(
         raise HTTPException(status_code=400, detail="请至少粘贴短视频链接或原始视频文案。")
     if source_url and not raw_script:
         raise HTTPException(status_code=422, detail="暂时无法自动解析该链接，请粘贴视频文案或上传视频后补充文案。")
-    if len(raw_script) > 6000:
-        raise HTTPException(status_code=400, detail="原始文案过长，请控制在 6000 字以内。")
+    if len(raw_script) > 120000:
+        raise HTTPException(status_code=400, detail="原始文案超过 120000 字，请分批处理。")
+    if rewrite_length not in {"short", "medium", "full"}:
+        raise HTTPException(status_code=400, detail="Invalid rewrite length.")
 
     quota = _assert_viral_quota(supabase, user_id=user_id, email=email)
     output_language = LANGUAGE_LABELS[language]
+    analysis_input, prompt_input_chars, summary_chunk_count = await _build_hierarchical_input(raw_script, output_language)
+    length_guidance = {
+        "short": "短版，约 30–60 秒；中文约 120–240 字",
+        "medium": "中版，约 60–120 秒；中文约 240–500 字",
+        "full": "完整版；尽量保留原视频全部主要观点、论据、案例和数据，中文通常不少于 500 字，长视频可达 1200 字",
+    }[rewrite_length]
     fallback_text = {
         "topic": "短视频内容拆解" if language == "zh" else "Short video content analysis",
         "hook": "用强问题或反差在前 3 秒抓住注意力。" if language == "zh" else "Use a strong question or contrast to capture attention in the first 3 seconds.",
@@ -644,16 +686,19 @@ async def analyze_viral_script(
     }
     prompt_payload = {
         "source_url": source_url,
-        "raw_script": raw_script,
+        "content_input": analysis_input,
+        "original_transcript_chars": len(raw_script),
+        "hierarchical_chunk_count": summary_chunk_count,
         "industry": INDUSTRY_LABELS[industry],
         "language": output_language,
         "requirements": [
             "学习爆款结构，但不要逐字复制原文案",
             "分析黄金开头、痛点、反差、好奇心、利益点、情绪点、信任背书",
             "生成适合数字人口播的原创口播稿",
-            "必须完整输出 topic、hook、selling_points、structure、template、rewrites",
+            "必须完整输出 topic、hook、selling_points、structure、template、core_points、arguments、cases、data_points、rewrites",
+            "观点、论据、案例和数据必须能在输入内容中找到依据，不得只重复标题",
             "selling_points 至少 4 条，structure 至少 5 条",
-            "rewrites 必须至少 3 条，每条 script 不少于 80 个中文字符，建议 100-180 字",
+            f"rewrites 必须至少 3 条；当前长度要求：{length_guidance}",
             "每条 rewrite.script 必须包含开头钩子、问题/反差、信息价值、行动号召",
             "rewrites 之间必须明显差异化：版本A偏悬念揭秘/反常识，版本B偏用户痛点/普通人视角，版本C偏机会提醒/行动建议",
             "只输出 3 条高质量版本即可：版本A热点反差版、版本B用户痛点版、版本C商业机会版",
@@ -677,10 +722,14 @@ async def analyze_viral_script(
             "selling_points": ["痛点", "反差", "好奇心", "利益点", "情绪点", "信任背书"],
             "structure": ["开头钩子：...", "问题放大：...", "解决方案/信息增量：...", "证明/案例：...", "行动号召：..."],
             "template": "可复用模板公式",
+            "core_points": ["完整核心观点"],
+            "arguments": ["支撑观点的论据与逻辑"],
+            "cases": ["原视频提及的案例；没有则为空数组"],
+            "data_points": ["原视频提及的数据；没有则为空数组"],
             "rewrites": [
-                {"title": "版本A：稳健拆解版", "script": "直接对观众说的 100-180 字原创口播成稿，不包含模板说明"},
-                {"title": "版本B：强钩子口播版", "script": "直接对观众说的 100-180 字原创口播成稿，不包含结构说明"},
-                {"title": "版本C：转化引导版", "script": "直接对观众说的 100-180 字原创口播成稿，不包含版本解释"},
+                {"title": "版本A：稳健拆解版", "script": length_guidance},
+                {"title": "版本B：强钩子口播版", "script": length_guidance},
+                {"title": "版本C：转化引导版", "script": length_guidance},
             ],
         },
     }
@@ -692,6 +741,7 @@ async def analyze_viral_script(
             f"目标输出语言是{output_language}。除字段名外，所有内容必须使用{output_language}。只输出合法 JSON。"
         ),
         payload=prompt_payload,
+        max_tokens=8000 if rewrite_length == "full" else 6000,
     )
 
     result = validate_viral_analysis_payload(
@@ -702,9 +752,19 @@ async def analyze_viral_script(
             "structure": data.get("structure") or fallback_text["structure"],
             "template": data.get("template") or data.get("template_formula") or fallback_text["template"],
             "rewrites": data.get("rewrites") or data.get("rewrite_versions") or data.get("rewriteVersions") or data.get("scripts"),
+            "core_points": data.get("core_points"),
+            "arguments": data.get("arguments"),
+            "cases": data.get("cases"),
+            "data_points": data.get("data_points"),
         },
         language=language,
     )
+    minimum_rewrite_chars = {"short": 80, "medium": 200, "full": 400}[rewrite_length]
+    if any(len(item.get("script", "")) < minimum_rewrite_chars for item in result["rewrites"]):
+        raise HTTPException(
+            status_code=502,
+            detail=f"{length_guidance}生成不完整，系统未使用短文案静默替代，请重试。",
+        )
 
     try:
         supabase.table("viral_analyses").insert(
@@ -737,4 +797,12 @@ async def analyze_viral_script(
     except APIError:
         pass
 
-    return {**result, "quota": {**quota, "used": quota["used"] + 1}}
+    return {
+        **result,
+        "quota": {**quota, "used": quota["used"] + 1},
+        "diagnostics": {
+            "prompt_input_chars": prompt_input_chars + len(analysis_input),
+            "hierarchical_chunk_count": summary_chunk_count,
+            "output_chars": sum(len(str(value)) for value in result.values()),
+        },
+    }

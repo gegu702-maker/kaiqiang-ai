@@ -84,7 +84,7 @@ def safe_parse_json_response(raw: str) -> dict[str, Any]:
 
 
 class LLMProvider:
-    async def generate_json(self, *, system: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def generate_json(self, *, system: str, payload: dict[str, Any], max_tokens: int = 6000) -> dict[str, Any]:
         provider = settings.llm_provider.lower()
         if provider == "deepseek":
             return await self._chat_json(
@@ -94,6 +94,7 @@ class LLMProvider:
                 system=system,
                 payload=payload,
                 provider_name="DeepSeek",
+                max_tokens=max_tokens,
             )
         if provider == "openai":
             return await self._chat_json(
@@ -103,6 +104,7 @@ class LLMProvider:
                 system=system,
                 payload=payload,
                 provider_name="OpenAI",
+                max_tokens=max_tokens,
             )
         if provider == "mock":
             return self._mock(payload)
@@ -117,6 +119,7 @@ class LLMProvider:
         system: str,
         payload: dict[str, Any],
         provider_name: str,
+        max_tokens: int,
     ) -> dict[str, Any]:
         if not api_key:
             raise HTTPException(status_code=500, detail=f"{provider_name} API Key 未配置，无法生成 AI 文本。")
@@ -127,6 +130,7 @@ class LLMProvider:
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
                     "model": model,
+                    "max_tokens": max_tokens,
                     "response_format": {"type": "json_object"},
                     "messages": [
                         {"role": "system", "content": system},

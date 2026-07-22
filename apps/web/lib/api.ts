@@ -191,6 +191,7 @@ export async function analyzeViralScript(
     raw_script?: string;
     industry: string;
     language: Locale;
+    rewrite_length?: "short" | "medium" | "full";
   },
   accessToken?: string,
 ): Promise<ViralAnalyzeResult> {
@@ -235,6 +236,7 @@ export async function runViralPipeline(
     raw_input?: string;
     industry?: string;
     language?: Locale;
+    rewrite_length?: "short" | "medium" | "full";
   },
   accessToken?: string,
 ): Promise<ViralPipelineResult> {
@@ -247,6 +249,17 @@ export async function runViralPipeline(
     cache: "no-store",
   });
   return parseResponse<ViralPipelineResult>(response, { url: `${API_URL}/api/viral/pipeline/run`, method: "POST" });
+}
+
+export async function runUploadedViralPipeline(formData: FormData, accessToken?: string): Promise<ViralPipelineResult> {
+  const url = `${API_URL}/api/viral/pipeline/upload`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: formData,
+    cache: "no-store",
+  });
+  return parseResponse<ViralPipelineResult>(response, { url, method: "POST" });
 }
 
 export async function uploadVoiceClone(formData: FormData, accessToken?: string): Promise<VoiceClone> {

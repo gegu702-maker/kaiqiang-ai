@@ -1,7 +1,9 @@
 import asyncio
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from supabase import Client
 
 from app.core.auth import get_authenticated_user, get_bearer_token
@@ -9,16 +11,17 @@ from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.services.video_link_resolver import check_video_link, resolve_video_link
 from app.services.viral_analyzer import analyze_viral_script
-from app.services.viral_pipeline import run_viral_pipeline
+from app.services.viral_pipeline import run_uploaded_viral_pipeline, run_viral_pipeline
 
 router = APIRouter(prefix="/viral", tags=["viral"])
 
 
 class ViralAnalyzeRequest(BaseModel):
     source_url: str = Field(default="", max_length=2000)
-    raw_script: str = Field(default="", max_length=6000)
+    raw_script: str = Field(default="", max_length=120000)
     industry: str
     language: str = "zh"
+    rewrite_length: Literal["short", "medium", "full"] = "short"
 
 
 class ViralLinkResolveRequest(BaseModel):
@@ -30,6 +33,7 @@ class ViralPipelineRequest(BaseModel):
     raw_input: str = Field(default="", max_length=6000)
     industry: str = "personal_brand"
     language: str = "zh"
+    rewrite_length: Literal["short", "medium", "full"] = "short"
 
 
 def _is_pipeline_tester(email: str | None) -> bool:
@@ -93,6 +97,7 @@ async def run_viral_agent_pipeline(
                 industry=payload.industry,
                 language=payload.language,
                 raw_input=payload.raw_input,
+                rewrite_length=payload.rewrite_length,
             ),
             timeout=settings.viral_pipeline_timeout_seconds,
         )
@@ -130,4 +135,51 @@ async def analyze_viral(
         raw_script=payload.raw_script,
         industry=payload.industry,
         language=payload.language,
+        rewrite_length=payload.rewrite_length,
     )
+
+
+@router.post("/pipeline/upload")
+async def run_uploaded_viral_agent_pipeline(
+    video_file: UploadFile = File(...),
+    source_url: str = Form(default=""),
+    industry: str = Form(default="personal_brand"),
+    language: str = Form(default="zh"),
+    rewrite_length: Literal["short", "medium", "full"] = Form(default="short"),
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    user = get_authenticated_user(supabase, token)
+    try:
+        return await asyncio.wait_for(
+            run_uploaded_viral_pipeline(
+                supabase,
+                upload=video_file,
+                user_id=user["id"],
+                email=user["email"],
+                source_url=source_url,
+                industry=industry,
+                language=language,
+                rewrite_length=rewrite_length,
+            ),
+            timeout=settings.viral_pipeline_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "success": False,
+            "status": "failed",
+            "failed_at": "transcribing",
+            "error_code": "pipeline_timeout",
+            "message": "上传视频分析超时，未静默降级。",
+            "fallback_available": True,
+            "fallback_options": ["paste_text"],
+            "fallback_reason": "上传视频分析超时，请重试或粘贴完整转写稿。",
+            "project_id": "",
+            "transcript": "",
+            "analysis": None,
+            "rewrites": [],
+            "metadata": {},
+            "source_type": "uploaded_video_asr",
+            "degraded": False,
+        }
