@@ -272,8 +272,13 @@ export function ViralAnalyzerClient({
       llm_timeout: "AI 服务调用超时",
       llm_network_error: "AI 服务网络失败",
       llm_http_error: "AI 服务调用失败",
+      llm_rate_limited: "AI 服务请求过于频繁",
+      llm_balance_insufficient: "AI 服务余额不足",
+      llm_upstream_timeout: "AI 服务上游超时",
+      llm_auth_error: "AI 服务凭据无效",
       llm_response_schema_error: "AI 响应结构错误",
       llm_response_parse_failed: "AI 响应格式错误",
+      analysis_output_too_short: "AI 改写长度不足",
       pipeline_timeout: "处理超时",
     };
     const title = codeLabels[code] || stageLabels[stage] || "拆解失败";

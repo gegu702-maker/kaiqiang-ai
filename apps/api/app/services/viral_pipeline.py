@@ -99,6 +99,7 @@ def _analysis_error_result(
     metadata: dict[str, Any],
     source_type: str,
 ) -> dict[str, Any]:
+    failure_stage = ViralPipelineStatus.ANALYZING
     if isinstance(error, LLMProviderError):
         diagnostic = {
             "http_status": error.http_status,
@@ -112,22 +113,25 @@ def _analysis_error_result(
         detail = error.detail
         message = str(detail.get("message") if isinstance(detail, dict) else detail)
         code = str(detail.get("code") if isinstance(detail, dict) else "analysis_http_error")
-        retryable = error.status_code >= 500
-        diagnostic = {"http_status": error.status_code, "response_length": 0, "schema_error": ""}
+        retryable = bool(detail.get("retryable")) if isinstance(detail, dict) and "retryable" in detail else error.status_code >= 500
+        if isinstance(detail, dict) and detail.get("stage") == ViralPipelineStatus.REWRITING.value:
+            failure_stage = ViralPipelineStatus.REWRITING
+        diagnostic = {"http_status": None, "internal_http_status": error.status_code, "response_length": 0, "schema_error": ""}
     else:
         message = "AI 拆解阶段发生未预期错误。"
         code = "analysis_unexpected_error"
         retryable = True
         diagnostic = {"exception_type": type(error).__name__}
     logger.exception(
-        "viral_pipeline request_id=%s stage=analyzing outcome=failed code=%s retryable=%s diagnostic=%s",
+        "viral_pipeline request_id=%s stage=%s outcome=failed code=%s retryable=%s diagnostic=%s",
         current_request_id(),
+        failure_stage,
         code,
         retryable,
         diagnostic,
     )
     result = _failed(
-        status=ViralPipelineStatus.ANALYZING,
+        status=failure_stage,
         fallback_reason=message,
         metadata=metadata,
         error_code=code,
@@ -611,6 +615,7 @@ async def _metadata_fallback_analysis(
             industry=industry,
             language=language,
             rewrite_length=rewrite_length,
+            source_scope="public_metadata",
         )
     except Exception as error:
         return _analysis_error_result(error, metadata=metadata, source_type="link_metadata_fallback")
@@ -686,6 +691,7 @@ async def _share_text_fallback_analysis(
             industry=industry,
             language=language,
             rewrite_length=rewrite_length,
+            source_scope="public_metadata",
         )
     except Exception as error:
         return _analysis_error_result(error, metadata=metadata or {}, source_type="share_text_fallback")

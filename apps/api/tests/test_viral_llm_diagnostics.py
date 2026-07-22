@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import pytest
+from unittest.mock import AsyncMock
 
 from app.services import llm_provider
 
@@ -71,6 +72,41 @@ def test_invalid_json_after_single_repair_returns_structured_diagnostic(monkeypa
     assert raised.value.response_length == len("still-not-json")
     assert raised.value.schema_error
     assert len(_Client.calls) == 2
+
+
+def test_rate_limit_retries_once_with_backoff(monkeypatch):
+    limited = _Response('{"error":"rate"}')
+    limited.status_code = 429
+    _Client.calls = []
+    _Client.responses = [limited, _Response('{"ok":true}')]
+    sleep = AsyncMock()
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.asyncio, "sleep", sleep)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    result = asyncio.run(llm_provider.LLMProvider().generate_json(system="json", payload={"input": "x"}))
+
+    assert result == {"ok": True}
+    assert len(_Client.calls) == 2
+    sleep.assert_awaited_once_with(1)
+
+
+def test_balance_error_is_distinct_and_not_retried(monkeypatch):
+    insufficient = _Response('{"error":"balance"}')
+    insufficient.status_code = 402
+    _Client.calls = []
+    _Client.responses = [insufficient]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    with pytest.raises(llm_provider.LLMProviderError) as raised:
+        asyncio.run(llm_provider.LLMProvider().generate_json(system="json", payload={"input": "x"}))
+
+    assert raised.value.code == "llm_balance_insufficient"
+    assert raised.value.retryable is False
+    assert len(_Client.calls) == 1
 
 
 def test_pipeline_failure_contract_contains_request_fields():

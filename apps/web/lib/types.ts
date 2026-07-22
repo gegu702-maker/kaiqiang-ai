@@ -370,6 +370,7 @@ export type ViralPipelineResult = {
   };
   diagnostic?: {
     http_status?: number | null;
+    internal_http_status?: number | null;
     response_length?: number;
     schema_error?: string;
     provider?: string;

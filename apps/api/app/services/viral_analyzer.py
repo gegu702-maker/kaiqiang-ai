@@ -647,6 +647,7 @@ async def analyze_viral_script(
     industry: str,
     language: str,
     rewrite_length: str = "short",
+    source_scope: str = "full_content",
 ) -> dict[str, Any]:
     source_url = source_url.strip()
     raw_script = raw_script.strip()
@@ -662,6 +663,8 @@ async def analyze_viral_script(
         raise HTTPException(status_code=400, detail="原始文案超过 120000 字，请分批处理。")
     if rewrite_length not in {"short", "medium", "full"}:
         raise HTTPException(status_code=400, detail="Invalid rewrite length.")
+    if source_scope not in {"full_content", "public_metadata"}:
+        raise HTTPException(status_code=400, detail="Invalid source scope.")
 
     quota = _assert_viral_quota(supabase, user_id=user_id, email=email)
     output_language = LANGUAGE_LABELS[language]
@@ -691,6 +694,7 @@ async def analyze_viral_script(
         "hierarchical_chunk_count": summary_chunk_count,
         "industry": INDUSTRY_LABELS[industry],
         "language": output_language,
+        "source_scope": source_scope,
         "requirements": [
             "学习爆款结构，但不要逐字复制原文案",
             "分析黄金开头、痛点、反差、好奇心、利益点、情绪点、信任背书",
@@ -733,6 +737,14 @@ async def analyze_viral_script(
             ],
         },
     }
+    if source_scope == "public_metadata":
+        prompt_payload["requirements"].extend(
+            [
+                "输入仅来自链接公开元数据，不得声称已读取完整视频或执行 ASR",
+                "必须明确这是非完整拆解，只覆盖公开标题或描述中可验证的信息",
+                "完整版表示尽量完整利用现有公开信息，不得为达到字数而编造观点、案例或数据",
+            ]
+        )
 
     data = await LLMProvider().generate_json(
         system=(
@@ -759,11 +771,20 @@ async def analyze_viral_script(
         },
         language=language,
     )
-    minimum_rewrite_chars = {"short": 80, "medium": 200, "full": 400}[rewrite_length]
+    minimum_rewrite_chars = (
+        {"short": 80, "medium": 100, "full": 120}[rewrite_length]
+        if source_scope == "public_metadata"
+        else {"short": 80, "medium": 200, "full": 400}[rewrite_length]
+    )
     if any(len(item.get("script", "")) < minimum_rewrite_chars for item in result["rewrites"]):
         raise HTTPException(
             status_code=502,
-            detail=f"{length_guidance}生成不完整，系统未使用短文案静默替代，请重试。",
+            detail={
+                "code": "analysis_output_too_short",
+                "stage": "rewriting",
+                "message": f"AI 改写长度未达到当前来源要求（每条至少 {minimum_rewrite_chars} 字）。",
+                "retryable": True,
+            },
         )
 
     try:

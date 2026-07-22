@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ast
 import json
 import logging
@@ -156,56 +157,92 @@ class LLMProvider:
             )
 
         async def request_completion(messages: list[dict[str, str]], *, attempt: str) -> tuple[str, int, str]:
-            try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(90, connect=15)) as client:
-                    response = await client.post(
-                        f"{base_url}/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {api_key}"},
-                        json={
-                            "model": model,
-                            "max_tokens": max_tokens,
-                            "response_format": {"type": "json_object"},
-                            "messages": messages,
-                        },
+            request_body_chars = len(json.dumps(messages, ensure_ascii=False))
+            response: httpx.Response | None = None
+            for transport_attempt in range(1, 3):
+                attempt_label = f"{attempt}_{transport_attempt}"
+                try:
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(90, connect=15)) as client:
+                        response = await client.post(
+                            f"{base_url}/v1/chat/completions",
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            json={
+                                "model": model,
+                                "max_tokens": max_tokens,
+                                "response_format": {"type": "json_object"},
+                                "messages": messages,
+                            },
+                        )
+                except httpx.TimeoutException as error:
+                    logger.warning(
+                        "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=timeout request_body_chars=%s max_tokens=%s",
+                        request_id,
+                        provider_name,
+                        model,
+                        attempt_label,
+                        request_body_chars,
+                        max_tokens,
                     )
-            except httpx.TimeoutException as error:
-                logger.warning(
-                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=timeout",
-                    request_id,
-                    provider_name,
-                    model,
-                    attempt,
-                )
-                raise LLMProviderError(code="llm_timeout", message="AI 服务调用超时。", retryable=True) from error
-            except httpx.HTTPError as error:
-                logger.warning(
-                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=network_error type=%s",
-                    request_id,
-                    provider_name,
-                    model,
-                    attempt,
-                    type(error).__name__,
-                )
-                raise LLMProviderError(code="llm_network_error", message="AI 服务网络调用失败。", retryable=True) from error
+                    if transport_attempt == 1:
+                        await asyncio.sleep(1)
+                        continue
+                    raise LLMProviderError(code="llm_timeout", message="AI 服务调用超时，重试一次后仍失败。", retryable=True) from error
+                except httpx.HTTPError as error:
+                    logger.warning(
+                        "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=network_error type=%s request_body_chars=%s max_tokens=%s",
+                        request_id,
+                        provider_name,
+                        model,
+                        attempt_label,
+                        type(error).__name__,
+                        request_body_chars,
+                        max_tokens,
+                    )
+                    if transport_attempt == 1:
+                        await asyncio.sleep(1)
+                        continue
+                    raise LLMProviderError(code="llm_network_error", message="AI 服务连接中断，重试一次后仍失败。", retryable=True) from error
 
-            response_length = len(response.content)
-            if response.status_code >= 400:
+                response_length = len(response.content)
+                if response.status_code < 400:
+                    break
+                if response.status_code == 429:
+                    code, message, retryable = "llm_rate_limited", "AI 服务请求过于频繁。", True
+                elif response.status_code == 402:
+                    code, message, retryable = "llm_balance_insufficient", "AI 服务余额不足。", False
+                elif response.status_code in {408, 504}:
+                    code, message, retryable = "llm_upstream_timeout", "AI 服务上游处理超时。", True
+                elif response.status_code in {401, 403}:
+                    code, message, retryable = "llm_auth_error", "AI 服务凭据无效或无权限。", False
+                else:
+                    code, message, retryable = "llm_http_error", f"AI 服务返回 HTTP {response.status_code}。", response.status_code >= 500
                 logger.warning(
-                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=http_error http_status=%s response_length=%s",
+                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=http_error code=%s http_status=%s request_body_chars=%s max_tokens=%s response_length=%s",
                     request_id,
                     provider_name,
                     model,
-                    attempt,
+                    attempt_label,
+                    code,
                     response.status_code,
+                    request_body_chars,
+                    max_tokens,
                     response_length,
                 )
+                if retryable and transport_attempt == 1:
+                    await asyncio.sleep(1)
+                    continue
+                suffix = "，重试一次后仍失败。" if retryable and transport_attempt == 2 else ""
                 raise LLMProviderError(
-                    code="llm_http_error",
-                    message=f"AI 服务返回 HTTP {response.status_code}。",
-                    retryable=response.status_code == 429 or response.status_code >= 500,
+                    code=code,
+                    message=f"{message.rstrip('。')}{suffix or '。'}",
+                    retryable=retryable,
                     http_status=response.status_code,
                     response_length=response_length,
                 )
+
+            if response is None:
+                raise LLMProviderError(code="llm_network_error", message="AI 服务未返回响应。", retryable=True)
+            response_length = len(response.content)
             try:
                 body = response.json()
                 choice = body["choices"][0]
@@ -233,13 +270,15 @@ class LLMProvider:
                     response_length=response_length,
                     schema_error=diagnostic,
                 ) from error
-            logger.info(
-                "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=received http_status=%s response_length=%s content_length=%s finish_reason=%s",
+            logger.warning(
+                "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=received http_status=%s request_body_chars=%s max_tokens=%s response_length=%s content_length=%s finish_reason=%s",
                 request_id,
                 provider_name,
                 model,
                 attempt,
                 response.status_code,
+                request_body_chars,
+                max_tokens,
                 response_length,
                 len(raw),
                 finish_reason,

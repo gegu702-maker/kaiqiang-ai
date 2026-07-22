@@ -208,6 +208,39 @@ def test_long_transcript_uses_every_chunk_and_full_rewrite_is_longer(monkeypatch
     assert len(full["rewrites"][0]["script"]) > len(short["rewrites"][0]["script"]) * 2
 
 
+def test_public_metadata_full_mode_uses_partial_source_threshold(monkeypatch):
+    scripts = [
+        "这条公开标题能确认的重点有限，因此这里只分析标题里的反差信息。" * 5,
+        "从普通用户角度看，公开信息只说明了话题方向，不能代替完整视频观点。" * 5,
+        "从行业角度可以关注标题呈现的趋势，但案例和数据仍需原视频验证。" * 5,
+    ]
+
+    async def fake_generate(_self, **_kwargs):
+        return {
+            **_analysis(150),
+            "rewrites": [{"title": f"版本{i}", "script": scripts[i - 1]} for i in range(1, 4)],
+        }
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            source_url="https://example.com/video",
+            raw_script="平台：douyin\n标题：公开标题包含可验证的话题信息\n时长：167 秒",
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+            source_scope="public_metadata",
+        )
+    )
+
+    assert result["rewrites"]
+    assert all(len(item["script"]) >= 120 for item in result["rewrites"])
+
+
 def test_link_download_is_attempted_before_metadata_fallback(monkeypatch, tmp_path: Path):
     called = []
     monkeypatch.setattr(
