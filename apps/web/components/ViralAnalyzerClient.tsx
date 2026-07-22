@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { analyzeViralScript, checkVideoLink, runUploadedViralPipeline, runViralPipeline } from "@/lib/api";
+import { analyzeViralScript, checkVideoLink, runUploadedViralPipeline, runViralPipeline, type ViralUploadProgress } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 import type { ViralAnalyzeResult, ViralIndustry, ViralLinkErrorCode, ViralPipelineResult, VideoLinkResolveResult } from "@/lib/types";
 
@@ -170,6 +170,8 @@ export function ViralAnalyzerClient({
   const [sourceUrl, setSourceUrl] = useState("");
   const [rawScript, setRawScript] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<ViralUploadProgress | null>(null);
   const [rewriteLength, setRewriteLength] = useState<"short" | "medium" | "full">("short");
   const [result, setResult] = useState<ViralAnalyzeResult | null>(null);
   const [linkCheck, setLinkCheck] = useState<VideoLinkResolveResult | null>(null);
@@ -182,7 +184,7 @@ export function ViralAnalyzerClient({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [runStage, setRunStage] = useState<"idle" | "checking" | "pipeline" | "manual">("idle");
+  const [runStage, setRunStage] = useState<"idle" | "checking" | "uploading" | "processing" | "pipeline" | "manual">("idle");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const t = analyzerCopy[language];
   const linkCheckCopy =
@@ -277,8 +279,30 @@ export function ViralAnalyzerClient({
   function loadingLabel() {
     if (runStage === "checking") return linkCheckCopy.checkingLink;
     if (runStage === "pipeline") return linkCheckCopy.pipelineReading;
+    if (runStage === "uploading") return `正在上传 ${uploadProgress?.percent ?? 0}%`;
+    if (runStage === "processing") return "上传完成，正在提取音频、分段 ASR 与分层汇总";
     if (runStage === "manual") return linkCheckCopy.manualAnalyzing;
     return t.analyzing;
+  }
+
+  function selectVideoFile(file: File | null) {
+    setVideoFile(file);
+    setVideoDuration(null);
+    setUploadProgress(null);
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    const media = document.createElement("video");
+    media.preload = "metadata";
+    media.onloadedmetadata = () => {
+      setVideoDuration(Number.isFinite(media.duration) ? media.duration : null);
+      URL.revokeObjectURL(objectUrl);
+    };
+    media.onerror = () => URL.revokeObjectURL(objectUrl);
+    media.src = objectUrl;
+  }
+
+  function formatFileSize(bytes: number) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   }
 
   async function getSessionToken() {
@@ -337,14 +361,18 @@ export function ViralAnalyzerClient({
       const linkCandidate = sourceLooksLikeUrl ? sourceUrl : scriptLooksLikeUrl ? rawScript : "";
 
       if (videoFile) {
-        setRunStage("pipeline");
+        setRunStage("uploading");
+        setUploadProgress({ loaded: 0, total: videoFile.size, percent: 0, stage: "uploading" });
         const formData = new FormData();
         formData.set("video_file", videoFile);
         formData.set("source_url", linkCandidate);
         formData.set("industry", industry);
         formData.set("language", language);
         formData.set("rewrite_length", rewriteLength);
-        const pipeline = await runUploadedViralPipeline(formData, accessToken);
+        const pipeline = await runUploadedViralPipeline(formData, accessToken, (progress) => {
+          setUploadProgress(progress);
+          setRunStage(progress.stage);
+        });
         if (!pipeline.ok) throw new Error(friendlyPipelineMessage(pipeline));
         const pipelineResult = pipelineToAnalyzeResult(pipeline);
         if (!pipelineResult) throw new Error(linkCheckCopy.pipelineEmpty);
@@ -493,9 +521,20 @@ export function ViralAnalyzerClient({
                   className="mt-3 block w-full min-w-0 text-sm text-slate-400 file:mr-4 file:rounded-md file:border-0 file:bg-cyan file:px-4 file:py-2 file:text-sm file:font-semibold file:text-ink hover:file:bg-cyan/90"
                   type="file"
                   accept="video/mp4,video/quicktime,video/webm"
-                  onChange={(event) => setVideoFile(event.target.files?.[0] ?? null)}
+                  onChange={(event) => selectVideoFile(event.target.files?.[0] ?? null)}
                 />
-                {videoFile ? <span className="mt-2 block truncate text-xs text-slate-500">{videoFile.name}</span> : null}
+                {videoFile ? (
+                  <span className="mt-2 block text-xs leading-5 text-slate-400">
+                    <span className="block truncate">{videoFile.name}</span>
+                    <span>文件大小：{formatFileSize(videoFile.size)}；视频时长：{videoDuration !== null ? `${videoDuration.toFixed(1)} 秒` : "读取中"}</span>
+                  </span>
+                ) : null}
+                {uploadProgress ? (
+                  <div className="mt-3" aria-live="polite">
+                    <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-cyan transition-[width]" style={{ width: `${uploadProgress.percent}%` }} /></div>
+                    <p className="mt-1 text-xs text-cyan">{uploadProgress.stage === "uploading" ? `上传进度：${uploadProgress.percent}%` : "上传完成，后端处理中"}</p>
+                  </div>
+                ) : null}
               </label>
 
               <label className="block">
@@ -583,7 +622,7 @@ export function ViralAnalyzerClient({
                   ) : null}
                 </div>
               ) : null}
-              {error ? <p className="rounded-md border border-rose-300/20 bg-rose-400/10 p-3 text-sm leading-6 text-rose-100">{error}</p> : null}
+              {error ? <p className="whitespace-pre-wrap rounded-md border border-rose-300/20 bg-rose-400/10 p-3 text-sm leading-6 text-rose-100">{error}</p> : null}
             </div>
           </div>
           {isWorkspace && controlPanelFooter ? <div className="space-y-5">{controlPanelFooter}</div> : null}
@@ -611,9 +650,10 @@ export function ViralAnalyzerClient({
                       {pipelineMetadata.title ? <p className="break-words font-semibold text-white [overflow-wrap:anywhere]">{pipelineMetadata.title}</p> : null}
                       <p>平台：{pipelineMetadata.platform || "douyin"}</p>
                       {pipelineMetadata.duration ? <p>时长：{pipelineMetadata.duration}秒</p> : null}
-                      <p>分析来源：{pipelineSourceType === "uploaded_video_asr" ? "上传视频完整音轨" : pipelineSourceType === "link_video_asr" ? "链接视频音轨" : "链接公开信息（降级）"}</p>
+                      <p>文件大小：{videoFile ? formatFileSize(videoFile.size) : "链接模式"}</p>
+                      <p>分析来源：{pipelineSourceType === "uploaded_video_asr" ? "上传视频完整音轨" : pipelineSourceType === "link_video_asr" ? "链接视频音轨" : "仅基于公开信息（非完整拆解）"}</p>
                       <p>视频读取：{pipelineMetadata.downloadable ? "可用" : "受限，当前使用链接公开信息分析"}</p>
-                      {pipelineDiagnostics ? <p>ASR 覆盖：{pipelineDiagnostics.asr_coverage_seconds.toFixed(1)} / {pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；转写 {pipelineDiagnostics.transcript_chars} 字；{pipelineDiagnostics.segment_count} 段</p> : null}
+                      {pipelineDiagnostics ? <p>视频时长：{pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；ASR 覆盖：{pipelineDiagnostics.asr_coverage_seconds.toFixed(1)} 秒；转写 {pipelineDiagnostics.transcript_chars} 字；{pipelineDiagnostics.segment_count} 段；fallback：{pipelineDiagnostics.fallback ? "是" : "否"}</p> : null}
                     </div>
                   </div>
                 </div>

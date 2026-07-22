@@ -50,8 +50,8 @@ LANGUAGE_LABELS = {
 
 
 FALLBACK_OPTIONS = ["upload_video", "paste_text"]
-METADATA_FALLBACK_WARNING = "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。"
-SHARE_TEXT_FALLBACK_WARNING = "已基于分享文案完成初步拆解。补充原始视频文案可提升准确度。"
+METADATA_FALLBACK_WARNING = "仅基于链接公开信息（非完整拆解）：平台视频未成功下载，也未执行 ASR。结果不代表原视频完整观点、案例或数据。"
+SHARE_TEXT_FALLBACK_WARNING = "仅基于分享文案（非完整拆解）：未读取视频音轨，也未执行 ASR。补充原始视频或完整转写稿后再验收。"
 INSUFFICIENT_METADATA_MESSAGE = "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。"
 URL_RE = re.compile(r"https?://[^\s\"'<>，。；、]+", re.IGNORECASE)
 DOUYIN_COMMAND_RE = re.compile(
@@ -372,7 +372,17 @@ async def _process_video_path(
 ) -> dict[str, Any]:
     duration = float(metadata.get("duration") or 0.0)
     if not duration:
-        duration = await probe_media_duration(video_path)
+        try:
+            duration = await probe_media_duration(video_path)
+        except RuntimeError as error:
+            result = _failed(
+                status=ViralPipelineStatus.EXTRACTING_AUDIO,
+                fallback_reason=str(error),
+                metadata=metadata,
+                error_code="media_probe_failed",
+            )
+            result.update({"source_type": source_type, "degraded": False})
+            return result
         metadata["duration"] = duration
     if duration > settings.viral_max_video_duration_seconds:
         return _failed(
@@ -621,16 +631,23 @@ async def run_uploaded_viral_pipeline(
     max_bytes = settings.viral_max_download_mb * 1024 * 1024
     total = 0
     try:
-        with video_path.open("wb") as target:
-            while chunk := await upload.read(1024 * 1024):
-                total += len(chunk)
-                if total > max_bytes:
-                    return _failed(
-                        status=ViralPipelineStatus.PENDING,
-                        fallback_reason=f"视频超过 {settings.viral_max_download_mb}MB 限制。",
-                        error_code="video_too_large",
-                    )
-                target.write(chunk)
+        try:
+            with video_path.open("wb") as target:
+                while chunk := await upload.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        return _failed(
+                            status=ViralPipelineStatus.PENDING,
+                            fallback_reason=f"视频超过 {settings.viral_max_download_mb}MB 限制。",
+                            error_code="video_too_large",
+                        )
+                    target.write(chunk)
+        except (OSError, RuntimeError) as error:
+            return _failed(
+                status=ViralPipelineStatus.PENDING,
+                fallback_reason=f"上传流读取中断：{error}",
+                error_code="upload_interrupted",
+            )
         metadata = {
             "platform": "upload",
             "title": Path(upload.filename or "上传视频").stem,

@@ -3,7 +3,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.testclient import TestClient
 
+from app.api import viral as viral_api
+from app.core.auth import get_bearer_token
+from app.core.supabase import get_supabase
 from app.services.asr_service import ASRResult, ASRSegment
 from app.services import viral_analyzer, viral_pipeline
 
@@ -25,6 +31,22 @@ class _Table:
 class _Supabase:
     def table(self, _name):
         return _Table()
+
+
+class _Upload:
+    def __init__(self, chunks, filename="video.mp4"):
+        self.filename = filename
+        self._chunks = iter(chunks)
+        self.closed = False
+
+    async def read(self, _size):
+        value = next(self._chunks, b"")
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def close(self):
+        self.closed = True
 
 
 def _analysis(script_size=140):
@@ -184,3 +206,96 @@ def test_frontend_upload_branch_sends_real_file_before_link_pipeline():
     assert upload_branch < link_branch
     assert 'formData.set("video_file", videoFile)' in source
     assert "runUploadedViralPipeline(formData" in source
+
+
+def test_12_7mb_upload_reaches_video_processing(monkeypatch):
+    observed = {}
+    upload = _Upload([b"x" * (6 * 1024 * 1024), b"y" * (6 * 1024 * 1024), b"z" * 716800])
+
+    async def fake_process(*_args, **kwargs):
+        observed["size"] = kwargs["video_path"].stat().st_size
+        return {"ok": True, "diagnostics": {"video_duration_seconds": 170.0, "asr_coverage_seconds": 170.0}}
+
+    monkeypatch.setattr(viral_pipeline, "_process_video_path", fake_process)
+    result = asyncio.run(
+        viral_pipeline.run_uploaded_viral_pipeline(
+            _Supabase(), upload=upload, user_id="u1", email="u@example.com", source_url="https://example.com", industry="knowledge", language="zh", rewrite_length="full"
+        )
+    )
+    assert result["ok"] is True
+    assert observed["size"] == 13_299_712
+    assert upload.closed is True
+
+
+def test_oversized_and_interrupted_uploads_return_structured_errors(monkeypatch):
+    monkeypatch.setattr(viral_pipeline.settings, "viral_max_download_mb", 1)
+    oversized = asyncio.run(
+        viral_pipeline.run_uploaded_viral_pipeline(
+            _Supabase(), upload=_Upload([b"x" * (1024 * 1024 + 1)]), user_id="u1", email="u@example.com", source_url="", industry="knowledge", language="zh", rewrite_length="full"
+        )
+    )
+    assert oversized["error_code"] == "video_too_large"
+
+    interrupted = asyncio.run(
+        viral_pipeline.run_uploaded_viral_pipeline(
+            _Supabase(), upload=_Upload([b"ok", OSError("connection lost")]), user_id="u1", email="u@example.com", source_url="", industry="knowledge", language="zh", rewrite_length="full"
+        )
+    )
+    assert interrupted["error_code"] == "upload_interrupted"
+    assert "connection lost" in interrupted["fallback_reason"]
+
+
+def test_frontend_upload_has_progress_and_structured_network_errors():
+    api_source = (Path(__file__).parents[2] / "web" / "lib" / "api.ts").read_text(encoding="utf-8")
+    component_source = (Path(__file__).parents[2] / "web" / "components" / "ViralAnalyzerClient.tsx").read_text(encoding="utf-8")
+    assert "new XMLHttpRequest()" in api_source
+    assert "request.upload.onprogress" in api_source
+    assert "network_error" in api_source and "client_timeout" in api_source and "request_aborted" in api_source
+    assert 'setRequestHeader("Content-Type"' not in api_source
+    assert "上传进度：" in component_source
+    assert "文件大小：" in component_source
+    assert "仅基于公开信息（非完整拆解）" in component_source
+
+
+def test_real_multipart_12_7mb_route_and_cors(monkeypatch):
+    observed = {}
+
+    async def fake_pipeline(_supabase, **kwargs):
+        observed["filename"] = kwargs["upload"].filename
+        observed["size"] = len(await kwargs["upload"].read())
+        return {"ok": True, "source_type": "uploaded_video_asr"}
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+    monkeypatch.setattr(viral_api, "run_uploaded_viral_pipeline", fake_pipeline)
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["https://preview.example"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(viral_api.router, prefix="/api")
+    app.dependency_overrides[get_bearer_token] = lambda: "token"
+    app.dependency_overrides[get_supabase] = lambda: _Supabase()
+    client = TestClient(app)
+    preflight = client.options(
+        "/api/viral/pipeline/upload",
+        headers={
+            "Origin": "https://preview.example",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "https://preview.example"
+
+    payload = b"x" * 13_299_712
+    response = client.post(
+        "/api/viral/pipeline/upload",
+        headers={"Origin": "https://preview.example", "Authorization": "Bearer token"},
+        files={"video_file": ("170-seconds.mp4", payload, "video/mp4")},
+        data={"industry": "knowledge", "language": "zh", "rewrite_length": "full"},
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://preview.example"
+    assert observed == {"filename": "170-seconds.mp4", "size": len(payload)}

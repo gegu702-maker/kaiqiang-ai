@@ -251,15 +251,50 @@ export async function runViralPipeline(
   return parseResponse<ViralPipelineResult>(response, { url: `${API_URL}/api/viral/pipeline/run`, method: "POST" });
 }
 
-export async function runUploadedViralPipeline(formData: FormData, accessToken?: string): Promise<ViralPipelineResult> {
+export type ViralUploadProgress = {
+  loaded: number;
+  total: number;
+  percent: number;
+  stage: "uploading" | "processing";
+};
+
+export async function runUploadedViralPipeline(
+  formData: FormData,
+  accessToken?: string,
+  onProgress?: (progress: ViralUploadProgress) => void,
+): Promise<ViralPipelineResult> {
   const url = `${API_URL}/api/viral/pipeline/upload`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: authHeaders(accessToken),
-    body: formData,
-    cache: "no-store",
+  return new Promise<ViralPipelineResult>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url);
+    request.timeout = 15 * 60 * 1000;
+    if (accessToken) request.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    // Do not set Content-Type: the browser must add the multipart boundary.
+    request.upload.onprogress = (event) => {
+      const total = event.lengthComputable ? event.total : 0;
+      const percent = total ? Math.min(100, Math.round((event.loaded / total) * 100)) : 0;
+      onProgress?.({ loaded: event.loaded, total, percent, stage: "uploading" });
+    };
+    request.upload.onload = () => onProgress?.({ loaded: 0, total: 0, percent: 100, stage: "processing" });
+    request.onload = () => {
+      let payload: unknown;
+      try {
+        payload = JSON.parse(request.responseText || "{}");
+      } catch {
+        payload = null;
+      }
+      if (request.status >= 200 && request.status < 300 && payload) {
+        resolve(payload as ViralPipelineResult);
+        return;
+      }
+      const detail = payload && typeof payload === "object" ? stringifyDetail((payload as { detail?: unknown; message?: unknown }).detail ?? (payload as { message?: unknown }).message) : request.responseText;
+      reject(new Error(["上传请求被 API 拒绝", `Status: ${request.status || "unknown"}`, `URL: ${url}`, detail ? `原因: ${detail}` : ""].filter(Boolean).join("\n")));
+    };
+    request.onerror = () => reject(new Error(["上传请求失败（network_error）", `URL: ${url}`, `Origin: ${window.location.origin}`, "浏览器未收到可读取的 HTTP 响应，请检查 Preview 路由与 CORS。"].join("\n")));
+    request.ontimeout = () => reject(new Error(["上传请求超时（client_timeout）", `URL: ${url}`, "客户端等待超过 15 分钟，上传或后端处理未完成。"].join("\n")));
+    request.onabort = () => reject(new Error("上传已中断（request_aborted），请重新选择文件后重试。"));
+    request.send(formData);
   });
-  return parseResponse<ViralPipelineResult>(response, { url, method: "POST" });
 }
 
 export async function uploadVoiceClone(formData: FormData, accessToken?: string): Promise<VoiceClone> {
