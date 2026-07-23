@@ -323,6 +323,26 @@ export type ViralTimelineSegment = {
   text: string;
 };
 
+export type ViralTranscriptCorrection = {
+  segment_index: number;
+  start?: number;
+  end?: number;
+  from: string;
+  to: string;
+  type: string;
+  reason: string;
+  count?: number;
+  source?: string;
+};
+
+export type ViralTranscriptReviewSegment = {
+  segment_index: number;
+  start?: number;
+  end?: number;
+  text?: string;
+  reason: string;
+};
+
 export type ViralPipelineResult = {
   ok: boolean;
   success?: boolean;
@@ -339,6 +359,7 @@ export type ViralPipelineResult = {
   fallback_reason: string;
   project_id: string;
   transcript: string;
+  raw_transcript?: string;
   analysis: {
     topic: string;
     hook: string;
@@ -356,6 +377,10 @@ export type ViralPipelineResult = {
   analysis_quality?: "full" | "partial" | string;
   warning?: string;
   timeline?: ViralTimelineSegment[];
+  raw_timeline?: ViralTimelineSegment[];
+  corrections?: ViralTranscriptCorrection[];
+  correction_count?: number;
+  review_segments?: ViralTranscriptReviewSegment[];
   degraded?: boolean;
   asr_provider?: string;
   diagnostics?: {
@@ -363,7 +388,11 @@ export type ViralPipelineResult = {
     video_duration_seconds: number;
     asr_coverage_seconds: number;
     transcript_chars: number;
+    raw_transcript_chars?: number;
+    corrected_transcript_chars?: number;
     segment_count: number;
+    correction_count?: number;
+    review_segment_count?: number;
     fallback: boolean;
     prompt_input_chars: number;
     output_chars: number;

@@ -14,6 +14,7 @@ from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.services.asr_service import transcribe_audio
+from app.services.financial_transcript import CorrectionResult, correct_financial_transcript
 from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.core.config import settings
 from app.services.viral_diagnostics import current_request_id
@@ -506,17 +507,78 @@ async def _process_video_path(
         result.update({"source_type": source_type, "degraded": False, "asr_provider": asr.provider})
         return result
 
+    raw_segments = asr.segments or []
+    raw_timeline = [
+        {"start": segment.start, "end": segment.end, "timestamp": f"{_format_timestamp(segment.start)}–{_format_timestamp(segment.end)}", "text": segment.text}
+        for segment in raw_segments
+    ]
+    if settings.viral_asr_domain.strip().lower() == "financial":
+        correction = await correct_financial_transcript(raw_segments, language)
+    else:
+        correction = CorrectionResult(
+            corrected_transcript=asr.transcript,
+            corrected_segments=raw_segments,
+            corrections=[],
+            review_segments=[],
+            quality_passed=True,
+            provider="none",
+        )
+    corrected_transcript = correction.corrected_transcript
     timeline = [
         {"start": segment.start, "end": segment.end, "timestamp": f"{_format_timestamp(segment.start)}–{_format_timestamp(segment.end)}", "text": segment.text}
-        for segment in (asr.segments or [])
+        for segment in correction.corrected_segments
     ]
+    correction_count = sum(int(item.get("count") or 1) for item in correction.corrections)
     coverage_ratio = asr.coverage_seconds / duration if duration else 1.0
     degraded = bool(duration and coverage_ratio < 0.8)
-    warning = f"ASR 仅覆盖到 {asr.coverage_seconds:.1f}/{duration:.1f} 秒，结果可能不完整。" if degraded else ""
+    warnings = ["自动转写已进行AI金融术语校正，仍建议结合原视频人工复核。"] if correction.provider != "none" else []
+    if degraded:
+        warnings.append(f"ASR 仅覆盖到 {asr.coverage_seconds:.1f}/{duration:.1f} 秒，结果可能不完整。")
+    warning = " ".join(warnings)
+    correction_diagnostics = {
+        "source_type": source_type,
+        "video_duration_seconds": round(duration, 3),
+        "asr_coverage_seconds": round(asr.coverage_seconds, 3),
+        "transcript_chars": len(corrected_transcript),
+        "raw_transcript_chars": len(asr.transcript),
+        "corrected_transcript_chars": len(corrected_transcript),
+        "segment_count": len(timeline),
+        "correction_count": correction_count,
+        "review_segment_count": len(correction.review_segments),
+        "fallback": False,
+        "prompt_input_chars": 0,
+        "output_chars": 0,
+    }
+    if not correction.quality_passed:
+        result = _failed(
+            status=ViralPipelineStatus.TRANSCRIBING,
+            fallback_reason="金融语义质量检查发现仍需人工确认的片段，已停止下游拆解，避免错误扩散。",
+            metadata=metadata,
+            error_code="transcript_review_required",
+            retryable=False,
+            diagnostic={"review_segment_count": len(correction.review_segments)},
+        )
+        result.update(
+            {
+                "source_type": source_type,
+                "degraded": True,
+                "transcript": corrected_transcript,
+                "raw_transcript": asr.transcript,
+                "timeline": timeline,
+                "raw_timeline": raw_timeline,
+                "corrections": correction.corrections,
+                "correction_count": correction_count,
+                "review_segments": correction.review_segments,
+                "diagnostics": correction_diagnostics,
+                "warning": warning,
+            }
+        )
+        _log_diagnostics(correction_diagnostics)
+        return result
     logger.info(
         "viral_pipeline request_id=%s stage=analyzing outcome=started transcript_chars=%s segment_count=%s coverage_seconds=%.3f",
         request_id,
-        len(asr.transcript),
+        len(corrected_transcript),
         len(timeline),
         asr.coverage_seconds,
     )
@@ -526,7 +588,7 @@ async def _process_video_path(
             user_id=user_id,
             email=email,
             source_url=source_url,
-            raw_script=asr.transcript,
+            raw_script=corrected_transcript,
             industry=industry,
             language=language,
             rewrite_length=rewrite_length,
@@ -534,7 +596,7 @@ async def _process_video_path(
     except Exception as error:
         return _analysis_error_result(error, metadata=metadata, source_type=source_type)
     rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(
-        transcript=asr.transcript,
+        transcript=corrected_transcript,
         analysis=analysis,
         language=language,
         rewrite_length=rewrite_length,
@@ -544,8 +606,12 @@ async def _process_video_path(
         "source_type": source_type,
         "video_duration_seconds": round(duration, 3),
         "asr_coverage_seconds": round(asr.coverage_seconds, 3),
-        "transcript_chars": len(asr.transcript),
+        "transcript_chars": len(corrected_transcript),
+        "raw_transcript_chars": len(asr.transcript),
+        "corrected_transcript_chars": len(corrected_transcript),
         "segment_count": len(timeline),
+        "correction_count": correction_count,
+        "review_segment_count": len(correction.review_segments),
         "fallback": False,
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
@@ -562,8 +628,13 @@ async def _process_video_path(
         "fallback_options": [],
         "fallback_reason": "",
         "project_id": project_id,
-        "transcript": asr.transcript,
+        "transcript": corrected_transcript,
+        "raw_transcript": asr.transcript,
         "timeline": timeline,
+        "raw_timeline": raw_timeline,
+        "corrections": correction.corrections,
+        "correction_count": correction_count,
+        "review_segments": correction.review_segments,
         "analysis": _analysis_payload(analysis),
         "rewrites": rewrites,
         "metadata": metadata,

@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 
 from app.core.config import settings
+from app.services.financial_terms import FINANCIAL_HOTWORDS, FINANCIAL_INITIAL_PROMPT
 from app.services.viral_diagnostics import current_request_id
 
 
@@ -66,14 +67,30 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResul
             diagnostic=diagnostic,
         )
 
-    logger.info("viral_asr request_id=%s stage=transcribe outcome=started", request_id)
+    domain = settings.viral_asr_domain.strip().lower()
+    logger.warning(
+        "viral_asr request_id=%s stage=transcribe outcome=started model=%s device=%s compute_type=%s language=%s beam_size=%s vad_filter=%s domain=%s initial_prompt=%s hotwords=%s",
+        request_id,
+        settings.faster_whisper_model_size,
+        settings.faster_whisper_device,
+        settings.faster_whisper_compute_type,
+        language if language in {"zh", "en"} else "zh",
+        settings.faster_whisper_beam_size,
+        settings.faster_whisper_vad_filter,
+        domain or "general",
+        domain == "financial",
+        domain == "financial",
+    )
     try:
-        segments, _info = model.transcribe(
-            str(audio_path),
-            language=language if language in {"zh", "en"} else "zh",
-            vad_filter=True,
-            beam_size=5,
-        )
+        transcribe_options = {
+            "language": language if language in {"zh", "en"} else "zh",
+            "vad_filter": settings.faster_whisper_vad_filter,
+            "beam_size": settings.faster_whisper_beam_size,
+            "condition_on_previous_text": True,
+        }
+        if domain == "financial":
+            transcribe_options.update(initial_prompt=FINANCIAL_INITIAL_PROMPT, hotwords=FINANCIAL_HOTWORDS)
+        segments, _info = model.transcribe(str(audio_path), **transcribe_options)
         normalized_segments = [
             ASRSegment(start=float(segment.start), end=float(segment.end), text=segment.text.strip())
             for segment in segments

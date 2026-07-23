@@ -331,6 +331,9 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "ASR 模型不可用" in component_source
     assert "AI 响应格式错误" in component_source
     assert "请求 ID：" in component_source
+    assert "自动转写稿（AI校正，建议人工复核）" in component_source
+    assert "查看原始ASR转写" in component_source
+    assert "校正" in component_source
 
 
 def test_real_multipart_12_7mb_route_and_cors(monkeypatch):

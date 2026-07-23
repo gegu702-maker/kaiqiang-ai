@@ -179,7 +179,10 @@ export function ViralAnalyzerClient({
   const [pipelineSourceType, setPipelineSourceType] = useState<string>("");
   const [pipelineWarning, setPipelineWarning] = useState("");
   const [pipelineTranscript, setPipelineTranscript] = useState("");
+  const [pipelineRawTranscript, setPipelineRawTranscript] = useState("");
   const [pipelineTimeline, setPipelineTimeline] = useState<ViralPipelineResult["timeline"]>([]);
+  const [pipelineCorrections, setPipelineCorrections] = useState<ViralPipelineResult["corrections"]>([]);
+  const [pipelineReviewSegments, setPipelineReviewSegments] = useState<ViralPipelineResult["review_segments"]>([]);
   const [pipelineDiagnostics, setPipelineDiagnostics] = useState<ViralPipelineResult["diagnostics"]>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -265,6 +268,7 @@ export function ViralAnalyzerClient({
       asr_model_unavailable: "ASR 模型不可用",
       asr_transcription_failed: "ASR 推理失败",
       asr_empty_transcript: "未识别到语音内容",
+      transcript_review_required: "转写稿需要人工复核",
       audio_extraction_failed: "音频提取失败",
       media_probe_failed: "视频信息读取失败",
       video_too_long: "视频时长超过上限",
@@ -352,7 +356,10 @@ export function ViralAnalyzerClient({
     setPipelineSourceType("");
     setPipelineWarning("");
     setPipelineTranscript("");
+    setPipelineRawTranscript("");
     setPipelineTimeline([]);
+    setPipelineCorrections([]);
+    setPipelineReviewSegments([]);
     setPipelineDiagnostics(undefined);
     setChecking(true);
     try {
@@ -377,7 +384,10 @@ export function ViralAnalyzerClient({
     setPipelineSourceType("");
     setPipelineWarning("");
     setPipelineTranscript("");
+    setPipelineRawTranscript("");
     setPipelineTimeline([]);
+    setPipelineCorrections([]);
+    setPipelineReviewSegments([]);
     setPipelineDiagnostics(undefined);
     setLoading(true);
     try {
@@ -400,15 +410,18 @@ export function ViralAnalyzerClient({
           setUploadProgress(progress);
           setRunStage(progress.stage);
         });
-        if (!pipeline.ok) throw new Error(friendlyPipelineMessage(pipeline));
-        const pipelineResult = pipelineToAnalyzeResult(pipeline);
-        if (!pipelineResult) throw new Error(linkCheckCopy.pipelineEmpty);
         setPipelineMetadata(pipeline.metadata);
         setPipelineSourceType(pipeline.source_type || "");
         setPipelineWarning(pipeline.warning || "");
         setPipelineTranscript(pipeline.transcript || "");
+        setPipelineRawTranscript(pipeline.raw_transcript || "");
         setPipelineTimeline(pipeline.timeline || []);
+        setPipelineCorrections(pipeline.corrections || []);
+        setPipelineReviewSegments(pipeline.review_segments || []);
         setPipelineDiagnostics(pipeline.diagnostics);
+        if (!pipeline.ok) throw new Error(friendlyPipelineMessage(pipeline));
+        const pipelineResult = pipelineToAnalyzeResult(pipeline);
+        if (!pipelineResult) throw new Error(linkCheckCopy.pipelineEmpty);
         setResult(pipelineResult);
         return;
       }
@@ -431,6 +444,15 @@ export function ViralAnalyzerClient({
           },
           accessToken,
         );
+        setPipelineMetadata(pipeline.metadata);
+        setPipelineSourceType(pipeline.source_type || "");
+        setPipelineWarning(pipeline.warning || "");
+        setPipelineTranscript(pipeline.transcript || "");
+        setPipelineRawTranscript(pipeline.raw_transcript || "");
+        setPipelineTimeline(pipeline.timeline || []);
+        setPipelineCorrections(pipeline.corrections || []);
+        setPipelineReviewSegments(pipeline.review_segments || []);
+        setPipelineDiagnostics(pipeline.diagnostics);
         if (!pipeline.ok) {
           throw new Error(friendlyPipelineMessage(pipeline));
         }
@@ -438,12 +460,6 @@ export function ViralAnalyzerClient({
         if (!pipelineResult) {
           throw new Error(linkCheckCopy.pipelineEmpty);
         }
-        setPipelineMetadata(pipeline.metadata);
-        setPipelineSourceType(pipeline.source_type || "");
-        setPipelineWarning(pipeline.warning || "");
-        setPipelineTranscript(pipeline.transcript || "");
-        setPipelineTimeline(pipeline.timeline || []);
-        setPipelineDiagnostics(pipeline.diagnostics);
         setResult(pipelineResult);
         return;
       }
@@ -650,6 +666,18 @@ export function ViralAnalyzerClient({
                 </div>
               ) : null}
               {error ? <p className="whitespace-pre-wrap rounded-md border border-rose-300/20 bg-rose-400/10 p-3 text-sm leading-6 text-rose-100">{error}</p> : null}
+              {pipelineReviewSegments?.length ? (
+                <div className="rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">
+                  <p className="font-semibold">需人工确认的转写片段：{pipelineReviewSegments.length}</p>
+                  {pipelineReviewSegments.map((item, index) => (
+                    <p key={`${item.segment_index}-${index}`} className="mt-1 break-words">
+                      {item.start !== undefined ? `${item.start.toFixed(1)}–${(item.end ?? item.start).toFixed(1)}秒 ` : ""}{item.text || ""} {item.reason}
+                    </p>
+                  ))}
+                  {pipelineTranscript ? <details className="mt-3"><summary className="cursor-pointer font-semibold">查看AI校正稿</summary><p className="mt-2 whitespace-pre-wrap text-amber-50">{pipelineTranscript}</p></details> : null}
+                  {pipelineRawTranscript ? <details className="mt-3"><summary className="cursor-pointer font-semibold">查看原始ASR转写</summary><p className="mt-2 whitespace-pre-wrap text-amber-50">{pipelineRawTranscript}</p></details> : null}
+                </div>
+              ) : null}
             </div>
           </div>
           {isWorkspace && controlPanelFooter ? <div className="space-y-5">{controlPanelFooter}</div> : null}
@@ -680,7 +708,7 @@ export function ViralAnalyzerClient({
                       <p>文件大小：{videoFile ? formatFileSize(videoFile.size) : "链接模式"}</p>
                       <p>分析来源：{pipelineSourceType === "uploaded_video_asr" ? "上传视频完整音轨" : pipelineSourceType === "link_video_asr" ? "链接视频音轨" : "仅基于公开信息（非完整拆解）"}</p>
                       <p>视频读取：{pipelineMetadata.downloadable ? "可用" : "受限，当前使用链接公开信息分析"}</p>
-                      {pipelineDiagnostics ? <p>视频时长：{pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；ASR 覆盖：{pipelineDiagnostics.asr_coverage_seconds.toFixed(1)} 秒；转写 {pipelineDiagnostics.transcript_chars} 字；{pipelineDiagnostics.segment_count} 段；fallback：{pipelineDiagnostics.fallback ? "是" : "否"}</p> : null}
+                      {pipelineDiagnostics ? <p>视频时长：{pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；ASR 覆盖：{pipelineDiagnostics.asr_coverage_seconds.toFixed(1)} 秒；原始转写 {pipelineDiagnostics.raw_transcript_chars ?? pipelineDiagnostics.transcript_chars} 字；校正后 {pipelineDiagnostics.corrected_transcript_chars ?? pipelineDiagnostics.transcript_chars} 字；{pipelineDiagnostics.segment_count} 段；校正 {pipelineDiagnostics.correction_count ?? 0} 处；fallback：{pipelineDiagnostics.fallback ? "是" : "否"}</p> : null}
                     </div>
                   </div>
                 </div>
@@ -700,7 +728,26 @@ export function ViralAnalyzerClient({
               {result.data_points?.length ? <ListCard title="数据" items={result.data_points} /> : null}
               <ResultCard title={t.template}>{result.template}</ResultCard>
               {pipelineTimeline?.length ? <ListCard title="时间轴 / 分段" items={pipelineTimeline.map((item) => `${item.timestamp} ${item.text}`)} /> : null}
-              {pipelineTranscript ? <ResultCard title="完整转写稿"><span className="whitespace-pre-wrap">{pipelineTranscript}</span></ResultCard> : null}
+              {pipelineTranscript ? (
+                <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
+                  <h2 className="text-lg font-semibold text-white">自动转写稿（AI校正，建议人工复核）</h2>
+                  <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300">{pipelineTranscript}</p>
+                  {pipelineCorrections?.length ? (
+                    <details className="mt-4 rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm text-slate-300">
+                      <summary className="cursor-pointer font-semibold text-cyan">查看校正记录（{pipelineCorrections.length}条）</summary>
+                      <div className="mt-3 space-y-2">
+                        {pipelineCorrections.map((item, index) => <p key={`${item.segment_index}-${index}`}>{item.start !== undefined ? `${item.start.toFixed(1)}秒 ` : ""}{item.from} → {item.to}（{item.reason}）</p>)}
+                      </div>
+                    </details>
+                  ) : null}
+                  {pipelineRawTranscript ? (
+                    <details className="mt-4 rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm text-slate-300">
+                      <summary className="cursor-pointer font-semibold text-cyan">查看原始ASR转写</summary>
+                      <p className="mt-3 whitespace-pre-wrap leading-7">{pipelineRawTranscript}</p>
+                    </details>
+                  ) : null}
+                </section>
+              ) : null}
 
               <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
                 <h2 className="text-lg font-semibold text-white">{t.rewrites}</h2>
