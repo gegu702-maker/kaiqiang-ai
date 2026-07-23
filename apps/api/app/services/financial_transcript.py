@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_CHANGE_TYPES = {"homophone", "financial_term", "entity", "number_format", "punctuation"}
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?%?")
-CRITICAL_RESIDUAL_PATTERNS = ("习近平", *[source for source, _target in FINANCIAL_TERM_CORRECTIONS])
+CRITICAL_RESIDUAL_PATTERNS = ("�", "习近平", *[source for source, _target in FINANCIAL_TERM_CORRECTIONS])
+TRUNCATED_END_RE = re.compile(r"(?:以及|并且|因为|所以|但是|而且|其中|对于|通过|随着|包括|如果|当)\s*$")
+REPEATED_PHRASE_RE = re.compile(r"(.{4,16})(?:[，,。\s]*\1)+")
 
 
 @dataclass
@@ -85,6 +87,65 @@ def _apply_confirmed_terms(segments: list[ASRSegment]) -> tuple[list[ASRSegment]
 async def correct_financial_transcript(segments: list[ASRSegment], language: str = "zh") -> CorrectionResult:
     glossary_segments, corrections = _apply_confirmed_terms(segments)
     review_segments: list[dict[str, Any]] = []
+    normalized_segments: list[ASRSegment] = []
+    for index, segment in enumerate(glossary_segments):
+        raw_text = segments[index].text
+        suggested = segment.text.replace("�", "")
+        deduplicated = REPEATED_PHRASE_RE.sub(r"\1", suggested)
+        if deduplicated != suggested:
+            corrections.append(
+                {
+                    "segment_index": index,
+                    "start": segment.start,
+                    "end": segment.end,
+                    "from": suggested,
+                    "to": deduplicated,
+                    "type": "punctuation",
+                    "reason": "移除同一片段内连续重复的短语",
+                    "count": 1,
+                    "source": "structural_guard",
+                }
+            )
+        suggested = deduplicated
+        if "�" in raw_text:
+            corrections.append(
+                {
+                    "segment_index": index,
+                    "start": segment.start,
+                    "end": segment.end,
+                    "from": "�",
+                    "to": "",
+                    "type": "punctuation",
+                    "reason": "移除无效Unicode替换字符，原音需人工复核",
+                    "count": raw_text.count("�"),
+                    "source": "unicode_guard",
+                }
+            )
+            review_segments.append(
+                {
+                    "segment_index": index,
+                    "start": segment.start,
+                    "end": segment.end,
+                    "original_text": raw_text,
+                    "suggested_text": suggested,
+                    "text": raw_text,
+                    "reason": "原始ASR包含U+FFFD乱码，必须试听确认缺失内容",
+                }
+            )
+        if TRUNCATED_END_RE.search(suggested):
+            review_segments.append(
+                {
+                    "segment_index": index,
+                    "start": segment.start,
+                    "end": segment.end,
+                    "original_text": raw_text,
+                    "suggested_text": suggested,
+                    "text": raw_text,
+                    "reason": "句尾疑似截断，禁止自动补写",
+                }
+            )
+        normalized_segments.append(ASRSegment(start=segment.start, end=segment.end, text=suggested))
+    glossary_segments = normalized_segments
     payload = {
         "language": language,
         "domain": "金融市场与上市公司",
@@ -128,7 +189,7 @@ async def correct_financial_transcript(segments: list[ASRSegment], language: str
             code,
         )
         response = {"segments": []}
-        review_segments.append({"segment_index": -1, "reason": f"AI校正服务失败：{code}"})
+        review_segments.append({"segment_index": -1, "original_text": "", "suggested_text": "", "reason": f"AI校正服务失败：{code}"})
 
     by_index = {index: segment for index, segment in enumerate(glossary_segments)}
     for item in response.get("segments") or []:
@@ -145,7 +206,7 @@ async def correct_financial_transcript(segments: list[ASRSegment], language: str
         supplied_original = str(item.get("original_text") or "")
         corrected = str(item.get("corrected_text") or "").strip()
         if supplied_original != original:
-            review_segments.append({"segment_index": index, "start": segment.start, "end": segment.end, "text": original, "reason": "AI返回的原文与对应片段不一致"})
+            review_segments.append({"segment_index": index, "start": segment.start, "end": segment.end, "original_text": segments[index].text, "suggested_text": original, "text": original, "reason": "AI返回的原文与对应片段不一致"})
             continue
         safe, reason = _safe_candidate(original, corrected, item.get("changes"))
         if item.get("review_required") or not safe:
@@ -155,6 +216,8 @@ async def correct_financial_transcript(segments: list[ASRSegment], language: str
                     "start": segment.start,
                     "end": segment.end,
                     "text": original,
+                    "original_text": segments[index].text,
+                    "suggested_text": corrected if corrected and "�" not in corrected else original,
                     "reason": str(item.get("review_reason") or reason or "AI标记需人工复核"),
                 }
             )
@@ -179,9 +242,33 @@ async def correct_financial_transcript(segments: list[ASRSegment], language: str
 
     corrected_segments = [by_index[index] for index in range(len(glossary_segments))]
     corrected_transcript = "\n".join(segment.text for segment in corrected_segments).strip()
-    residuals = [pattern for pattern in CRITICAL_RESIDUAL_PATTERNS if pattern in corrected_transcript]
-    if residuals:
-        review_segments.append({"segment_index": -1, "reason": f"校正稿仍包含高风险异常词：{'、'.join(residuals)}"})
+    for index, segment in enumerate(corrected_segments):
+        residuals = [pattern for pattern in CRITICAL_RESIDUAL_PATTERNS if pattern in segment.text]
+        if residuals:
+            review_segments.append(
+                {
+                    "segment_index": index,
+                    "start": segment.start,
+                    "end": segment.end,
+                    "original_text": segments[index].text,
+                    "suggested_text": segment.text.replace("�", ""),
+                    "text": segments[index].text,
+                    "reason": f"校正稿仍包含高风险异常词：{'、'.join(residuals)}",
+                }
+            )
+
+    deduplicated_reviews: dict[int, dict[str, Any]] = {}
+    global_reviews: list[dict[str, Any]] = []
+    for item in review_segments:
+        index = int(item.get("segment_index", -1))
+        if index < 0:
+            global_reviews.append(item)
+            continue
+        if index in deduplicated_reviews:
+            deduplicated_reviews[index]["reason"] = f"{deduplicated_reviews[index]['reason']}；{item['reason']}"
+        else:
+            deduplicated_reviews[index] = item
+    review_segments = [*deduplicated_reviews.values(), *global_reviews]
 
     logger.warning(
         "viral_transcript_correction request_id=%s outcome=completed raw_chars=%s corrected_chars=%s correction_count=%s review_segment_count=%s quality_passed=%s",

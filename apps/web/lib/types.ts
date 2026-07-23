@@ -317,6 +317,7 @@ export type ViralPipelineMetadata = {
 };
 
 export type ViralTimelineSegment = {
+  segment_index?: number;
   start: number;
   end: number;
   timestamp: string;
@@ -340,6 +341,8 @@ export type ViralTranscriptReviewSegment = {
   start?: number;
   end?: number;
   text?: string;
+  original_text?: string;
+  suggested_text?: string;
   reason: string;
 };
 
@@ -381,6 +384,17 @@ export type ViralPipelineResult = {
   corrections?: ViralTranscriptCorrection[];
   correction_count?: number;
   review_segments?: ViralTranscriptReviewSegment[];
+  review_context?: Record<string, unknown>;
+  review_token?: string;
+  correction_audit?: Array<{
+    segment_index: number;
+    start: number;
+    end: number;
+    original_text: string;
+    corrected_text: string;
+    source: string;
+    confirmed: boolean;
+  }>;
   degraded?: boolean;
   asr_provider?: string;
   diagnostics?: {

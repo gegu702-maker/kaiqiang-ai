@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.services.video_link_resolver import check_video_link, resolve_video_link
 from app.services.viral_analyzer import analyze_viral_script
-from app.services.viral_pipeline import run_uploaded_viral_pipeline, run_viral_pipeline
+from app.services.viral_pipeline import continue_reviewed_viral_pipeline, run_uploaded_viral_pipeline, run_viral_pipeline
 from app.services.viral_diagnostics import bind_request_id, new_request_id, reset_request_id
 
 router = APIRouter(prefix="/viral", tags=["viral"])
@@ -37,6 +37,16 @@ class ViralPipelineRequest(BaseModel):
     industry: str = "personal_brand"
     language: str = "zh"
     rewrite_length: Literal["short", "medium", "full"] = "short"
+
+
+class ViralReviewContinueRequest(BaseModel):
+    review_context: dict[str, Any]
+    review_token: str = Field(..., min_length=1, max_length=256)
+    confirmed_segments: list[dict[str, Any]]
+    source_url: str = Field(default="", max_length=3000)
+    industry: str = "personal_brand"
+    language: str = "zh"
+    rewrite_length: Literal["short", "medium", "full"] = "full"
 
 
 def _is_pipeline_tester(email: str | None) -> bool:
@@ -211,5 +221,51 @@ async def run_uploaded_viral_agent_pipeline(
         )
         result.update({"fallback_options": ["paste_text"], "source_type": "uploaded_video_asr", "degraded": False})
         return result
+    finally:
+        reset_request_id(context_token)
+
+
+@router.post("/pipeline/continue")
+async def continue_reviewed_viral_agent_pipeline(
+    payload: ViralReviewContinueRequest,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    request_id = new_request_id()
+    context_token = bind_request_id(request_id)
+    user = get_authenticated_user(supabase, token)
+    try:
+        return await asyncio.wait_for(
+            continue_reviewed_viral_pipeline(
+                supabase,
+                user_id=user["id"],
+                email=user["email"],
+                review_context=payload.review_context,
+                review_token=payload.review_token,
+                confirmed_segments=payload.confirmed_segments,
+                source_url=payload.source_url,
+                industry=payload.industry,
+                language=payload.language,
+                rewrite_length=payload.rewrite_length,
+            ),
+            timeout=settings.viral_pipeline_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        return _pipeline_failure(
+            request_id=request_id,
+            code="pipeline_timeout",
+            stage="analyzing",
+            message="人工确认后的拆解处理超时。",
+            retryable=True,
+        )
+    except Exception as error:
+        logger.exception("viral_pipeline request_id=%s stage=review_continue outcome=unexpected_failure", request_id)
+        return _pipeline_failure(
+            request_id=request_id,
+            code="pipeline_unexpected_error",
+            stage="analyzing",
+            message=f"确认后的拆解发生未预期错误（{type(error).__name__}）。",
+            retryable=True,
+        )
     finally:
         reset_request_id(context_token)

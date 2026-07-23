@@ -297,6 +297,30 @@ export async function runUploadedViralPipeline(
   });
 }
 
+export async function continueReviewedViralPipeline(
+  payload: {
+    review_context: Record<string, unknown>;
+    review_token: string;
+    confirmed_segments: Array<Record<string, unknown>>;
+    source_url?: string;
+    industry?: string;
+    language?: Locale;
+    rewrite_length?: "short" | "medium" | "full";
+  },
+  accessToken?: string,
+): Promise<ViralPipelineResult> {
+  const url = `${API_URL}/api/viral/pipeline/continue`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: accessToken
+      ? { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }
+      : { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return parseResponse<ViralPipelineResult>(response, { url, method: "POST" });
+}
+
 export async function uploadVoiceClone(formData: FormData, accessToken?: string): Promise<VoiceClone> {
   const response = await fetch(`${API_URL}/api/voice-clone/upload`, {
     method: "POST",

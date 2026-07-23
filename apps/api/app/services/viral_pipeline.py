@@ -18,6 +18,7 @@ from app.services.financial_transcript import CorrectionResult, correct_financia
 from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.core.config import settings
 from app.services.viral_diagnostics import current_request_id
+from app.services.viral_review import create_review_token, verify_review_token
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio, probe_media_duration
 from app.services.video_link_resolver import resolve_video_link
 from app.services.viral_analyzer import FINAL_REWRITE_LIMIT, analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, smooth_spoken_script
@@ -509,8 +510,8 @@ async def _process_video_path(
 
     raw_segments = asr.segments or []
     raw_timeline = [
-        {"start": segment.start, "end": segment.end, "timestamp": f"{_format_timestamp(segment.start)}–{_format_timestamp(segment.end)}", "text": segment.text}
-        for segment in raw_segments
+        {"segment_index": index, "start": segment.start, "end": segment.end, "timestamp": f"{_format_timestamp(segment.start)}–{_format_timestamp(segment.end)}", "text": segment.text}
+        for index, segment in enumerate(raw_segments)
     ]
     if settings.viral_asr_domain.strip().lower() == "financial":
         correction = await correct_financial_transcript(raw_segments, language)
@@ -525,8 +526,8 @@ async def _process_video_path(
         )
     corrected_transcript = correction.corrected_transcript
     timeline = [
-        {"start": segment.start, "end": segment.end, "timestamp": f"{_format_timestamp(segment.start)}–{_format_timestamp(segment.end)}", "text": segment.text}
-        for segment in correction.corrected_segments
+        {"segment_index": index, "start": segment.start, "end": segment.end, "timestamp": f"{_format_timestamp(segment.start)}–{_format_timestamp(segment.end)}", "text": segment.text}
+        for index, segment in enumerate(correction.corrected_segments)
     ]
     correction_count = sum(int(item.get("count") or 1) for item in correction.corrections)
     coverage_ratio = asr.coverage_seconds / duration if duration else 1.0
@@ -550,6 +551,22 @@ async def _process_video_path(
         "output_chars": 0,
     }
     if not correction.quality_passed:
+        review_context = {
+            "request_id": request_id,
+            "raw_transcript": asr.transcript,
+            "raw_timeline": raw_timeline,
+            "suggested_timeline": timeline,
+            "review_indices": sorted({int(item["segment_index"]) for item in correction.review_segments if int(item.get("segment_index", -1)) >= 0}),
+            "global_review_reasons": [
+                str(item.get("reason") or "校正服务异常")
+                for item in correction.review_segments
+                if int(item.get("segment_index", -1)) < 0
+            ],
+            "metadata": metadata,
+            "diagnostics": correction_diagnostics,
+            "source_type": source_type,
+            "corrections": correction.corrections,
+        }
         result = _failed(
             status=ViralPipelineStatus.TRANSCRIBING,
             fallback_reason="金融语义质量检查发现仍需人工确认的片段，已停止下游拆解，避免错误扩散。",
@@ -569,6 +586,8 @@ async def _process_video_path(
                 "corrections": correction.corrections,
                 "correction_count": correction_count,
                 "review_segments": correction.review_segments,
+                "review_context": review_context,
+                "review_token": create_review_token(review_context),
                 "diagnostics": correction_diagnostics,
                 "warning": warning,
             }
@@ -804,6 +823,166 @@ async def _share_text_fallback_analysis(
         "stage": ViralPipelineStatus.READY,
         "retryable": False,
         "request_id": current_request_id(),
+    }
+
+
+async def continue_reviewed_viral_pipeline(
+    supabase: Client,
+    *,
+    user_id: str,
+    email: str,
+    review_context: dict[str, Any],
+    review_token: str,
+    confirmed_segments: list[dict[str, Any]],
+    source_url: str,
+    industry: str,
+    language: str,
+    rewrite_length: str,
+) -> dict[str, Any]:
+    if not verify_review_token(review_context, review_token):
+        return _failed(
+            status=ViralPipelineStatus.TRANSCRIBING,
+            fallback_reason="复核会话已失效，请重新上传视频。",
+            error_code="review_token_invalid",
+            retryable=False,
+        )
+
+    raw_timeline = review_context.get("raw_timeline") or []
+    suggested_timeline = review_context.get("suggested_timeline") or []
+    review_indices = {int(index) for index in (review_context.get("review_indices") or [])}
+    global_review_reasons = review_context.get("global_review_reasons") or []
+    if global_review_reasons:
+        return _failed(
+            status=ViralPipelineStatus.TRANSCRIBING,
+            fallback_reason="自动校正服务未完成，无法通过局部分段确认继续拆解，请重新上传视频。",
+            error_code="review_context_invalid",
+            retryable=True,
+            diagnostic={"global_review_reason_count": len(global_review_reasons)},
+        )
+    if not raw_timeline or len(raw_timeline) != len(suggested_timeline):
+        return _failed(
+            status=ViralPipelineStatus.TRANSCRIBING,
+            fallback_reason="复核分段数据不完整，请重新上传视频。",
+            error_code="review_context_invalid",
+            retryable=False,
+        )
+
+    submitted = {int(item.get("segment_index", -1)): item for item in confirmed_segments if isinstance(item, dict)}
+    missing = sorted(index for index in review_indices if not submitted.get(index, {}).get("confirmed"))
+    if missing:
+        return _failed(
+            status=ViralPipelineStatus.TRANSCRIBING,
+            fallback_reason=f"仍有 {len(missing)} 个待复核分段未确认。",
+            error_code="review_segments_unconfirmed",
+            retryable=False,
+            diagnostic={"unconfirmed_indices": missing},
+        )
+
+    timeline: list[dict[str, Any]] = []
+    audit: list[dict[str, Any]] = []
+    for index, suggested in enumerate(suggested_timeline):
+        raw = raw_timeline[index]
+        item = submitted.get(index)
+        text = str(item.get("corrected_text") if item else suggested.get("text") or "").strip()
+        if not text or "�" in text:
+            return _failed(
+                status=ViralPipelineStatus.TRANSCRIBING,
+                fallback_reason=f"第 {index + 1} 段仍为空或包含U+FFFD乱码。",
+                error_code="review_text_invalid",
+                retryable=False,
+                diagnostic={"segment_index": index},
+            )
+        timeline.append({**suggested, "text": text})
+        if index in review_indices or text != str(raw.get("text") or ""):
+            audit.append(
+                {
+                    "segment_index": index,
+                    "start": float(raw.get("start") or 0),
+                    "end": float(raw.get("end") or 0),
+                    "original_text": str(raw.get("text") or ""),
+                    "corrected_text": text,
+                    "source": "human_confirmed" if index in review_indices else "ai_constrained",
+                    "confirmed": index not in review_indices or bool(item and item.get("confirmed")),
+                }
+            )
+
+    corrected_transcript = "\n".join(str(item["text"]) for item in timeline).strip()
+    if "�" in corrected_transcript:
+        return _failed(
+            status=ViralPipelineStatus.TRANSCRIBING,
+            fallback_reason="确认稿仍包含U+FFFD乱码。",
+            error_code="review_text_invalid",
+            retryable=False,
+        )
+
+    try:
+        analysis = await analyze_viral_script(
+            supabase,
+            user_id=user_id,
+            email=email,
+            source_url=source_url,
+            raw_script=corrected_transcript,
+            industry=industry,
+            language=language,
+            rewrite_length=rewrite_length,
+        )
+    except Exception as error:
+        return _analysis_error_result(
+            error,
+            metadata=review_context.get("metadata") or {},
+            source_type=str(review_context.get("source_type") or "uploaded_video_asr"),
+        )
+    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(
+        transcript=corrected_transcript,
+        analysis=analysis,
+        language=language,
+        rewrite_length=rewrite_length,
+    )
+    project_id = str(analysis.get("project_id") or uuid4())
+    diagnostics = dict(review_context.get("diagnostics") or {})
+    diagnostics.update(
+        {
+            "transcript_chars": len(corrected_transcript),
+            "corrected_transcript_chars": len(corrected_transcript),
+            "review_segment_count": len(review_indices),
+            "confirmed_review_segment_count": len(review_indices),
+            "output_chars": sum(len(item.get("script", "")) for item in rewrites),
+        }
+    )
+    _log_diagnostics(diagnostics)
+    return {
+        "ok": True,
+        "success": True,
+        "status": ViralPipelineStatus.READY,
+        "failed_at": "",
+        "error_code": "",
+        "code": "",
+        "stage": ViralPipelineStatus.READY,
+        "retryable": False,
+        "request_id": current_request_id(),
+        "original_request_id": review_context.get("request_id", ""),
+        "message": "",
+        "fallback_available": False,
+        "fallback_options": [],
+        "fallback_reason": "",
+        "project_id": project_id,
+        "transcript": corrected_transcript,
+        "raw_transcript": str(review_context.get("raw_transcript") or ""),
+        "timeline": timeline,
+        "raw_timeline": raw_timeline,
+        "corrections": review_context.get("corrections") or [],
+        "correction_audit": audit,
+        "correction_count": len(audit),
+        "review_segments": [],
+        "analysis": _analysis_payload(analysis),
+        "rewrites": rewrites,
+        "metadata": review_context.get("metadata") or {},
+        "source_type": review_context.get("source_type") or "uploaded_video_asr",
+        "analysis_quality": "human_reviewed",
+        "degraded": False,
+        "warning": "自动转写已完成AI校正和逐段人工确认。",
+        "asr_provider": "faster-whisper",
+        "diagnostics": diagnostics,
     }
 
 

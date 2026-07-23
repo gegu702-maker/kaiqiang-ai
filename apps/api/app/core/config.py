@@ -84,7 +84,11 @@ class Settings(BaseSettings):
     faster_whisper_compute_type: str = Field("int8", validation_alias=AliasChoices("FASTER_WHISPER_COMPUTE_TYPE", "ASR_COMPUTE_TYPE"))
     faster_whisper_beam_size: int = 5
     faster_whisper_vad_filter: bool = True
+    faster_whisper_word_timestamps: bool = True
     viral_asr_domain: str = ""
+    viral_asr_use_initial_prompt: bool = False
+    viral_asr_use_hotwords: bool = True
+    viral_review_signing_secret: str = ""
     viral_max_video_duration_seconds: int = 600
     viral_max_download_mb: int = 500
     viral_pipeline_timeout_seconds: int = 1800

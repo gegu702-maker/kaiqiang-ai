@@ -14,6 +14,32 @@ from app.services.viral_diagnostics import current_request_id
 logger = logging.getLogger(__name__)
 
 
+def _split_transcription_segment(segment, max_seconds: float = 8.0) -> list[ASRSegment]:
+    words = [word for word in (getattr(segment, "words", None) or []) if str(getattr(word, "word", "")).strip()]
+    if words:
+        chunks: list[ASRSegment] = []
+        chunk_words = []
+        for word in words:
+            chunk_words.append(word)
+            text = "".join(str(item.word) for item in chunk_words).strip()
+            duration = float(chunk_words[-1].end) - float(chunk_words[0].start)
+            if duration >= max_seconds or text.endswith(("。", "！", "？", "!", "?", "；", ";")):
+                chunks.append(ASRSegment(start=float(chunk_words[0].start), end=float(chunk_words[-1].end), text=text))
+                chunk_words = []
+        if chunk_words:
+            chunks.append(
+                ASRSegment(
+                    start=float(chunk_words[0].start),
+                    end=float(chunk_words[-1].end),
+                    text="".join(str(item.word) for item in chunk_words).strip(),
+                )
+            )
+        return chunks
+
+    text = str(segment.text).strip()
+    return [ASRSegment(start=float(segment.start), end=float(segment.end), text=text)] if text else []
+
+
 @dataclass
 class ASRSegment:
     start: float
@@ -69,7 +95,7 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResul
 
     domain = settings.viral_asr_domain.strip().lower()
     logger.warning(
-        "viral_asr request_id=%s stage=transcribe outcome=started model=%s device=%s compute_type=%s language=%s beam_size=%s vad_filter=%s domain=%s initial_prompt=%s hotwords=%s",
+        "viral_asr request_id=%s stage=transcribe outcome=started model=%s device=%s compute_type=%s language=%s beam_size=%s vad_filter=%s word_timestamps=%s domain=%s initial_prompt=%s hotwords=%s",
         request_id,
         settings.faster_whisper_model_size,
         settings.faster_whisper_device,
@@ -77,9 +103,10 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResul
         language if language in {"zh", "en"} else "zh",
         settings.faster_whisper_beam_size,
         settings.faster_whisper_vad_filter,
+        settings.faster_whisper_word_timestamps,
         domain or "general",
-        domain == "financial",
-        domain == "financial",
+        domain == "financial" and settings.viral_asr_use_initial_prompt,
+        domain == "financial" and settings.viral_asr_use_hotwords,
     )
     try:
         transcribe_options = {
@@ -87,15 +114,14 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResul
             "vad_filter": settings.faster_whisper_vad_filter,
             "beam_size": settings.faster_whisper_beam_size,
             "condition_on_previous_text": True,
+            "word_timestamps": settings.faster_whisper_word_timestamps,
         }
-        if domain == "financial":
-            transcribe_options.update(initial_prompt=FINANCIAL_INITIAL_PROMPT, hotwords=FINANCIAL_HOTWORDS)
+        if domain == "financial" and settings.viral_asr_use_initial_prompt:
+            transcribe_options["initial_prompt"] = FINANCIAL_INITIAL_PROMPT
+        if domain == "financial" and settings.viral_asr_use_hotwords:
+            transcribe_options["hotwords"] = FINANCIAL_HOTWORDS
         segments, _info = model.transcribe(str(audio_path), **transcribe_options)
-        normalized_segments = [
-            ASRSegment(start=float(segment.start), end=float(segment.end), text=segment.text.strip())
-            for segment in segments
-            if segment.text.strip()
-        ]
+        normalized_segments = [chunk for segment in segments for chunk in _split_transcription_segment(segment)]
         transcript = "\n".join(segment.text for segment in normalized_segments).strip()
     except Exception as error:
         diagnostic = f"{type(error).__name__}: {error}"[:500]
@@ -117,7 +143,7 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResul
             retryable=False,
         )
     coverage_seconds = max((segment.end for segment in normalized_segments), default=0.0)
-    logger.info(
+    logger.warning(
         "viral_asr request_id=%s stage=transcribe outcome=completed coverage_seconds=%.3f segment_count=%s transcript_chars=%s",
         request_id,
         coverage_seconds,

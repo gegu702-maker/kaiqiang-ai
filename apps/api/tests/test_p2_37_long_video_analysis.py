@@ -334,6 +334,11 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "自动转写稿（AI校正，建议人工复核）" in component_source
     assert "查看原始ASR转写" in component_source
     assert "校正" in component_source
+    assert "确认此段" in component_source
+    assert "全部确认后继续拆解" in component_source
+    assert "SegmentAudioPlayer" in component_source
+    assert "continueReviewedViralPipeline" in component_source
+    assert "setUploadProgress(null)" in component_source
 
 
 def test_real_multipart_12_7mb_route_and_cors(monkeypatch):
