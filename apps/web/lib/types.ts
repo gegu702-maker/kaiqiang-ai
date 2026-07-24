@@ -379,6 +379,10 @@ export type ViralPipelineResult = {
   source_type?: "video_asr" | "link_metadata_fallback" | string;
   analysis_quality?: "full" | "partial" | string;
   warning?: string;
+  summary_label?: string;
+  full_rewrite_available?: boolean;
+  rewrite_length_requested?: "short" | "medium" | "full";
+  rewrite_length_effective?: "short" | "medium" | "full";
   timeline?: ViralTimelineSegment[];
   raw_timeline?: ViralTimelineSegment[];
   corrections?: ViralTranscriptCorrection[];

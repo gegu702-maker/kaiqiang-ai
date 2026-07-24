@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
+import logging
 import re
 from typing import Any
 
@@ -11,6 +12,9 @@ from supabase import Client
 
 from app.services.billing import current_period_start, ensure_profile
 from app.services.llm_provider import LLMProvider
+from app.services.viral_diagnostics import current_request_id
+
+logger = logging.getLogger(__name__)
 
 INDUSTRY_LABELS = {
     "ecommerce": "电商带货",
@@ -669,6 +673,9 @@ async def analyze_viral_script(
     quota = _assert_viral_quota(supabase, user_id=user_id, email=email)
     output_language = LANGUAGE_LABELS[language]
     analysis_input, prompt_input_chars, summary_chunk_count = await _build_hierarchical_input(raw_script, output_language)
+    requested_rewrite_length = rewrite_length
+    if source_scope == "public_metadata":
+        rewrite_length = "short"
     length_guidance = {
         "short": "短版，约 30–60 秒；中文约 120–240 字",
         "medium": "中版，约 60–120 秒；中文约 240–500 字",
@@ -742,7 +749,9 @@ async def analyze_viral_script(
             [
                 "输入仅来自链接公开元数据，不得声称已读取完整视频或执行 ASR",
                 "必须明确这是非完整拆解，只覆盖公开标题或描述中可验证的信息",
-                "完整版表示尽量完整利用现有公开信息，不得为达到字数而编造观点、案例或数据",
+                "只生成“仅公开信息摘要”，每条约 60–160 字；即使用户请求完整版也不得扩写成长稿",
+                "公开信息没有明确写出的政策、资金、机构、历史案例、数据、因果关系一律不得补写",
+                "cases 与 data_points 必须返回空数组；不得把推测包装成原视频事实",
             ]
         )
 
@@ -756,34 +765,96 @@ async def analyze_viral_script(
         max_tokens=8000 if rewrite_length == "full" else 6000,
     )
 
-    result = validate_viral_analysis_payload(
+    def normalize_analysis(payload: dict[str, Any]) -> dict[str, Any]:
+        if source_scope == "public_metadata":
+            payload = {**payload, "cases": [], "data_points": []}
+        return validate_viral_analysis_payload(
         {
-            "topic": data.get("topic") or fallback_text["topic"],
-            "hook": data.get("hook") or fallback_text["hook"],
-            "selling_points": data.get("selling_points") or fallback_text["selling_points"],
-            "structure": data.get("structure") or fallback_text["structure"],
-            "template": data.get("template") or data.get("template_formula") or fallback_text["template"],
-            "rewrites": data.get("rewrites") or data.get("rewrite_versions") or data.get("rewriteVersions") or data.get("scripts"),
-            "core_points": data.get("core_points"),
-            "arguments": data.get("arguments"),
-            "cases": data.get("cases"),
-            "data_points": data.get("data_points"),
+            "topic": payload.get("topic") or fallback_text["topic"],
+            "hook": payload.get("hook") or fallback_text["hook"],
+            "selling_points": payload.get("selling_points") or fallback_text["selling_points"],
+            "structure": payload.get("structure") or fallback_text["structure"],
+            "template": payload.get("template") or payload.get("template_formula") or fallback_text["template"],
+            "rewrites": payload.get("rewrites") or payload.get("rewrite_versions") or payload.get("rewriteVersions") or payload.get("scripts"),
+            "core_points": payload.get("core_points"),
+            "arguments": payload.get("arguments"),
+            "cases": payload.get("cases"),
+            "data_points": payload.get("data_points"),
         },
         language=language,
-    )
+        )
+
+    def rewrite_lengths(payload: dict[str, Any]) -> list[int]:
+        value = payload.get("rewrites") or payload.get("rewrite_versions") or payload.get("rewriteVersions") or payload.get("scripts") or []
+        return [len(str(item.get("script") or "")) for item in value[:FINAL_REWRITE_LIMIT] if isinstance(item, dict)]
+
+    result = normalize_analysis(data)
     minimum_rewrite_chars = (
-        {"short": 80, "medium": 100, "full": 120}[rewrite_length]
+        60
         if source_scope == "public_metadata"
         else {"short": 80, "medium": 200, "full": 400}[rewrite_length]
     )
-    if any(len(item.get("script", "")) < minimum_rewrite_chars for item in result["rewrites"]):
+    normalized_lengths = [len(item.get("script", "")) for item in result["rewrites"]]
+    logger.info(
+        "viral_rewrite_lengths request_id=%s attempt=initial source_scope=%s requested_length=%s effective_length=%s target_chars=%s raw_chars=%s normalized_chars=%s",
+        current_request_id(),
+        source_scope,
+        requested_rewrite_length,
+        rewrite_length,
+        minimum_rewrite_chars,
+        rewrite_lengths(data),
+        normalized_lengths,
+    )
+    if source_scope == "full_content" and any(length < minimum_rewrite_chars for length in normalized_lengths):
+        expansion = await LLMProvider().generate_json(
+            system=(
+                "你是口播稿定向扩写编辑。只输出合法 JSON。"
+                "只能使用转写稿和已有拆解中明确出现的事实，不得新增数字、机构、案例、政策或观点。"
+            ),
+            payload={
+                "corrected_transcript": raw_script,
+                "analysis": {
+                    "topic": result["topic"],
+                    "core_points": result["core_points"],
+                    "arguments": result["arguments"],
+                    "cases": result["cases"],
+                    "data_points": result["data_points"],
+                },
+                "current_rewrites": result["rewrites"],
+                "requirements": [
+                    f"将 A/B/C 每版扩写到至少 {minimum_rewrite_chars} 字",
+                    "保留转写稿中的主要事实、数据、案例、论证顺序和限定条件",
+                    "只扩写不足的版本；已达标版本保持事实与含义不变",
+                    "不得用空泛重复句凑字数，不得新增转写稿中不存在的信息",
+                    "每版仍须是可直接朗读的完整口播正文",
+                ],
+                "schema": {"rewrites": [{"title": "版本A/B/C", "script": f"至少 {minimum_rewrite_chars} 字"}]},
+            },
+            max_tokens=8000,
+        )
+        retry_data = {**data, "rewrites": expansion.get("rewrites")}
+        result = normalize_analysis(retry_data)
+        normalized_lengths = [len(item.get("script", "")) for item in result["rewrites"]]
+        logger.info(
+            "viral_rewrite_lengths request_id=%s attempt=expansion source_scope=%s requested_length=%s effective_length=%s target_chars=%s raw_chars=%s normalized_chars=%s",
+            current_request_id(),
+            source_scope,
+            requested_rewrite_length,
+            rewrite_length,
+            minimum_rewrite_chars,
+            rewrite_lengths(expansion),
+            normalized_lengths,
+        )
+    if any(length < minimum_rewrite_chars for length in normalized_lengths):
         raise HTTPException(
             status_code=502,
             detail={
                 "code": "analysis_output_too_short",
                 "stage": "rewriting",
                 "message": f"AI 改写长度未达到当前来源要求（每条至少 {minimum_rewrite_chars} 字）。",
-                "retryable": True,
+                "retryable": False,
+                "target_chars": minimum_rewrite_chars,
+                "actual_chars": normalized_lengths,
             },
         )
 
@@ -825,5 +896,9 @@ async def analyze_viral_script(
             "prompt_input_chars": prompt_input_chars + len(analysis_input),
             "hierarchical_chunk_count": summary_chunk_count,
             "output_chars": sum(len(str(value)) for value in result.values()),
+            "rewrite_length_requested": requested_rewrite_length,
+            "rewrite_length_effective": rewrite_length,
+            "rewrite_target_chars": minimum_rewrite_chars,
+            "rewrite_actual_chars": normalized_lengths,
         },
     }

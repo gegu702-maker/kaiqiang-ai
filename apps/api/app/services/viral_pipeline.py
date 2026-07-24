@@ -53,8 +53,8 @@ LANGUAGE_LABELS = {
 
 
 FALLBACK_OPTIONS = ["upload_video", "paste_text"]
-METADATA_FALLBACK_WARNING = "仅基于链接公开信息（非完整拆解）：平台视频未成功下载，也未执行 ASR。结果不代表原视频完整观点、案例或数据。"
-SHARE_TEXT_FALLBACK_WARNING = "仅基于分享文案（非完整拆解）：未读取视频音轨，也未执行 ASR。补充原始视频或完整转写稿后再验收。"
+METADATA_FALLBACK_WARNING = "仅公开信息摘要（非完整拆解）：平台视频未成功下载，ASR=0。完整版已禁用；请上传视频或粘贴原文以获得完整拆解。"
+SHARE_TEXT_FALLBACK_WARNING = "仅公开信息摘要（非完整拆解）：未读取视频音轨，ASR=0。完整版已禁用；请上传视频或粘贴原文以获得完整拆解。"
 INSUFFICIENT_METADATA_MESSAGE = "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。"
 URL_RE = re.compile(r"https?://[^\s\"'<>，。；、]+", re.IGNORECASE)
 DOUYIN_COMMAND_RE = re.compile(
@@ -119,6 +119,8 @@ def _analysis_error_result(
         if isinstance(detail, dict) and detail.get("stage") == ViralPipelineStatus.REWRITING.value:
             failure_stage = ViralPipelineStatus.REWRITING
         diagnostic = {"http_status": None, "internal_http_status": error.status_code, "response_length": 0, "schema_error": ""}
+        if isinstance(detail, dict):
+            diagnostic.update({key: detail[key] for key in ("target_chars", "actual_chars") if key in detail})
     else:
         message = "AI 拆解阶段发生未预期错误。"
         code = "analysis_unexpected_error"
@@ -709,7 +711,7 @@ async def _metadata_fallback_analysis(
         )
     except Exception as error:
         return _analysis_error_result(error, metadata=metadata, source_type="link_metadata_fallback")
-    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=transcript, analysis=analysis, language=language, rewrite_length=rewrite_length)
+    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=transcript, analysis=analysis, language=language, rewrite_length="short")
     project_id = str(analysis.get("project_id") or uuid4())
     _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
     diagnostics = {
@@ -742,6 +744,10 @@ async def _metadata_fallback_analysis(
         "analysis_quality": "partial",
         "degraded": True,
         "warning": METADATA_FALLBACK_WARNING,
+        "summary_label": "仅公开信息摘要",
+        "full_rewrite_available": False,
+        "rewrite_length_requested": rewrite_length,
+        "rewrite_length_effective": "short",
         "diagnostics": diagnostics,
     }
 
@@ -780,12 +786,12 @@ async def _share_text_fallback_analysis(
             raw_script=share_text,
             industry=industry,
             language=language,
-            rewrite_length=rewrite_length,
+            rewrite_length="short",
             source_scope="public_metadata",
         )
     except Exception as error:
         return _analysis_error_result(error, metadata=metadata or {}, source_type="share_text_fallback")
-    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=share_text, analysis=analysis, language=language, rewrite_length=rewrite_length)
+    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=share_text, analysis=analysis, language=language, rewrite_length="short")
     project_id = str(analysis.get("project_id") or uuid4())
     _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
     diagnostics = {
@@ -818,6 +824,10 @@ async def _share_text_fallback_analysis(
         "analysis_quality": "partial",
         "degraded": True,
         "warning": SHARE_TEXT_FALLBACK_WARNING,
+        "summary_label": "仅公开信息摘要",
+        "full_rewrite_available": False,
+        "rewrite_length_requested": rewrite_length,
+        "rewrite_length_effective": "short",
         "diagnostics": diagnostics,
         "code": "",
         "stage": ViralPipelineStatus.READY,

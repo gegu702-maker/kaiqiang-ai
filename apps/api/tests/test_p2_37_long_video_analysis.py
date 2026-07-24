@@ -208,7 +208,7 @@ def test_long_transcript_uses_every_chunk_and_full_rewrite_is_longer(monkeypatch
     assert len(full["rewrites"][0]["script"]) > len(short["rewrites"][0]["script"]) * 2
 
 
-def test_public_metadata_full_mode_uses_partial_source_threshold(monkeypatch):
+def test_public_metadata_full_mode_is_downgraded_to_finite_summary(monkeypatch):
     scripts = [
         "这条公开标题能确认的重点有限，因此这里只分析标题里的反差信息。" * 5,
         "从普通用户角度看，公开信息只说明了话题方向，不能代替完整视频观点。" * 5,
@@ -218,6 +218,8 @@ def test_public_metadata_full_mode_uses_partial_source_threshold(monkeypatch):
     async def fake_generate(_self, **_kwargs):
         return {
             **_analysis(150),
+            "cases": ["模型虚构的历史案例"],
+            "data_points": ["模型虚构的资金数据 999 亿"],
             "rewrites": [{"title": f"版本{i}", "script": scripts[i - 1]} for i in range(1, 4)],
         }
 
@@ -238,7 +240,72 @@ def test_public_metadata_full_mode_uses_partial_source_threshold(monkeypatch):
     )
 
     assert result["rewrites"]
-    assert all(len(item["script"]) >= 120 for item in result["rewrites"])
+    assert all(len(item["script"]) >= 60 for item in result["rewrites"])
+    assert result["cases"] == []
+    assert result["data_points"] == []
+    assert result["diagnostics"]["rewrite_length_requested"] == "full"
+    assert result["diagnostics"]["rewrite_length_effective"] == "short"
+
+
+def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
+    calls = []
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "current_rewrites" not in payload:
+            return _analysis(100)
+        scripts = [
+            "。".join(f"原稿事实甲的论证步骤{i}仍受转写内容约束" for i in range(35)),
+            "。".join(f"原稿案例乙的条件与结论{i}均保留限定语" for i in range(35)),
+            "。".join(f"原稿数据丙的意义分析{i}不增加任何新数字" for i in range(35)),
+        ]
+        return {"rewrites": [{"title": f"版本{i}", "script": scripts[i - 1]} for i in range(1, 4)]}
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            raw_script="原稿事实甲、案例乙、数据丙。" * 30,
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+        )
+    )
+
+    assert len(calls) == 2
+    assert all(length >= 400 for length in result["diagnostics"]["rewrite_actual_chars"])
+    assert "corrected_transcript" in calls[1]
+    assert calls[1]["requirements"][1].startswith("保留转写稿中的主要事实")
+
+
+def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
+    async def fake_generate(_self, **_kwargs):
+        return _analysis(100)
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    with pytest.raises(Exception) as raised:
+        asyncio.run(
+            viral_analyzer.analyze_viral_script(
+                _Supabase(),
+                user_id="u1",
+                email="u@example.com",
+                raw_script="完整转写内容。" * 100,
+                industry="knowledge",
+                language="zh",
+                rewrite_length="full",
+            )
+        )
+
+    detail = raised.value.detail
+    assert detail["code"] == "analysis_output_too_short"
+    assert detail["stage"] == "rewriting"
+    assert detail["retryable"] is False
+    assert detail["target_chars"] == 400
+    assert len(detail["actual_chars"]) == 3
 
 
 def test_link_download_is_attempted_before_metadata_fallback(monkeypatch, tmp_path: Path):
@@ -330,7 +397,9 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert 'setRequestHeader("Content-Type"' not in api_source
     assert "上传进度：" in component_source
     assert "文件大小：" in component_source
-    assert "仅基于公开信息（非完整拆解）" in component_source
+    assert "仅公开信息摘要（非完整拆解）" in component_source
+    assert "完整版已禁用。请上传视频或粘贴原文" in component_source
+    assert 'disabled={!fullRewriteAvailable}' in component_source
     assert "ASR 模型不可用" in component_source
     assert "AI 响应格式错误" in component_source
     assert "请求 ID：" in component_source

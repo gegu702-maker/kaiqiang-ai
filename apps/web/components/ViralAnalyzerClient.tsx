@@ -201,6 +201,7 @@ export function ViralAnalyzerClient({
   const [pipelineMetadata, setPipelineMetadata] = useState<ViralPipelineResult["metadata"] | null>(null);
   const [pipelineSourceType, setPipelineSourceType] = useState<string>("");
   const [pipelineWarning, setPipelineWarning] = useState("");
+  const [fullRewriteAvailable, setFullRewriteAvailable] = useState(true);
   const [pipelineTranscript, setPipelineTranscript] = useState("");
   const [pipelineRawTranscript, setPipelineRawTranscript] = useState("");
   const [pipelineTimeline, setPipelineTimeline] = useState<ViralPipelineResult["timeline"]>([]);
@@ -281,6 +282,8 @@ export function ViralAnalyzerClient({
     setPipelineMetadata(payload.metadata);
     setPipelineSourceType(payload.source_type || "");
     setPipelineWarning(payload.warning || "");
+    setFullRewriteAvailable(payload.full_rewrite_available !== false);
+    if (payload.full_rewrite_available === false) setRewriteLength("short");
     setPipelineTranscript(payload.transcript || "");
     setPipelineRawTranscript(payload.raw_transcript || "");
     setPipelineTimeline(payload.timeline || []);
@@ -498,6 +501,7 @@ export function ViralAnalyzerClient({
     setPipelineMetadata(null);
     setPipelineSourceType("");
     setPipelineWarning("");
+    setFullRewriteAvailable(true);
     setPipelineTranscript("");
     setPipelineRawTranscript("");
     setPipelineTimeline([]);
@@ -526,6 +530,7 @@ export function ViralAnalyzerClient({
     setPipelineMetadata(null);
     setPipelineSourceType("");
     setPipelineWarning("");
+    setFullRewriteAvailable(true);
     setPipelineTranscript("");
     setPipelineRawTranscript("");
     setPipelineTimeline([]);
@@ -717,8 +722,9 @@ export function ViralAnalyzerClient({
                 >
                   <option value="short">短版（约 30–60 秒）</option>
                   <option value="medium">中版（约 60–120 秒）</option>
-                  <option value="full">完整版（尽量保留主要信息）</option>
+                  <option value="full" disabled={!fullRewriteAvailable}>完整版（尽量保留主要信息）</option>
                 </select>
+                {!fullRewriteAvailable ? <span className="mt-2 block text-xs leading-5 text-amber-100">当前仅能生成“仅公开信息摘要”，完整版已禁用。请上传视频或粘贴原文。</span> : null}
               </label>
 
               <div className={isWorkspace ? "grid gap-3" : "grid gap-3 sm:grid-cols-2"}>
@@ -889,7 +895,7 @@ export function ViralAnalyzerClient({
                       <p>平台：{pipelineMetadata.platform || "douyin"}</p>
                       {pipelineMetadata.duration ? <p>时长：{pipelineMetadata.duration}秒</p> : null}
                       <p>文件大小：{videoFile ? formatFileSize(videoFile.size) : "链接模式"}</p>
-                      <p>分析来源：{pipelineSourceType === "uploaded_video_asr" ? "上传视频完整音轨" : pipelineSourceType === "link_video_asr" ? "链接视频音轨" : "仅基于公开信息（非完整拆解）"}</p>
+                      <p>分析来源：{pipelineSourceType === "uploaded_video_asr" ? "上传视频完整音轨" : pipelineSourceType === "link_video_asr" ? "链接视频音轨" : "仅公开信息摘要（非完整拆解）"}</p>
                       <p>视频读取：{pipelineMetadata.downloadable ? "可用" : "受限，当前使用链接公开信息分析"}</p>
                       {pipelineDiagnostics ? <p>视频时长：{pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；ASR 覆盖：{pipelineDiagnostics.asr_coverage_seconds.toFixed(1)} 秒；原始转写 {pipelineDiagnostics.raw_transcript_chars ?? pipelineDiagnostics.transcript_chars} 字；校正后 {pipelineDiagnostics.corrected_transcript_chars ?? pipelineDiagnostics.transcript_chars} 字；{pipelineDiagnostics.segment_count} 段；校正 {pipelineDiagnostics.correction_count ?? 0} 处；fallback：{pipelineDiagnostics.fallback ? "是" : "否"}</p> : null}
                     </div>
