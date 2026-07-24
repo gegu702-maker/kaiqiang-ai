@@ -290,9 +290,49 @@ export async function runUploadedViralPipeline(
       const detail = payload && typeof payload === "object" ? stringifyDetail((payload as { detail?: unknown; message?: unknown }).detail ?? (payload as { message?: unknown }).message) : request.responseText;
       reject(new Error(["上传请求被 API 拒绝", `Status: ${request.status || "unknown"}`, `URL: ${url}`, detail ? `原因: ${detail}` : ""].filter(Boolean).join("\n")));
     };
-    request.onerror = () => reject(new Error(["上传请求失败（network_error）", `URL: ${url}`, `Origin: ${window.location.origin}`, "浏览器未收到可读取的 HTTP 响应，请检查 Preview 路由与 CORS。"].join("\n")));
-    request.ontimeout = () => reject(new Error(["上传请求超时（client_timeout）", `URL: ${url}`, "客户端等待超过 35 分钟，上传或后端处理未完成。"].join("\n")));
-    request.onabort = () => reject(new Error("上传已中断（request_aborted），请重新选择文件后重试。"));
+    request.onerror = () =>
+      reject(
+        new Error(
+          [
+            "上传请求失败",
+            "code: network_error",
+            "stage: uploading",
+            "request_id: unavailable（请求未取得API响应）",
+            "retryable: true",
+            `endpoint: ${url}`,
+            `origin: ${window.location.origin}`,
+            "浏览器未收到可读取的 HTTP 响应，请检查 Preview API 地址与 CORS。",
+          ].join("\n"),
+        ),
+      );
+    request.ontimeout = () =>
+      reject(
+        new Error(
+          [
+            "上传请求超时",
+            "code: client_timeout",
+            "stage: processing",
+            "request_id: unavailable（客户端未取得最终API响应）",
+            "retryable: true",
+            `endpoint: ${url}`,
+            "客户端等待超过 35 分钟，上传或后端处理未完成。",
+          ].join("\n"),
+        ),
+      );
+    request.onabort = () =>
+      reject(
+        new Error(
+          [
+            "上传已中断",
+            "code: request_aborted",
+            "stage: uploading",
+            "request_id: unavailable",
+            "retryable: true",
+            `endpoint: ${url}`,
+            "请重新选择文件后重试。",
+          ].join("\n"),
+        ),
+      );
     request.send(formData);
   });
 }
