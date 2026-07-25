@@ -4,6 +4,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock
 
+from app.core.config import Settings
 from app.services import llm_provider
 
 
@@ -42,6 +43,86 @@ class _Client:
     async def post(self, url, **kwargs):
         self.calls.append((url, kwargs))
         return self.responses.pop(0)
+
+
+class _ErrorResponse:
+    status_code = 400
+
+    def __init__(self) -> None:
+        self._body = {
+            "error": {
+                "message": (
+                    "The supported API model names are deepseek-v4-pro or deepseek-v4-flash, "
+                    "but you passed deepseek-chat."
+                ),
+                "type": "invalid_request_error",
+                "param": None,
+                "code": "invalid_request_error",
+            }
+        }
+        self.content = json.dumps(self._body).encode()
+
+    def json(self):
+        return self._body
+
+
+def test_default_deepseek_model_matches_current_api():
+    assert Settings.model_fields["deepseek_model"].default == "deepseek-v4-pro"
+
+
+def test_deepseek_request_contract_uses_supported_model(monkeypatch):
+    _Client.calls = []
+    _Client.responses = [_Response('{"ok":true}')]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_model", "deepseek-v4-pro")
+
+    result = asyncio.run(
+        llm_provider.LLMProvider().generate_json(
+            system="Return valid JSON.",
+            payload={"input": "x"},
+            max_tokens=6000,
+        )
+    )
+
+    request = _Client.calls[0][1]["json"]
+    assert result == {"ok": True}
+    assert request["model"] == "deepseek-v4-pro"
+    assert request["messages"] == [
+        {"role": "system", "content": "Return valid JSON."},
+        {"role": "user", "content": '{"input": "x"}'},
+    ]
+    assert request["response_format"] == {"type": "json_object"}
+    assert request["max_tokens"] == 6000
+    assert "temperature" not in request
+    assert "stream" not in request
+
+
+def test_real_deepseek_deprecated_model_400_keeps_safe_error_fields(monkeypatch):
+    _Client.calls = []
+    _Client.responses = [_ErrorResponse()]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_model", "deepseek-chat")
+
+    with pytest.raises(llm_provider.LLMProviderError) as raised:
+        asyncio.run(llm_provider.LLMProvider().generate_json(system="Return JSON.", payload={"input": "x"}))
+
+    error = raised.value
+    assert error.code == "llm_http_error"
+    assert error.http_status == 400
+    assert error.retryable is False
+    assert json.loads(error.schema_error) == {
+        "code": "invalid_request_error",
+        "message": (
+            "The supported API model names are deepseek-v4-pro or deepseek-v4-flash, "
+            "but you passed deepseek-chat."
+        ),
+        "type": "invalid_request_error",
+    }
+    assert len(_Client.calls) == 1
 
 
 def test_invalid_json_is_repaired_exactly_once(monkeypatch):

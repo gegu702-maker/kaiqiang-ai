@@ -17,6 +17,28 @@ from app.services.viral_diagnostics import current_request_id
 logger = logging.getLogger(__name__)
 
 
+def _safe_upstream_error(response: httpx.Response) -> str:
+    """Return only bounded, non-request fields from an upstream error envelope."""
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return ""
+
+    details: dict[str, str] = {}
+    for field in ("type", "code", "param", "message"):
+        value = error.get(field)
+        if value is None:
+            continue
+        text = str(value)
+        text = re.sub(r"(?i)\bBearer\s+\S+", "Bearer [REDACTED]", text)
+        text = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}", "sk-[REDACTED]", text)
+        details[field] = text[:300]
+    return json.dumps(details, ensure_ascii=False, sort_keys=True)
+
+
 class LLMProviderError(Exception):
     def __init__(
         self,
@@ -217,7 +239,7 @@ class LLMProvider:
                 else:
                     code, message, retryable = "llm_http_error", f"AI 服务返回 HTTP {response.status_code}。", response.status_code >= 500
                 logger.warning(
-                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=http_error code=%s http_status=%s request_body_chars=%s max_tokens=%s response_length=%s",
+                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=http_error code=%s http_status=%s request_body_chars=%s max_tokens=%s response_length=%s upstream_error=%r",
                     request_id,
                     provider_name,
                     model,
@@ -227,6 +249,7 @@ class LLMProvider:
                     request_body_chars,
                     max_tokens,
                     response_length,
+                    _safe_upstream_error(response),
                 )
                 if retryable and transport_attempt == 1:
                     await asyncio.sleep(1)
@@ -238,6 +261,7 @@ class LLMProvider:
                     retryable=retryable,
                     http_status=response.status_code,
                     response_length=response_length,
+                    schema_error=_safe_upstream_error(response),
                 )
 
             if response is None:
