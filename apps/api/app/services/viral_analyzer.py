@@ -675,7 +675,7 @@ async def analyze_viral_script(
     analysis_input, prompt_input_chars, summary_chunk_count = await _build_hierarchical_input(raw_script, output_language)
     requested_rewrite_length = rewrite_length
     public_evidence_chars = len("".join(raw_script.split()))
-    public_minimum_rewrite_chars = max(60, min(120, round(public_evidence_chars * 0.75)))
+    public_minimum_rewrite_chars = max(60, min(100, round(public_evidence_chars * 0.75)))
     public_maximum_rewrite_chars = min(240, max(public_minimum_rewrite_chars + 40, public_minimum_rewrite_chars * 2))
     if source_scope == "public_metadata":
         rewrite_length = "short"
