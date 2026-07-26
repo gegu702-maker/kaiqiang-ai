@@ -15,16 +15,77 @@ from app.services.viral_diagnostics import current_request_id
 logger = logging.getLogger(__name__)
 
 
+def _join_segment_text(left: str, right: str) -> str:
+    if not left:
+        return right.strip()
+    if not right:
+        return left.strip()
+    if any("\u4e00" <= char <= "\u9fff" for char in f"{left}{right}"):
+        return f"{left.rstrip()}{right.lstrip()}"
+    return f"{left.rstrip()} {right.lstrip()}"
+
+
+def _split_text_interval(text: str, start: float, end: float, max_seconds: float) -> list[ASRSegment]:
+    text = text.strip()
+    duration = max(0.0, end - start)
+    if not text:
+        return []
+    chunk_count = max(1, math.ceil(duration / max_seconds))
+    chunks: list[ASRSegment] = []
+    cursor = 0
+    for index in range(chunk_count):
+        ideal_end = round(len(text) * (index + 1) / chunk_count)
+        if index + 1 < chunk_count:
+            max_text_end = max(cursor + 1, len(text) - (chunk_count - index - 1))
+            candidates = [
+                position + 1
+                for position in range(cursor, min(max_text_end, ideal_end + 8))
+                if text[position] in "。！？!?；;，,"
+            ]
+            text_end = min(candidates, key=lambda position: abs(position - ideal_end)) if candidates else min(ideal_end, max_text_end)
+        else:
+            text_end = len(text)
+        chunk_text = text[cursor:text_end].strip()
+        chunk_start = start + duration * index / chunk_count
+        chunk_end = min(end, start + duration * (index + 1) / chunk_count)
+        if chunk_text:
+            chunks.append(ASRSegment(start=chunk_start, end=chunk_end, text=chunk_text))
+        cursor = text_end
+    return chunks
+
+
 def _split_transcription_segment(segment, max_seconds: float = 8.0) -> list[ASRSegment]:
     words = [word for word in (getattr(segment, "words", None) or []) if str(getattr(word, "word", "")).strip()]
     if words:
         chunks: list[ASRSegment] = []
         chunk_words = []
         for word in words:
+            word_start = float(word.start)
+            word_end = float(word.end)
+            if word_end - word_start > max_seconds:
+                if chunk_words:
+                    chunks.append(
+                        ASRSegment(
+                            start=float(chunk_words[0].start),
+                            end=float(chunk_words[-1].end),
+                            text="".join(str(item.word) for item in chunk_words).strip(),
+                        )
+                    )
+                    chunk_words = []
+                chunks.extend(_split_text_interval(str(word.word), word_start, word_end, max_seconds))
+                continue
+            if chunk_words and word_end - float(chunk_words[0].start) > max_seconds:
+                chunks.append(
+                    ASRSegment(
+                        start=float(chunk_words[0].start),
+                        end=float(chunk_words[-1].end),
+                        text="".join(str(item.word) for item in chunk_words).strip(),
+                    )
+                )
+                chunk_words = []
             chunk_words.append(word)
             text = "".join(str(item.word) for item in chunk_words).strip()
-            duration = float(chunk_words[-1].end) - float(chunk_words[0].start)
-            if duration >= max_seconds or text.endswith(("。", "！", "？", "!", "?", "；", ";")):
+            if text.endswith(("。", "！", "？", "!", "?", "；", ";")):
                 chunks.append(ASRSegment(start=float(chunk_words[0].start), end=float(chunk_words[-1].end), text=text))
                 chunk_words = []
         if chunk_words:
@@ -42,19 +103,46 @@ def _split_transcription_segment(segment, max_seconds: float = 8.0) -> list[ASRS
         return []
     start = float(segment.start)
     end = float(segment.end)
-    duration = max(0.0, end - start)
-    chunk_count = max(1, math.ceil(duration / max_seconds))
-    chunks: list[ASRSegment] = []
-    for index in range(chunk_count):
-        text_start = round(len(text) * index / chunk_count)
-        text_end = round(len(text) * (index + 1) / chunk_count)
-        chunk_text = text[text_start:text_end].strip()
-        if not chunk_text:
-            continue
-        chunk_start = start + duration * index / chunk_count
-        chunk_end = start + duration * (index + 1) / chunk_count
-        chunks.append(ASRSegment(start=chunk_start, end=chunk_end, text=chunk_text))
-    return chunks
+    return _split_text_interval(text, start, end, max_seconds)
+
+
+def _merge_short_adjacent_context(segments: list[ASRSegment], max_seconds: float = 8.0) -> list[ASRSegment]:
+    merged: list[ASRSegment] = []
+    index = 0
+    while index < len(segments):
+        current = segments[index]
+        compact = "".join(current.text.split())
+        is_boundary_fragment = (
+            (current.end - current.start <= 0.75 or len(compact) <= 4)
+            and not current.text.rstrip().endswith(("。", "！", "？", "!", "?", "；", ";"))
+        )
+        if is_boundary_fragment and index + 1 < len(segments):
+            following = segments[index + 1]
+            gap = max(0.0, following.start - current.end)
+            if gap <= 0.5 and following.end - current.start <= max_seconds:
+                merged.append(
+                    ASRSegment(
+                        start=current.start,
+                        end=following.end,
+                        text=_join_segment_text(current.text, following.text),
+                    )
+                )
+                index += 2
+                continue
+        if is_boundary_fragment and merged:
+            previous = merged[-1]
+            gap = max(0.0, current.start - previous.end)
+            if gap <= 0.5 and current.end - previous.start <= max_seconds:
+                merged[-1] = ASRSegment(
+                    start=previous.start,
+                    end=current.end,
+                    text=_join_segment_text(previous.text, current.text),
+                )
+                index += 1
+                continue
+        merged.append(current)
+        index += 1
+    return merged
 
 
 @dataclass
@@ -80,7 +168,9 @@ class ASRResult:
 
 
 def _normalize_transcription(segments) -> tuple[list[ASRSegment], str, float]:
-    normalized = [chunk for segment in segments for chunk in _split_transcription_segment(segment)]
+    normalized = _merge_short_adjacent_context(
+        [chunk for segment in segments for chunk in _split_transcription_segment(segment)]
+    )
     transcript = "\n".join(segment.text for segment in normalized).strip()
     coverage = max((segment.end for segment in normalized), default=0.0)
     return normalized, transcript, coverage

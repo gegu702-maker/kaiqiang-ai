@@ -179,6 +179,52 @@ def test_low_density_asr_retries_without_vad_and_uses_complete_pass(monkeypatch,
     assert max(segment.end - segment.start for segment in result.segments or []) <= 8.0
 
 
+def test_word_timestamp_context_merges_china_ping_an_before_residual_review():
+    source = [
+        SimpleNamespace(
+            start=57.9,
+            end=61.0,
+            text="中国平安发布公告。",
+            words=[
+                SimpleNamespace(start=57.9, end=58.0, word="中国平"),
+                SimpleNamespace(start=58.0, end=58.4, word="安"),
+                SimpleNamespace(start=58.4, end=61.0, word="发布公告。"),
+            ],
+        )
+    ]
+
+    segments, transcript, coverage = asr_service._normalize_transcription(iter(source))
+
+    assert "中国平安" in transcript
+    assert coverage == 61.0
+    assert all(segment.text != "中国平" for segment in segments)
+    assert max(segment.end - segment.start for segment in segments) <= 8.0
+
+
+def test_pathological_word_timestamp_is_split_into_review_safe_intervals():
+    source = [
+        SimpleNamespace(
+            start=74.4,
+            end=101.9,
+            text="中国平安的公开信息需要结合完整上下文审慎复核。",
+            words=[
+                SimpleNamespace(
+                    start=74.4,
+                    end=101.9,
+                    word="中国平安的公开信息需要结合完整上下文审慎复核。",
+                )
+            ],
+        )
+    ]
+
+    segments, transcript, coverage = asr_service._normalize_transcription(iter(source))
+
+    assert transcript.replace("\n", "") == source[0].text
+    assert coverage == 101.9
+    assert len(segments) == 4
+    assert max(segment.end - segment.start for segment in segments) <= 8.0
+
+
 def test_unicode_replacement_is_removed_and_exact_segment_requires_review(monkeypatch):
     async def no_changes(_self, **_kwargs):
         return {"segments": []}

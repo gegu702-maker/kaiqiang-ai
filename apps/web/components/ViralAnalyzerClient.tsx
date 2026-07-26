@@ -152,6 +152,14 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
 
 function SegmentAudioPlayer({ src, start, end }: { src: string; start: number; end: number }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const clipEnd = Math.max(start, Math.min(end, start + 8));
+  const clipSrc = `${src}#t=${Math.max(0, start)},${clipEnd}`;
+
+  function seekToClipStart() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.min(Math.max(0, start), Number.isFinite(audio.duration) ? audio.duration : start);
+  }
 
   return (
     <audio
@@ -159,14 +167,22 @@ function SegmentAudioPlayer({ src, start, end }: { src: string; start: number; e
       className="mt-3 h-9 w-full"
       controls
       preload="metadata"
-      src={src}
+      src={clipSrc}
+      onLoadedMetadata={seekToClipStart}
       onPlay={() => {
         const audio = audioRef.current;
-        if (audio && (audio.currentTime < start || audio.currentTime >= end)) audio.currentTime = start;
+        if (audio && (audio.currentTime < start || audio.currentTime >= clipEnd)) seekToClipStart();
+      }}
+      onSeeked={() => {
+        const audio = audioRef.current;
+        if (audio && (audio.currentTime < start || audio.currentTime > clipEnd)) seekToClipStart();
       }}
       onTimeUpdate={() => {
         const audio = audioRef.current;
-        if (audio && audio.currentTime >= end) audio.pause();
+        if (audio && audio.currentTime >= clipEnd) {
+          audio.pause();
+          audio.currentTime = clipEnd;
+        }
       }}
     />
   );

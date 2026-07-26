@@ -674,6 +674,9 @@ async def analyze_viral_script(
     output_language = LANGUAGE_LABELS[language]
     analysis_input, prompt_input_chars, summary_chunk_count = await _build_hierarchical_input(raw_script, output_language)
     requested_rewrite_length = rewrite_length
+    public_evidence_chars = len("".join(raw_script.split()))
+    public_minimum_rewrite_chars = max(60, min(120, round(public_evidence_chars * 0.75)))
+    public_maximum_rewrite_chars = min(240, max(public_minimum_rewrite_chars + 40, public_minimum_rewrite_chars * 2))
     if source_scope == "public_metadata":
         rewrite_length = "short"
     length_guidance = {
@@ -681,6 +684,11 @@ async def analyze_viral_script(
         "medium": "中版，约 60–120 秒；中文约 240–500 字",
         "full": "完整版；尽量保留原视频全部主要观点、论据、案例和数据，中文通常不少于 500 字，长视频可达 1200 字",
     }[rewrite_length]
+    if source_scope == "public_metadata":
+        length_guidance = (
+            f"仅基于公开信息的短版；按当前可验证信息量每条约 "
+            f"{public_minimum_rewrite_chars}–{public_maximum_rewrite_chars} 字，不得为凑字数补写无来源事实"
+        )
     fallback_text = {
         "topic": "短视频内容拆解" if language == "zh" else "Short video content analysis",
         "hook": "用强问题或反差在前 3 秒抓住注意力。" if language == "zh" else "Use a strong question or contrast to capture attention in the first 3 seconds.",
@@ -749,7 +757,8 @@ async def analyze_viral_script(
             [
                 "输入仅来自链接公开元数据，不得声称已读取完整视频或执行 ASR",
                 "必须明确这是非完整拆解，只覆盖公开标题或描述中可验证的信息",
-                "每条生成 120–240 字的“仅基于公开信息（非完整拆解）”；即使用户请求完整版也不得扩写成长稿",
+                f"每条生成约 {public_minimum_rewrite_chars}–{public_maximum_rewrite_chars} 字的"
+                "“仅基于公开信息（非完整拆解）”；即使用户请求完整版也不得扩写成长稿",
                 "先列出公开标题/描述中可以确认的事实，再说明无法确认的视频观点、论据、案例和数据",
                 "给出可执行的内容角度或待验证问题时，必须明确写成建议或可能性，不得包装成原视频事实",
                 "结尾明确引导用户上传视频或粘贴原稿以获得完整拆解",
@@ -793,7 +802,7 @@ async def analyze_viral_script(
 
     result = normalize_analysis(data)
     minimum_rewrite_chars = (
-        120
+        public_minimum_rewrite_chars
         if source_scope == "public_metadata"
         else {"short": 80, "medium": 200, "full": 400}[rewrite_length]
     )

@@ -247,6 +247,57 @@ def test_public_metadata_full_mode_is_downgraded_to_finite_summary(monkeypatch):
     assert result["diagnostics"]["rewrite_length_effective"] == "short"
 
 
+def test_public_metadata_real_110_119_119_outputs_use_evidence_aware_minimum(monkeypatch):
+    scripts = ["甲" * 110, "乙" * 119, "丙" * 119]
+    observed_payload = {}
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        observed_payload.update(payload)
+        return {
+            **_analysis(119),
+            "cases": [],
+            "data_points": [],
+            "rewrites": [{"title": f"版本{i}", "script": scripts[i - 1]} for i in range(1, 4)],
+        }
+
+    def preserve_real_lengths(payload, *, language):
+        assert language == "zh"
+        return {
+            "topic": payload["topic"],
+            "hook": payload["hook"],
+            "selling_points": payload["selling_points"],
+            "structure": payload["structure"],
+            "template": payload["template"],
+            "core_points": payload["core_points"],
+            "arguments": payload["arguments"],
+            "cases": payload["cases"],
+            "data_points": payload["data_points"],
+            "rewrites": payload["rewrites"],
+        }
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", preserve_real_lengths)
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            source_url="https://example.com/video",
+            raw_script="平台：douyin\n标题：中国平安公开信息解读\n简介：仅能确认标题和简介，完整观点、案例及数据均无法确认。",
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+            source_scope="public_metadata",
+        )
+    )
+
+    assert result["diagnostics"]["rewrite_actual_chars"] == [110, 119, 119]
+    assert 60 <= result["diagnostics"]["rewrite_target_chars"] < 110
+    assert "public_metadata" == observed_payload["source_scope"]
+    assert any("不得为凑字数" in item for item in observed_payload["requirements"])
+
+
 def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
     calls = []
 
@@ -338,6 +389,17 @@ def test_frontend_upload_branch_sends_real_file_before_link_pipeline():
     upload_branch = source.index("if (videoFile)")
     link_branch = source.index("if (linkCandidate && !hasManualScript)")
     assert upload_branch < link_branch
+
+
+def test_frontend_review_player_is_hard_bounded_and_confirmation_payload_is_local():
+    source = (Path(__file__).parents[2] / "web" / "components" / "ViralAnalyzerClient.tsx").read_text(encoding="utf-8")
+
+    assert "const clipEnd = Math.max(start, Math.min(end, start + 8))" in source
+    assert "onLoadedMetadata={seekToClipStart}" in source
+    assert "audio.currentTime >= clipEnd" in source
+    assert "audio.currentTime = clipEnd" in source
+    assert "segment_index: item.segment_index" in source
+    assert "corrected_text: (reviewDrafts[item.segment_index] || \"\").trim()" in source
     assert 'formData.set("video_file", videoFile)' in source
     assert "runUploadedViralPipeline(formData" in source
 
