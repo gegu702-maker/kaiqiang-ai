@@ -23,7 +23,8 @@ class _Response:
                     "finish_reason": self._finish_reason,
                     "message": {"content": self._content},
                 }
-            ]
+            ],
+            "usage": {"prompt_tokens": 101, "completion_tokens": 202, "total_tokens": 303},
         }
 
 
@@ -42,7 +43,10 @@ class _Client:
 
     async def post(self, url, **kwargs):
         self.calls.append((url, kwargs))
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 class _ErrorResponse:
@@ -67,7 +71,7 @@ class _ErrorResponse:
 
 
 def test_default_deepseek_model_matches_current_api():
-    assert Settings.model_fields["deepseek_model"].default == "deepseek-v4-pro"
+    assert Settings.model_fields["deepseek_model"].default == "deepseek-v4-flash"
 
 
 def test_deepseek_request_contract_uses_supported_model(monkeypatch):
@@ -76,25 +80,25 @@ def test_deepseek_request_contract_uses_supported_model(monkeypatch):
     monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
     monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
     monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
-    monkeypatch.setattr(llm_provider.settings, "deepseek_model", "deepseek-v4-pro")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_model", "deepseek-v4-flash")
 
     result = asyncio.run(
         llm_provider.LLMProvider().generate_json(
             system="Return valid JSON.",
             payload={"input": "x"},
-            max_tokens=6000,
+            max_tokens=8000,
         )
     )
 
     request = _Client.calls[0][1]["json"]
     assert result == {"ok": True}
-    assert request["model"] == "deepseek-v4-pro"
+    assert request["model"] == "deepseek-v4-flash"
     assert request["messages"] == [
         {"role": "system", "content": "Return valid JSON."},
         {"role": "user", "content": '{"input": "x"}'},
     ]
     assert request["response_format"] == {"type": "json_object"}
-    assert request["max_tokens"] == 6000
+    assert request["max_tokens"] == 8000
     assert "temperature" not in request
     assert "stream" not in request
 
@@ -111,7 +115,7 @@ def test_real_deepseek_deprecated_model_400_keeps_safe_error_fields(monkeypatch)
         asyncio.run(llm_provider.LLMProvider().generate_json(system="Return JSON.", payload={"input": "x"}))
 
     error = raised.value
-    assert error.code == "llm_http_error"
+    assert error.code == "llm_model_unavailable"
     assert error.http_status == 400
     assert error.retryable is False
     assert json.loads(error.schema_error) == {
@@ -127,7 +131,7 @@ def test_real_deepseek_deprecated_model_400_keeps_safe_error_fields(monkeypatch)
 
 def test_invalid_json_is_repaired_exactly_once(monkeypatch):
     _Client.calls = []
-    _Client.responses = [_Response('{"topic": "broken"', finish_reason="length"), _Response('{"topic": "repaired"}')]
+    _Client.responses = [_Response('{"topic": "broken"'), _Response('{"topic": "repaired"}')]
     monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
     monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
     monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
@@ -188,6 +192,76 @@ def test_balance_error_is_distinct_and_not_retried(monkeypatch):
     assert raised.value.code == "llm_balance_insufficient"
     assert raised.value.retryable is False
     assert len(_Client.calls) == 1
+
+
+def test_timeout_retries_once_then_fails_explicitly(monkeypatch):
+    _Client.calls = []
+    _Client.responses = [llm_provider.httpx.ReadTimeout("slow"), llm_provider.httpx.ReadTimeout("slow")]
+    sleep = AsyncMock()
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.asyncio, "sleep", sleep)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    with pytest.raises(llm_provider.LLMProviderError) as raised:
+        asyncio.run(llm_provider.LLMProvider().generate_json(system="json", payload={"input": "x"}))
+
+    assert raised.value.code == "llm_timeout"
+    assert len(_Client.calls) == 2
+    sleep.assert_awaited_once_with(1)
+
+
+def test_connection_failure_retries_once_then_fails_explicitly(monkeypatch):
+    _Client.calls = []
+    _Client.responses = [llm_provider.httpx.ConnectError("offline"), llm_provider.httpx.ConnectError("offline")]
+    sleep = AsyncMock()
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.asyncio, "sleep", sleep)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    with pytest.raises(llm_provider.LLMProviderError) as raised:
+        asyncio.run(llm_provider.LLMProvider().generate_json(system="json", payload={"input": "x"}))
+
+    assert raised.value.code == "llm_network_error"
+    assert len(_Client.calls) == 2
+    sleep.assert_awaited_once_with(1)
+
+
+def test_generic_http_error_is_explicit_and_not_retried(monkeypatch):
+    failure = _Response('{"error":"bad request"}')
+    failure.status_code = 422
+    _Client.calls = []
+    _Client.responses = [failure]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    with pytest.raises(llm_provider.LLMProviderError) as raised:
+        asyncio.run(llm_provider.LLMProvider().generate_json(system="json", payload={"input": "x"}))
+
+    assert raised.value.code == "llm_http_error"
+    assert raised.value.http_status == 422
+    assert len(_Client.calls) == 1
+
+
+def test_finish_reason_length_is_never_accepted_as_complete(monkeypatch, caplog):
+    _Client.calls = []
+    _Client.responses = [_Response('{"ok":true}', finish_reason="length")]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    with pytest.raises(llm_provider.LLMProviderError) as raised:
+        asyncio.run(llm_provider.LLMProvider().generate_json(system="json", payload={"input": "x"}))
+
+    assert raised.value.code == "llm_response_truncated"
+    assert raised.value.schema_error == "finish_reason=length"
+    assert "finish_reason=length" in caplog.text
+    assert "truncated=True" in caplog.text
+    assert "prompt_tokens=101" in caplog.text
+    assert "completion_tokens=202" in caplog.text
+    assert "total_tokens=303" in caplog.text
 
 
 def test_pipeline_failure_contract_contains_request_fields():

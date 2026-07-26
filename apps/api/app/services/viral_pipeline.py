@@ -53,8 +53,8 @@ LANGUAGE_LABELS = {
 
 
 FALLBACK_OPTIONS = ["upload_video", "paste_text"]
-METADATA_FALLBACK_WARNING = "仅公开信息摘要（非完整拆解）：平台视频未成功下载，ASR=0。完整版已禁用；请上传视频或粘贴原文以获得完整拆解。"
-SHARE_TEXT_FALLBACK_WARNING = "仅公开信息摘要（非完整拆解）：未读取视频音轨，ASR=0。完整版已禁用；请上传视频或粘贴原文以获得完整拆解。"
+METADATA_FALLBACK_WARNING = "仅基于公开信息（非完整拆解）：平台视频未成功下载，ASR=0。完整版已禁用；请上传视频或粘贴原文以获得完整拆解。"
+SHARE_TEXT_FALLBACK_WARNING = "仅基于公开信息（非完整拆解）：未读取视频音轨，ASR=0。完整版已禁用；请上传视频或粘贴原文以获得完整拆解。"
 INSUFFICIENT_METADATA_MESSAGE = "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。"
 URL_RE = re.compile(r"https?://[^\s\"'<>，。；、]+", re.IGNORECASE)
 DOUYIN_COMMAND_RE = re.compile(
@@ -382,7 +382,7 @@ async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], 
         data = await LLMProvider().generate_json(
             system="你是短视频爆款仿写编导。你只输出合法 JSON，并生成适合数字人口播的原创口播稿。",
             payload=payload,
-            max_tokens=8000 if rewrite_length == "full" else 5000,
+            max_tokens=8000,
         )
     except Exception:
         return _fallback_rewrites(analysis, transcript)
@@ -490,7 +490,7 @@ async def _process_video_path(
         audio_path.stat().st_size if audio_path.exists() else -1,
     )
 
-    asr = await transcribe_audio(audio_path, language)
+    asr = await transcribe_audio(audio_path, language, duration)
     if not asr.ok:
         logger.warning(
             "viral_pipeline request_id=%s stage=transcribing outcome=failed code=%s retryable=%s diagnostic=%r",
@@ -548,6 +548,8 @@ async def _process_video_path(
         "segment_count": len(timeline),
         "correction_count": correction_count,
         "review_segment_count": len(correction.review_segments),
+        "asr_recovery_attempted": asr.recovery_attempted,
+        "asr_recovery_used": asr.recovery_used,
         "fallback": False,
         "prompt_input_chars": 0,
         "output_chars": 0,
@@ -633,6 +635,8 @@ async def _process_video_path(
         "segment_count": len(timeline),
         "correction_count": correction_count,
         "review_segment_count": len(correction.review_segments),
+        "asr_recovery_attempted": asr.recovery_attempted,
+        "asr_recovery_used": asr.recovery_used,
         "fallback": False,
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
@@ -744,7 +748,7 @@ async def _metadata_fallback_analysis(
         "analysis_quality": "partial",
         "degraded": True,
         "warning": METADATA_FALLBACK_WARNING,
-        "summary_label": "仅公开信息摘要",
+        "summary_label": "仅基于公开信息（非完整拆解）",
         "full_rewrite_available": False,
         "rewrite_length_requested": rewrite_length,
         "rewrite_length_effective": "short",
@@ -824,7 +828,7 @@ async def _share_text_fallback_analysis(
         "analysis_quality": "partial",
         "degraded": True,
         "warning": SHARE_TEXT_FALLBACK_WARNING,
-        "summary_label": "仅公开信息摘要",
+        "summary_label": "仅基于公开信息（非完整拆解）",
         "full_rewrite_available": False,
         "rewrite_length_requested": rewrite_length,
         "rewrite_length_effective": "short",

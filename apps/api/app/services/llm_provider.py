@@ -39,6 +39,15 @@ def _safe_upstream_error(response: httpx.Response) -> str:
     return json.dumps(details, ensure_ascii=False, sort_keys=True)
 
 
+def _model_is_unavailable(upstream_error: str) -> bool:
+    normalized = upstream_error.lower()
+    return "model" in normalized and (
+        "supported api model names" in normalized
+        or "model not exist" in normalized
+        or "model_not_found" in normalized
+    )
+
+
 class LLMProviderError(Exception):
     def __init__(
         self,
@@ -133,7 +142,7 @@ def safe_parse_json_response(raw: str) -> dict[str, Any]:
 
 
 class LLMProvider:
-    async def generate_json(self, *, system: str, payload: dict[str, Any], max_tokens: int = 6000) -> dict[str, Any]:
+    async def generate_json(self, *, system: str, payload: dict[str, Any], max_tokens: int = 8000) -> dict[str, Any]:
         provider = settings.llm_provider.lower()
         if provider == "deepseek":
             return await self._chat_json(
@@ -197,13 +206,15 @@ class LLMProvider:
                         )
                 except httpx.TimeoutException as error:
                     logger.warning(
-                        "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=timeout request_body_chars=%s max_tokens=%s",
+                        "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=timeout "
+                        "http_status=none response_length=0 finish_reason=none truncated=false "
+                        "max_tokens=%s prompt_tokens=none completion_tokens=none total_tokens=none request_body_chars=%s",
                         request_id,
                         provider_name,
                         model,
                         attempt_label,
-                        request_body_chars,
                         max_tokens,
+                        request_body_chars,
                     )
                     if transport_attempt == 1:
                         await asyncio.sleep(1)
@@ -211,14 +222,16 @@ class LLMProvider:
                     raise LLMProviderError(code="llm_timeout", message="AI 服务调用超时，重试一次后仍失败。", retryable=True) from error
                 except httpx.HTTPError as error:
                     logger.warning(
-                        "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=network_error type=%s request_body_chars=%s max_tokens=%s",
+                        "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=network_error type=%s "
+                        "http_status=none response_length=0 finish_reason=none truncated=false "
+                        "max_tokens=%s prompt_tokens=none completion_tokens=none total_tokens=none request_body_chars=%s",
                         request_id,
                         provider_name,
                         model,
                         attempt_label,
                         type(error).__name__,
-                        request_body_chars,
                         max_tokens,
+                        request_body_chars,
                     )
                     if transport_attempt == 1:
                         await asyncio.sleep(1)
@@ -228,7 +241,10 @@ class LLMProvider:
                 response_length = len(response.content)
                 if response.status_code < 400:
                     break
-                if response.status_code == 429:
+                upstream_error = _safe_upstream_error(response)
+                if response.status_code == 400 and _model_is_unavailable(upstream_error):
+                    code, message, retryable = "llm_model_unavailable", f"配置的 AI 模型 {model} 当前不可用。", False
+                elif response.status_code == 429:
                     code, message, retryable = "llm_rate_limited", "AI 服务请求过于频繁。", True
                 elif response.status_code == 402:
                     code, message, retryable = "llm_balance_insufficient", "AI 服务余额不足。", False
@@ -239,17 +255,19 @@ class LLMProvider:
                 else:
                     code, message, retryable = "llm_http_error", f"AI 服务返回 HTTP {response.status_code}。", response.status_code >= 500
                 logger.warning(
-                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=http_error code=%s http_status=%s request_body_chars=%s max_tokens=%s response_length=%s upstream_error=%r",
+                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=http_error code=%s "
+                    "http_status=%s response_length=%s finish_reason=none truncated=false max_tokens=%s "
+                    "prompt_tokens=none completion_tokens=none total_tokens=none request_body_chars=%s upstream_error=%r",
                     request_id,
                     provider_name,
                     model,
                     attempt_label,
                     code,
                     response.status_code,
-                    request_body_chars,
-                    max_tokens,
                     response_length,
-                    _safe_upstream_error(response),
+                    max_tokens,
+                    request_body_chars,
+                    upstream_error,
                 )
                 if retryable and transport_attempt == 1:
                     await asyncio.sleep(1)
@@ -261,7 +279,7 @@ class LLMProvider:
                     retryable=retryable,
                     http_status=response.status_code,
                     response_length=response_length,
-                    schema_error=_safe_upstream_error(response),
+                    schema_error=upstream_error,
                 )
 
             if response is None:
@@ -269,6 +287,8 @@ class LLMProvider:
             response_length = len(response.content)
             try:
                 body = response.json()
+                usage = body.get("usage") if isinstance(body, dict) else {}
+                usage = usage if isinstance(usage, dict) else {}
                 choice = body["choices"][0]
                 raw = choice["message"]["content"]
                 finish_reason = str(choice.get("finish_reason") or "")
@@ -277,13 +297,16 @@ class LLMProvider:
             except (ValueError, KeyError, IndexError, TypeError) as error:
                 diagnostic = f"{type(error).__name__}: {error}"[:300]
                 logger.warning(
-                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=envelope_error http_status=%s response_length=%s schema_error=%r",
+                    "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=envelope_error "
+                    "http_status=%s response_length=%s finish_reason=none truncated=false max_tokens=%s "
+                    "prompt_tokens=none completion_tokens=none total_tokens=none schema_error=%r",
                     request_id,
                     provider_name,
                     model,
                     attempt,
                     response.status_code,
                     response_length,
+                    max_tokens,
                     diagnostic,
                 )
                 raise LLMProviderError(
@@ -295,18 +318,33 @@ class LLMProvider:
                     schema_error=diagnostic,
                 ) from error
             logger.warning(
-                "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=received http_status=%s request_body_chars=%s max_tokens=%s response_length=%s content_length=%s finish_reason=%s",
+                "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=received http_status=%s "
+                "response_length=%s finish_reason=%s truncated=%s max_tokens=%s prompt_tokens=%s "
+                "completion_tokens=%s total_tokens=%s request_body_chars=%s content_length=%s",
                 request_id,
                 provider_name,
                 model,
                 attempt,
                 response.status_code,
-                request_body_chars,
-                max_tokens,
                 response_length,
-                len(raw),
                 finish_reason,
+                finish_reason == "length",
+                max_tokens,
+                usage.get("prompt_tokens", "none"),
+                usage.get("completion_tokens", "none"),
+                usage.get("total_tokens", "none"),
+                request_body_chars,
+                len(raw),
             )
+            if finish_reason == "length":
+                raise LLMProviderError(
+                    code="llm_response_truncated",
+                    message="AI 响应达到输出上限，结果已截断。",
+                    retryable=True,
+                    http_status=response.status_code,
+                    response_length=response_length,
+                    schema_error="finish_reason=length",
+                )
             return raw, response.status_code, finish_reason
 
         raw, http_status, finish_reason = await request_completion(

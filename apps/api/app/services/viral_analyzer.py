@@ -635,7 +635,7 @@ async def _build_hierarchical_input(raw_script: str, output_language: str) -> tu
         data = await LLMProvider().generate_json(
             system=f"你是长视频分段信息抽取专家。使用{output_language}，只输出 JSON。",
             payload=payload,
-            max_tokens=3000,
+            max_tokens=8000,
         )
         summaries.append(f"[第{index + 1}/{len(chunks)}段]\n{str(data.get('summary') or chunk).strip()}")
     return "\n\n".join(summaries), prompt_chars, len(chunks)
@@ -749,7 +749,10 @@ async def analyze_viral_script(
             [
                 "输入仅来自链接公开元数据，不得声称已读取完整视频或执行 ASR",
                 "必须明确这是非完整拆解，只覆盖公开标题或描述中可验证的信息",
-                "只生成“仅公开信息摘要”，每条约 60–160 字；即使用户请求完整版也不得扩写成长稿",
+                "每条生成 120–240 字的“仅基于公开信息（非完整拆解）”；即使用户请求完整版也不得扩写成长稿",
+                "先列出公开标题/描述中可以确认的事实，再说明无法确认的视频观点、论据、案例和数据",
+                "给出可执行的内容角度或待验证问题时，必须明确写成建议或可能性，不得包装成原视频事实",
+                "结尾明确引导用户上传视频或粘贴原稿以获得完整拆解",
                 "公开信息没有明确写出的政策、资金、机构、历史案例、数据、因果关系一律不得补写",
                 "cases 与 data_points 必须返回空数组；不得把推测包装成原视频事实",
             ]
@@ -762,7 +765,7 @@ async def analyze_viral_script(
             f"目标输出语言是{output_language}。除字段名外，所有内容必须使用{output_language}。只输出合法 JSON。"
         ),
         payload=prompt_payload,
-        max_tokens=8000 if rewrite_length == "full" else 6000,
+        max_tokens=8000,
     )
 
     def normalize_analysis(payload: dict[str, Any]) -> dict[str, Any]:
@@ -790,7 +793,7 @@ async def analyze_viral_script(
 
     result = normalize_analysis(data)
     minimum_rewrite_chars = (
-        60
+        120
         if source_scope == "public_metadata"
         else {"short": 80, "medium": 200, "full": 400}[rewrite_length]
     )

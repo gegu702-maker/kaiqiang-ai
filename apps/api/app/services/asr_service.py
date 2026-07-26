@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
 import logging
+import math
 from pathlib import Path
 
 from app.core.config import settings
@@ -37,7 +38,23 @@ def _split_transcription_segment(segment, max_seconds: float = 8.0) -> list[ASRS
         return chunks
 
     text = str(segment.text).strip()
-    return [ASRSegment(start=float(segment.start), end=float(segment.end), text=text)] if text else []
+    if not text:
+        return []
+    start = float(segment.start)
+    end = float(segment.end)
+    duration = max(0.0, end - start)
+    chunk_count = max(1, math.ceil(duration / max_seconds))
+    chunks: list[ASRSegment] = []
+    for index in range(chunk_count):
+        text_start = round(len(text) * index / chunk_count)
+        text_end = round(len(text) * (index + 1) / chunk_count)
+        chunk_text = text[text_start:text_end].strip()
+        if not chunk_text:
+            continue
+        chunk_start = start + duration * index / chunk_count
+        chunk_end = start + duration * (index + 1) / chunk_count
+        chunks.append(ASRSegment(start=chunk_start, end=chunk_end, text=chunk_text))
+    return chunks
 
 
 @dataclass
@@ -58,9 +75,27 @@ class ASRResult:
     error_code: str = ""
     retryable: bool = False
     diagnostic: str = ""
+    recovery_attempted: bool = False
+    recovery_used: bool = False
 
 
-def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResult:
+def _normalize_transcription(segments) -> tuple[list[ASRSegment], str, float]:
+    normalized = [chunk for segment in segments for chunk in _split_transcription_segment(segment)]
+    transcript = "\n".join(segment.text for segment in normalized).strip()
+    coverage = max((segment.end for segment in normalized), default=0.0)
+    return normalized, transcript, coverage
+
+
+def _needs_vad_recovery(*, transcript: str, coverage_seconds: float, expected_duration: float, language: str) -> bool:
+    compact_chars = len("".join(transcript.split()))
+    if expected_duration >= 30 and coverage_seconds < expected_duration * 0.8:
+        return True
+    if language == "zh" and coverage_seconds >= 60 and compact_chars / max(coverage_seconds, 1) < 1.5:
+        return True
+    return False
+
+
+def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_duration: float = 0.0) -> ASRResult:
     request_id = current_request_id()
     logger.info(
         "viral_asr request_id=%s stage=model_load provider=faster-whisper model=%s device=%s compute_type=%s audio_bytes=%s",
@@ -121,8 +156,39 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResul
         if domain == "financial" and settings.viral_asr_use_hotwords:
             transcribe_options["hotwords"] = FINANCIAL_HOTWORDS
         segments, _info = model.transcribe(str(audio_path), **transcribe_options)
-        normalized_segments = [chunk for segment in segments for chunk in _split_transcription_segment(segment)]
-        transcript = "\n".join(segment.text for segment in normalized_segments).strip()
+        normalized_segments, transcript, coverage_seconds = _normalize_transcription(segments)
+        recovery_attempted = _needs_vad_recovery(
+            transcript=transcript,
+            coverage_seconds=coverage_seconds,
+            expected_duration=expected_duration,
+            language=transcribe_options["language"],
+        )
+        recovery_used = False
+        if recovery_attempted and transcribe_options["vad_filter"]:
+            logger.warning(
+                "viral_asr request_id=%s stage=transcribe outcome=recovery_started reason=low_completeness "
+                "initial_coverage_seconds=%.3f initial_transcript_chars=%s expected_duration_seconds=%.3f",
+                request_id,
+                coverage_seconds,
+                len(transcript),
+                expected_duration,
+            )
+            recovery_options = {**transcribe_options, "vad_filter": False}
+            recovery_segments, _recovery_info = model.transcribe(str(audio_path), **recovery_options)
+            recovered_normalized, recovered_transcript, recovered_coverage = _normalize_transcription(recovery_segments)
+            if len(recovered_transcript) > len(transcript) or recovered_coverage > coverage_seconds:
+                normalized_segments = recovered_normalized
+                transcript = recovered_transcript
+                coverage_seconds = recovered_coverage
+                recovery_used = True
+            logger.warning(
+                "viral_asr request_id=%s stage=transcribe outcome=recovery_completed recovery_used=%s "
+                "recovered_coverage_seconds=%.3f recovered_transcript_chars=%s",
+                request_id,
+                recovery_used,
+                recovered_coverage,
+                len(recovered_transcript),
+            )
     except Exception as error:
         diagnostic = f"{type(error).__name__}: {error}"[:500]
         logger.exception("viral_asr request_id=%s stage=transcribe outcome=failed", request_id)
@@ -142,15 +208,24 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str) -> ASRResul
             error_code="asr_empty_transcript",
             retryable=False,
         )
-    coverage_seconds = max((segment.end for segment in normalized_segments), default=0.0)
     logger.warning(
-        "viral_asr request_id=%s stage=transcribe outcome=completed coverage_seconds=%.3f segment_count=%s transcript_chars=%s",
+        "viral_asr request_id=%s stage=transcribe outcome=completed coverage_seconds=%.3f "
+        "segment_count=%s transcript_chars=%s recovery_attempted=%s recovery_used=%s",
         request_id,
         coverage_seconds,
         len(normalized_segments),
         len(transcript),
+        recovery_attempted,
+        recovery_used,
     )
-    return ASRResult(ok=True, transcript=transcript, segments=normalized_segments, coverage_seconds=coverage_seconds)
+    return ASRResult(
+        ok=True,
+        transcript=transcript,
+        segments=normalized_segments,
+        coverage_seconds=coverage_seconds,
+        recovery_attempted=recovery_attempted,
+        recovery_used=recovery_used,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -164,5 +239,5 @@ def _get_model():
     )
 
 
-async def transcribe_audio(audio_path: Path, language: str = "zh") -> ASRResult:
-    return await asyncio.to_thread(_transcribe_with_faster_whisper, audio_path, language)
+async def transcribe_audio(audio_path: Path, language: str = "zh", expected_duration: float = 0.0) -> ASRResult:
+    return await asyncio.to_thread(_transcribe_with_faster_whisper, audio_path, language, expected_duration)

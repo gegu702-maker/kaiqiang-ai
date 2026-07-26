@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+from app.core.config import Settings
 from app.services import asr_service, financial_transcript, viral_pipeline
 from app.services.asr_service import ASRResult, ASRSegment
 from app.services.financial_terms import FINANCIAL_HOTWORDS, FINANCIAL_INITIAL_PROMPT, FINANCIAL_TERM_CORRECTIONS
@@ -19,6 +20,13 @@ class _Table:
 class _Supabase:
     def table(self, _name):
         return _Table()
+
+
+def test_financial_asr_defaults_to_medium_with_prompt_and_word_timestamps():
+    assert Settings.model_fields["faster_whisper_model_size"].default == "medium"
+    assert Settings.model_fields["faster_whisper_word_timestamps"].default is True
+    assert Settings.model_fields["viral_asr_use_initial_prompt"].default is True
+    assert Settings.model_fields["viral_asr_use_hotwords"].default is True
 
 
 def _analysis():
@@ -127,6 +135,48 @@ def test_word_timestamps_split_review_windows_to_original_asr_chunks():
         (0.0, 4.0, "中国人保。"),
         (4.0, 9.0, "沪深300"),
     ]
+
+
+def test_missing_word_timestamps_are_split_into_bounded_review_windows():
+    text = "这是一段没有词级时间戳但必须完整保留的财经转写内容。" * 8
+    chunks = asr_service._split_transcription_segment(
+        SimpleNamespace(start=36.5, end=66.5, text=text, words=None)
+    )
+
+    assert "".join(item.text for item in chunks) == text
+    assert max(item.end - item.start for item in chunks) <= 8.0
+    assert chunks[0].start == 36.5
+    assert chunks[-1].end == 66.5
+
+
+def test_low_density_asr_retries_without_vad_and_uses_complete_pass(monkeypatch, tmp_path: Path):
+    calls = []
+    sparse = "财" * 151
+    complete = "金融市场完整转写" * 112
+
+    class _Model:
+        def transcribe(self, _path, **kwargs):
+            calls.append(kwargs)
+            text = sparse if kwargs["vad_filter"] else complete
+            return iter([SimpleNamespace(start=0, end=170.333, text=text, words=None)]), SimpleNamespace()
+
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"wav")
+    monkeypatch.setattr(asr_service, "_get_model", lambda: _Model())
+    monkeypatch.setattr(asr_service.settings, "viral_asr_domain", "financial")
+    monkeypatch.setattr(asr_service.settings, "viral_asr_use_initial_prompt", True)
+    monkeypatch.setattr(asr_service.settings, "viral_asr_use_hotwords", True)
+
+    result = asr_service._transcribe_with_faster_whisper(audio, "zh", 170.333)
+
+    assert result.ok is True
+    assert result.recovery_attempted is True
+    assert result.recovery_used is True
+    assert calls[0]["vad_filter"] is True
+    assert calls[1]["vad_filter"] is False
+    assert result.coverage_seconds == 170.333
+    assert len(result.transcript.replace("\n", "")) == len(complete)
+    assert max(segment.end - segment.start for segment in result.segments or []) <= 8.0
 
 
 def test_unicode_replacement_is_removed_and_exact_segment_requires_review(monkeypatch):

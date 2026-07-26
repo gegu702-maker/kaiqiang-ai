@@ -179,7 +179,7 @@ async def correct_financial_transcript(segments: list[ASRSegment], language: str
         response = await LLMProvider().generate_json(
             system="你是中文金融音频转写校对员。严格受输入音频转写约束，只输出合法JSON，不做事实补写。",
             payload=payload,
-            max_tokens=5000,
+            max_tokens=8000,
         )
     except Exception as error:
         code = error.code if isinstance(error, LLMProviderError) else type(error).__name__

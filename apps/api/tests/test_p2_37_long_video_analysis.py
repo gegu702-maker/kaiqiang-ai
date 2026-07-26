@@ -397,7 +397,7 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert 'setRequestHeader("Content-Type"' not in api_source
     assert "上传进度：" in component_source
     assert "文件大小：" in component_source
-    assert "仅公开信息摘要（非完整拆解）" in component_source
+    assert "仅基于公开信息（非完整拆解）" in component_source
     assert "完整版已禁用。请上传视频或粘贴原文" in component_source
     assert 'disabled={!fullRewriteAvailable}' in component_source
     assert "ASR 模型不可用" in component_source
