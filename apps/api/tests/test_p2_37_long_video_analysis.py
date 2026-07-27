@@ -464,7 +464,12 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     component_source = (Path(__file__).parents[2] / "web" / "components" / "ViralAnalyzerClient.tsx").read_text(encoding="utf-8")
     assert "new XMLHttpRequest()" in api_source
     assert "request.upload.onprogress" in api_source
-    assert "network_error" in api_source and "client_timeout" in api_source and "request_aborted" in api_source
+    assert "client_timeout" in api_source and "request_aborted" in api_source
+    assert "cors_preflight_failed" in api_source
+    assert "api_unreachable_after_preflight" in api_source
+    assert "api_unauthorized" in api_source and "upload_too_large" in api_source and "api_server_error" in api_source
+    assert "const CLIENT_API_URL" in api_source
+    assert "process.env.SERVER_API_URL || CLIENT_API_URL" in api_source
     assert "request_id: unavailable" in api_source
     assert "retryable: true" in api_source
     assert "endpoint:" in api_source

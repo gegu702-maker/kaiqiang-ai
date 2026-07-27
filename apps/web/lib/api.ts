@@ -17,10 +17,13 @@ import type {
 } from "@/lib/types";
 import type { Locale } from "@/components/LanguageProvider";
 
-const API_URL =
-  process.env.SERVER_API_URL ||
+// This module is used by browser components. Do not put SERVER_API_URL before
+// NEXT_PUBLIC_API_URL here: non-public variables are not reliably inlined in
+// client bundles and can silently make Preview fall back to Production.
+const CLIENT_API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   (process.env.NODE_ENV === "production" ? "https://api.kaiqiang.ai" : "http://localhost:8000");
+const API_URL = typeof window === "undefined" ? process.env.SERVER_API_URL || CLIENT_API_URL : CLIENT_API_URL;
 
 function readAdminApiKey(): string {
   const raw = process.env.SERVER_ADMIN_API_KEY ?? process.env.ADMIN_API_KEY ?? "";
@@ -264,6 +267,34 @@ export async function runUploadedViralPipeline(
   onProgress?: (progress: ViralUploadProgress) => void,
 ): Promise<ViralPipelineResult> {
   const url = `${API_URL}/api/viral/pipeline/upload`;
+  try {
+    // Run a readable CORS probe first so a failed automatic XHR preflight is
+    // reported as CORS, rather than being collapsed into a generic network error.
+    const preflight = await fetch(url, {
+      method: "OPTIONS",
+      headers: {
+        Authorization: `Bearer ${accessToken || "preview-preflight"}`,
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+    });
+    if (!preflight.ok) {
+      throw new Error(`HTTP ${preflight.status}`);
+    }
+  } catch (error) {
+    throw new Error(
+      [
+        "上传 CORS 预检失败",
+        "code: cors_preflight_failed",
+        "stage: uploading",
+        "request_id: unavailable（请求未进入上传 API）",
+        "retryable: true",
+        `endpoint: ${url}`,
+        `origin: ${window.location.origin}`,
+        `原因: ${error instanceof Error ? error.message : stringifyDetail(error)}`,
+      ].join("\n"),
+    );
+  }
   return new Promise<ViralPipelineResult>((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", url);
@@ -288,20 +319,21 @@ export async function runUploadedViralPipeline(
         return;
       }
       const detail = payload && typeof payload === "object" ? stringifyDetail((payload as { detail?: unknown; message?: unknown }).detail ?? (payload as { message?: unknown }).message) : request.responseText;
-      reject(new Error(["上传请求被 API 拒绝", `Status: ${request.status || "unknown"}`, `URL: ${url}`, detail ? `原因: ${detail}` : ""].filter(Boolean).join("\n")));
+      const code = request.status === 401 ? "api_unauthorized" : request.status === 413 ? "upload_too_large" : request.status >= 500 ? "api_server_error" : "api_http_error";
+      reject(new Error(["上传请求被 API 拒绝", `code: ${code}`, "stage: uploading", `Status: ${request.status || "unknown"}`, `URL: ${url}`, detail ? `原因: ${detail}` : ""].filter(Boolean).join("\n")));
     };
     request.onerror = () =>
       reject(
         new Error(
           [
             "上传请求失败",
-            "code: network_error",
+            "code: api_unreachable_after_preflight",
             "stage: uploading",
             "request_id: unavailable（请求未取得API响应）",
             "retryable: true",
             `endpoint: ${url}`,
             `origin: ${window.location.origin}`,
-            "浏览器未收到可读取的 HTTP 响应，请检查 Preview API 地址与 CORS。",
+            "CORS 预检已通过，但 POST 未获得响应；请检查 API 域名、证书、反向代理上传限制或网络中断。",
           ].join("\n"),
         ),
       );
