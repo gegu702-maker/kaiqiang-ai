@@ -43,6 +43,11 @@ PLAN_LIMITS: dict[str, int | None] = {
 }
 
 MIN_REWRITE_CJK_CHARS = 80
+REWRITE_LENGTH_RANGES = {
+    "short": (250, 450),
+    "medium": (500, 800),
+    "full": (900, 1500),
+}
 MIN_REWRITE_COUNT = 3
 MIN_SELLING_POINTS = 4
 MIN_STRUCTURE_ITEMS = 5
@@ -679,10 +684,11 @@ async def analyze_viral_script(
     public_maximum_rewrite_chars = min(240, max(public_minimum_rewrite_chars + 40, public_minimum_rewrite_chars * 2))
     if source_scope == "public_metadata":
         rewrite_length = "short"
+    minimum_chars, maximum_chars = REWRITE_LENGTH_RANGES[rewrite_length]
     length_guidance = {
-        "short": "短版，约 30–60 秒；中文约 120–240 字",
-        "medium": "中版，约 60–120 秒；中文约 240–500 字",
-        "full": "完整版；尽量保留原视频全部主要观点、论据、案例和数据，中文通常不少于 500 字，长视频可达 1200 字",
+        "short": "短版，约 250–450 个中文字符，聚焦一个核心判断与行动建议",
+        "medium": "中版，约 500–800 个中文字符，展开主要观点和关键论据",
+        "full": "完整版，约 900–1500 个中文字符，覆盖主要观点、论据、案例、数据和行动建议",
     }[rewrite_length]
     if source_scope == "public_metadata":
         length_guidance = (
@@ -718,6 +724,7 @@ async def analyze_viral_script(
             "观点、论据、案例和数据必须能在输入内容中找到依据，不得只重复标题",
             "selling_points 至少 4 条，structure 至少 5 条",
             f"rewrites 必须至少 3 条；当前长度要求：{length_guidance}",
+            "中文长度按实际汉字字符数计算，不按 token、空格或标点凑数",
             "每条 rewrite.script 必须包含开头钩子、问题/反差、信息价值、行动号召",
             "rewrites 之间必须明显差异化：版本A偏悬念揭秘/反常识，版本B偏用户痛点/普通人视角，版本C偏机会提醒/行动建议",
             "只输出 3 条高质量版本即可：版本A热点反差版、版本B用户痛点版、版本C商业机会版",
@@ -798,15 +805,11 @@ async def analyze_viral_script(
 
     def rewrite_lengths(payload: dict[str, Any]) -> list[int]:
         value = payload.get("rewrites") or payload.get("rewrite_versions") or payload.get("rewriteVersions") or payload.get("scripts") or []
-        return [len(str(item.get("script") or "")) for item in value[:FINAL_REWRITE_LIMIT] if isinstance(item, dict)]
+        return [_cjk_len(str(item.get("script") or "")) for item in value[:FINAL_REWRITE_LIMIT] if isinstance(item, dict)]
 
     result = normalize_analysis(data)
-    minimum_rewrite_chars = (
-        public_minimum_rewrite_chars
-        if source_scope == "public_metadata"
-        else {"short": 80, "medium": 200, "full": 400}[rewrite_length]
-    )
-    normalized_lengths = [len(item.get("script", "")) for item in result["rewrites"]]
+    minimum_rewrite_chars = public_minimum_rewrite_chars if source_scope == "public_metadata" else minimum_chars
+    normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
     logger.info(
         "viral_rewrite_lengths request_id=%s attempt=initial source_scope=%s requested_length=%s effective_length=%s target_chars=%s raw_chars=%s normalized_chars=%s",
         current_request_id(),
@@ -834,19 +837,20 @@ async def analyze_viral_script(
                 },
                 "current_rewrites": result["rewrites"],
                 "requirements": [
-                    f"将 A/B/C 每版扩写到至少 {minimum_rewrite_chars} 字",
+                    f"将 A/B/C 每版扩写到至少 {minimum_rewrite_chars} 个中文字符",
+                    "完整版必须覆盖转写稿中的主要观点、论据、案例、数据和行动建议；短版与中版只保留与目标长度匹配的核心信息",
                     "保留转写稿中的主要事实、数据、案例、论证顺序和限定条件",
                     "只扩写不足的版本；已达标版本保持事实与含义不变",
                     "不得用空泛重复句凑字数，不得新增转写稿中不存在的信息",
                     "每版仍须是可直接朗读的完整口播正文",
                 ],
-                "schema": {"rewrites": [{"title": "版本A/B/C", "script": f"至少 {minimum_rewrite_chars} 字"}]},
+                "schema": {"rewrites": [{"title": "版本A/B/C", "script": f"至少 {minimum_rewrite_chars} 个中文字符"}]},
             },
             max_tokens=8000,
         )
         retry_data = {**data, "rewrites": expansion.get("rewrites")}
         result = normalize_analysis(retry_data)
-        normalized_lengths = [len(item.get("script", "")) for item in result["rewrites"]]
+        normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
         logger.info(
             "viral_rewrite_lengths request_id=%s attempt=expansion source_scope=%s requested_length=%s effective_length=%s target_chars=%s raw_chars=%s normalized_chars=%s",
             current_request_id(),
@@ -863,10 +867,12 @@ async def analyze_viral_script(
             detail={
                 "code": "analysis_output_too_short",
                 "stage": "rewriting",
-                "message": f"AI 改写长度未达到当前来源要求（每条至少 {minimum_rewrite_chars} 字）。",
+                "message": f"AI 改写长度不足（每条至少 {minimum_rewrite_chars} 个中文字符，实际值见 actual_chars）。",
                 "retryable": False,
                 "target_chars": minimum_rewrite_chars,
                 "actual_chars": normalized_lengths,
+                "length_unit": "cjk_chars",
+                "rewrite_length": rewrite_length,
             },
         )
 

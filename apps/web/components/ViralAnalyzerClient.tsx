@@ -3,9 +3,9 @@
 import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Sparkles, UploadCloud, WandSparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { analyzeViralScript, checkVideoLink, continueReviewedViralPipeline, runUploadedViralPipeline, runViralPipeline, type ViralUploadProgress } from "@/lib/api";
+import { analyzeViralScript, checkVideoLink, runUploadedViralPipeline, runViralPipeline, type ViralUploadProgress } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 import type { ViralAnalyzeResult, ViralIndustry, ViralLinkErrorCode, ViralPipelineResult, VideoLinkResolveResult } from "@/lib/types";
 
@@ -150,44 +150,6 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
   };
 }
 
-function SegmentAudioPlayer({ src, start, end }: { src: string; start: number; end: number }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const clipEnd = Math.max(start, Math.min(end, start + 8));
-  const clipSrc = `${src}#t=${Math.max(0, start)},${clipEnd}`;
-
-  function seekToClipStart() {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = Math.min(Math.max(0, start), Number.isFinite(audio.duration) ? audio.duration : start);
-  }
-
-  return (
-    <audio
-      ref={audioRef}
-      className="mt-3 h-9 w-full"
-      controls
-      preload="metadata"
-      src={clipSrc}
-      onLoadedMetadata={seekToClipStart}
-      onPlay={() => {
-        const audio = audioRef.current;
-        if (audio && (audio.currentTime < start || audio.currentTime >= clipEnd)) seekToClipStart();
-      }}
-      onSeeked={() => {
-        const audio = audioRef.current;
-        if (audio && (audio.currentTime < start || audio.currentTime > clipEnd)) seekToClipStart();
-      }}
-      onTimeUpdate={() => {
-        const audio = audioRef.current;
-        if (audio && audio.currentTime >= clipEnd) {
-          audio.pause();
-          audio.currentTime = clipEnd;
-        }
-      }}
-    />
-  );
-}
-
 export function ViralAnalyzerClient({
   variant = "standalone",
   selectedScript,
@@ -209,7 +171,6 @@ export function ViralAnalyzerClient({
   const [rawScript, setRawScript] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
-  const [videoObjectUrl, setVideoObjectUrl] = useState("");
   const [uploadProgress, setUploadProgress] = useState<ViralUploadProgress | null>(null);
   const [rewriteLength, setRewriteLength] = useState<"short" | "medium" | "full">("short");
   const [result, setResult] = useState<ViralAnalyzeResult | null>(null);
@@ -218,17 +179,6 @@ export function ViralAnalyzerClient({
   const [pipelineSourceType, setPipelineSourceType] = useState<string>("");
   const [pipelineWarning, setPipelineWarning] = useState("");
   const [fullRewriteAvailable, setFullRewriteAvailable] = useState(true);
-  const [pipelineTranscript, setPipelineTranscript] = useState("");
-  const [pipelineRawTranscript, setPipelineRawTranscript] = useState("");
-  const [pipelineTimeline, setPipelineTimeline] = useState<ViralPipelineResult["timeline"]>([]);
-  const [pipelineCorrections, setPipelineCorrections] = useState<ViralPipelineResult["corrections"]>([]);
-  const [pipelineReviewSegments, setPipelineReviewSegments] = useState<ViralPipelineResult["review_segments"]>([]);
-  const [pipelineRequestId, setPipelineRequestId] = useState("");
-  const [reviewContext, setReviewContext] = useState<Record<string, unknown> | null>(null);
-  const [reviewToken, setReviewToken] = useState("");
-  const [reviewDrafts, setReviewDrafts] = useState<Record<number, string>>({});
-  const [reviewConfirmed, setReviewConfirmed] = useState<Record<number, boolean>>({});
-  const [continuingReview, setContinuingReview] = useState(false);
   const [pipelineDiagnostics, setPipelineDiagnostics] = useState<ViralPipelineResult["diagnostics"]>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -275,38 +225,13 @@ export function ViralAnalyzerClient({
     });
   }, [linkCheck, onWorkflowStateChange, pipelineMetadata, result]);
 
-  useEffect(() => () => {
-    if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
-  }, [videoObjectUrl]);
-
-  function applyPipelineReview(payload: ViralPipelineResult) {
-    setPipelineRequestId(payload.request_id || "");
-    setReviewContext(payload.review_context || null);
-    setReviewToken(payload.review_token || "");
-    const drafts: Record<number, string> = {};
-    const confirmed: Record<number, boolean> = {};
-    for (const item of payload.review_segments || []) {
-      if (item.segment_index < 0) continue;
-      drafts[item.segment_index] = item.suggested_text || item.text || item.original_text || "";
-      confirmed[item.segment_index] = false;
-    }
-    setReviewDrafts(drafts);
-    setReviewConfirmed(confirmed);
-  }
-
   function applyPipelineResult(payload: ViralPipelineResult) {
     setPipelineMetadata(payload.metadata);
     setPipelineSourceType(payload.source_type || "");
     setPipelineWarning(payload.warning || "");
     setFullRewriteAvailable(payload.full_rewrite_available !== false);
     if (payload.full_rewrite_available === false) setRewriteLength("short");
-    setPipelineTranscript(payload.transcript || "");
-    setPipelineRawTranscript(payload.raw_transcript || "");
-    setPipelineTimeline(payload.timeline || []);
-    setPipelineCorrections(payload.corrections || []);
-    setPipelineReviewSegments(payload.review_segments || []);
     setPipelineDiagnostics(payload.diagnostics);
-    applyPipelineReview(payload);
   }
 
   function friendlyLinkMessage(payload?: Pick<VideoLinkResolveResult, "error_code" | "message" | "fallback_reason"> | null) {
@@ -348,7 +273,8 @@ export function ViralAnalyzerClient({
       asr_model_unavailable: "ASR 模型不可用",
       asr_transcription_failed: "ASR 推理失败",
       asr_empty_transcript: "未识别到语音内容",
-      transcript_review_required: "转写稿需要人工复核",
+      asr_quality_insufficient: "转写质量不足",
+      transcript_quality_insufficient: "转写校正质量不足",
       audio_extraction_failed: "音频提取失败",
       media_probe_failed: "视频信息读取失败",
       video_too_long: "视频时长超过上限",
@@ -400,98 +326,19 @@ export function ViralAnalyzerClient({
     setVideoFile(file);
     setVideoDuration(null);
     setUploadProgress(null);
-    setVideoObjectUrl("");
     if (!file) return;
     const objectUrl = URL.createObjectURL(file);
-    setVideoObjectUrl(objectUrl);
     const media = document.createElement("video");
     media.preload = "metadata";
     media.onloadedmetadata = () => {
       setVideoDuration(Number.isFinite(media.duration) ? media.duration : null);
+      URL.revokeObjectURL(objectUrl);
     };
-    media.onerror = () => setVideoDuration(null);
+    media.onerror = () => {
+      setVideoDuration(null);
+      URL.revokeObjectURL(objectUrl);
+    };
     media.src = objectUrl;
-  }
-
-  function persistReviewAudit(nextConfirmed: Record<number, boolean>, nextDrafts = reviewDrafts) {
-    if (!pipelineRequestId || typeof window === "undefined") return;
-    const entries = (pipelineReviewSegments || [])
-      .filter((item) => item.segment_index >= 0)
-      .map((item) => ({
-        segment_index: item.segment_index,
-        start: item.start ?? 0,
-        end: item.end ?? item.start ?? 0,
-        original_text: item.original_text || item.text || "",
-        corrected_text: nextDrafts[item.segment_index] || "",
-        source: "human_review",
-        confirmed: Boolean(nextConfirmed[item.segment_index]),
-        confirmed_at: nextConfirmed[item.segment_index] ? new Date().toISOString() : null,
-      }));
-    window.localStorage.setItem(`viral-review:${pipelineRequestId}`, JSON.stringify({ request_id: pipelineRequestId, entries }));
-  }
-
-  function confirmReviewSegment(segmentIndex: number) {
-    const text = (reviewDrafts[segmentIndex] || "").trim();
-    if (!text || text.includes("�")) {
-      setError("该片段仍为空或包含 U+FFFD 乱码，请试听并修正后再确认。");
-      return;
-    }
-    setError("");
-    const next = { ...reviewConfirmed, [segmentIndex]: true };
-    setReviewConfirmed(next);
-    persistReviewAudit(next);
-  }
-
-  async function handleContinueReview() {
-    const confirmable = (pipelineReviewSegments || []).filter((item) => item.segment_index >= 0);
-    const hasGlobalFailure = (pipelineReviewSegments || []).some((item) => item.segment_index < 0);
-    if (hasGlobalFailure || !reviewContext || !reviewToken) {
-      setError("自动校正服务未完整返回，当前复核会话不能继续，请重新上传视频。");
-      return;
-    }
-    if (confirmable.some((item) => !reviewConfirmed[item.segment_index])) {
-      setError("请先逐段确认全部待复核片段。");
-      return;
-    }
-    setContinuingReview(true);
-    setLoading(true);
-    setRunStage("pipeline");
-    setError("");
-    try {
-      const accessToken = await getSessionToken();
-      const pipeline = await continueReviewedViralPipeline(
-        {
-          review_context: reviewContext,
-          review_token: reviewToken,
-          confirmed_segments: confirmable.map((item) => ({
-            segment_index: item.segment_index,
-            corrected_text: (reviewDrafts[item.segment_index] || "").trim(),
-            confirmed: true,
-          })),
-          source_url: sourceUrl.trim(),
-          industry,
-          language,
-          rewrite_length: rewriteLength,
-        },
-        accessToken,
-      );
-      applyPipelineResult(pipeline);
-      if (!pipeline.ok) throw new Error(friendlyPipelineMessage(pipeline));
-      const pipelineResult = pipelineToAnalyzeResult(pipeline);
-      if (!pipelineResult) throw new Error(linkCheckCopy.pipelineEmpty);
-      setResult(pipelineResult);
-      persistReviewAudit(
-        Object.fromEntries(confirmable.map((item) => [item.segment_index, true])),
-        reviewDrafts,
-      );
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setContinuingReview(false);
-      setLoading(false);
-      setRunStage("idle");
-      setUploadProgress(null);
-    }
   }
 
   function formatFileSize(bytes: number) {
@@ -518,11 +365,6 @@ export function ViralAnalyzerClient({
     setPipelineSourceType("");
     setPipelineWarning("");
     setFullRewriteAvailable(true);
-    setPipelineTranscript("");
-    setPipelineRawTranscript("");
-    setPipelineTimeline([]);
-    setPipelineCorrections([]);
-    setPipelineReviewSegments([]);
     setPipelineDiagnostics(undefined);
     setChecking(true);
     try {
@@ -547,11 +389,6 @@ export function ViralAnalyzerClient({
     setPipelineSourceType("");
     setPipelineWarning("");
     setFullRewriteAvailable(true);
-    setPipelineTranscript("");
-    setPipelineRawTranscript("");
-    setPipelineTimeline([]);
-    setPipelineCorrections([]);
-    setPipelineReviewSegments([]);
     setPipelineDiagnostics(undefined);
     setLoading(true);
     try {
@@ -736,9 +573,9 @@ export function ViralAnalyzerClient({
                   value={rewriteLength}
                   onChange={(event) => setRewriteLength(event.target.value as "short" | "medium" | "full")}
                 >
-                  <option value="short">短版（约 30–60 秒）</option>
-                  <option value="medium">中版（约 60–120 秒）</option>
-                  <option value="full" disabled={!fullRewriteAvailable}>完整版（尽量保留主要信息）</option>
+                  <option value="short">短版（约 250–450 中文字符）</option>
+                  <option value="medium">中版（约 500–800 中文字符）</option>
+                  <option value="full" disabled={!fullRewriteAvailable}>完整版（约 900–1500 中文字符）</option>
                 </select>
                 {!fullRewriteAvailable ? <span className="mt-2 block text-xs leading-5 text-amber-100">当前仅能生成“仅基于公开信息（非完整拆解）”，完整版已禁用。请上传视频或粘贴原文。</span> : null}
               </label>
@@ -816,73 +653,6 @@ export function ViralAnalyzerClient({
                 </div>
               ) : null}
               {error ? <p className="whitespace-pre-wrap rounded-md border border-rose-300/20 bg-rose-400/10 p-3 text-sm leading-6 text-rose-100">{error}</p> : null}
-              {pipelineReviewSegments?.length ? (
-                <div className="rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">
-                  <p className="font-semibold">需人工确认的转写片段：{pipelineReviewSegments.length}</p>
-                  <div className="mt-3 space-y-4">
-                    {pipelineReviewSegments.map((item, index) => (
-                      <article key={`${item.segment_index}-${index}`} className="rounded-md border border-amber-100/15 bg-black/15 p-3">
-                        <p className="font-semibold">
-                          {item.segment_index >= 0 ? `原始分段 #${item.segment_index + 1}` : "校正服务异常"}
-                          {item.start !== undefined ? ` · ${item.start.toFixed(1)}–${(item.end ?? item.start).toFixed(1)} 秒` : ""}
-                        </p>
-                        <p className="mt-1 text-xs text-amber-100/80">{item.reason}</p>
-                        {item.segment_index >= 0 ? (
-                          <>
-                            {videoObjectUrl && item.start !== undefined ? (
-                              <SegmentAudioPlayer src={videoObjectUrl} start={item.start} end={item.end ?? item.start + 8} />
-                            ) : (
-                              <p className="mt-2 text-xs">原本地视频已不可用，请重新选择同一文件后试听；不会自动提交。</p>
-                            )}
-                            <div className="mt-3 grid gap-3 md:grid-cols-2">
-                              <div>
-                                <p className="text-xs font-semibold">原始 ASR</p>
-                                <p className="mt-1 min-h-20 whitespace-pre-wrap rounded border border-white/10 bg-black/20 p-2 text-amber-50">{item.original_text || item.text || ""}</p>
-                              </div>
-                              <label>
-                                <span className="text-xs font-semibold">建议校正（可编辑）</span>
-                                <textarea
-                                  className="mt-1 min-h-20 w-full rounded border border-white/10 bg-ink/80 p-2 text-amber-50 outline-none focus:border-cyan/60"
-                                  value={reviewDrafts[item.segment_index] ?? item.suggested_text ?? ""}
-                                  disabled={Boolean(reviewConfirmed[item.segment_index])}
-                                  onChange={(event) => {
-                                    const next = { ...reviewDrafts, [item.segment_index]: event.target.value };
-                                    setReviewDrafts(next);
-                                    persistReviewAudit(reviewConfirmed, next);
-                                  }}
-                                />
-                              </label>
-                            </div>
-                            <button
-                              type="button"
-                              className="mt-3 rounded-md border border-amber-100/30 px-3 py-1 text-xs font-semibold disabled:opacity-60"
-                              disabled={Boolean(reviewConfirmed[item.segment_index])}
-                              onClick={() => confirmReviewSegment(item.segment_index)}
-                            >
-                              {reviewConfirmed[item.segment_index] ? "已确认" : "确认此段"}
-                            </button>
-                          </>
-                        ) : null}
-                      </article>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className="mt-4 inline-flex h-10 items-center gap-2 rounded-md bg-cyan px-4 text-sm font-semibold text-ink disabled:opacity-60"
-                    disabled={
-                      continuingReview ||
-                      pipelineReviewSegments.some((item) => item.segment_index < 0) ||
-                      pipelineReviewSegments.filter((item) => item.segment_index >= 0).some((item) => !reviewConfirmed[item.segment_index])
-                    }
-                    onClick={handleContinueReview}
-                  >
-                    {continuingReview ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
-                    全部确认后继续拆解
-                  </button>
-                  {pipelineTranscript ? <details className="mt-3"><summary className="cursor-pointer font-semibold">查看AI校正稿</summary><p className="mt-2 whitespace-pre-wrap text-amber-50">{pipelineTranscript}</p></details> : null}
-                  {pipelineRawTranscript ? <details className="mt-3"><summary className="cursor-pointer font-semibold">查看原始ASR转写</summary><p className="mt-2 whitespace-pre-wrap text-amber-50">{pipelineRawTranscript}</p></details> : null}
-                </div>
-              ) : null}
             </div>
           </div>
           {isWorkspace && controlPanelFooter ? <div className="space-y-5">{controlPanelFooter}</div> : null}
@@ -913,7 +683,7 @@ export function ViralAnalyzerClient({
                       <p>文件大小：{videoFile ? formatFileSize(videoFile.size) : "链接模式"}</p>
                       <p>分析来源：{pipelineSourceType === "uploaded_video_asr" ? "上传视频完整音轨" : pipelineSourceType === "link_video_asr" ? "链接视频音轨" : "仅基于公开信息（非完整拆解）"}</p>
                       <p>视频读取：{pipelineMetadata.downloadable ? "可用" : "受限，当前使用链接公开信息分析"}</p>
-                      {pipelineDiagnostics ? <p>视频时长：{pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；ASR 覆盖：{pipelineDiagnostics.asr_coverage_seconds.toFixed(1)} 秒；原始转写 {pipelineDiagnostics.raw_transcript_chars ?? pipelineDiagnostics.transcript_chars} 字；校正后 {pipelineDiagnostics.corrected_transcript_chars ?? pipelineDiagnostics.transcript_chars} 字；{pipelineDiagnostics.segment_count} 段；校正 {pipelineDiagnostics.correction_count ?? 0} 处；fallback：{pipelineDiagnostics.fallback ? "是" : "否"}</p> : null}
+                      {pipelineDiagnostics ? <p>视频时长：{pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；音频解析已完成；fallback：{pipelineDiagnostics.fallback ? "是" : "否"}</p> : null}
                     </div>
                   </div>
                 </div>
@@ -932,27 +702,6 @@ export function ViralAnalyzerClient({
               {result.cases?.length ? <ListCard title="案例" items={result.cases} /> : null}
               {result.data_points?.length ? <ListCard title="数据" items={result.data_points} /> : null}
               <ResultCard title={t.template}>{result.template}</ResultCard>
-              {pipelineTimeline?.length ? <ListCard title="时间轴 / 分段" items={pipelineTimeline.map((item) => `${item.timestamp} ${item.text}`)} /> : null}
-              {pipelineTranscript ? (
-                <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
-                  <h2 className="text-lg font-semibold text-white">自动转写稿（AI校正，建议人工复核）</h2>
-                  <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300">{pipelineTranscript}</p>
-                  {pipelineCorrections?.length ? (
-                    <details className="mt-4 rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm text-slate-300">
-                      <summary className="cursor-pointer font-semibold text-cyan">查看校正记录（{pipelineCorrections.length}条）</summary>
-                      <div className="mt-3 space-y-2">
-                        {pipelineCorrections.map((item, index) => <p key={`${item.segment_index}-${index}`}>{item.start !== undefined ? `${item.start.toFixed(1)}秒 ` : ""}{item.from} → {item.to}（{item.reason}）</p>)}
-                      </div>
-                    </details>
-                  ) : null}
-                  {pipelineRawTranscript ? (
-                    <details className="mt-4 rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm text-slate-300">
-                      <summary className="cursor-pointer font-semibold text-cyan">查看原始ASR转写</summary>
-                      <p className="mt-3 whitespace-pre-wrap leading-7">{pipelineRawTranscript}</p>
-                    </details>
-                  ) : null}
-                </section>
-              ) : null}
 
               <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-panel/80 p-5 shadow-glow">
                 <h2 className="text-lg font-semibold text-white">{t.rewrites}</h2>

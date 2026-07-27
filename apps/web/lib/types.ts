@@ -316,36 +316,6 @@ export type ViralPipelineMetadata = {
   downloadable: boolean;
 };
 
-export type ViralTimelineSegment = {
-  segment_index?: number;
-  start: number;
-  end: number;
-  timestamp: string;
-  text: string;
-};
-
-export type ViralTranscriptCorrection = {
-  segment_index: number;
-  start?: number;
-  end?: number;
-  from: string;
-  to: string;
-  type: string;
-  reason: string;
-  count?: number;
-  source?: string;
-};
-
-export type ViralTranscriptReviewSegment = {
-  segment_index: number;
-  start?: number;
-  end?: number;
-  text?: string;
-  original_text?: string;
-  suggested_text?: string;
-  reason: string;
-};
-
 export type ViralPipelineResult = {
   ok: boolean;
   success?: boolean;
@@ -362,7 +332,6 @@ export type ViralPipelineResult = {
   fallback_reason: string;
   project_id: string;
   transcript: string;
-  raw_transcript?: string;
   analysis: {
     topic: string;
     hook: string;
@@ -383,22 +352,6 @@ export type ViralPipelineResult = {
   full_rewrite_available?: boolean;
   rewrite_length_requested?: "short" | "medium" | "full";
   rewrite_length_effective?: "short" | "medium" | "full";
-  timeline?: ViralTimelineSegment[];
-  raw_timeline?: ViralTimelineSegment[];
-  corrections?: ViralTranscriptCorrection[];
-  correction_count?: number;
-  review_segments?: ViralTranscriptReviewSegment[];
-  review_context?: Record<string, unknown>;
-  review_token?: string;
-  correction_audit?: Array<{
-    segment_index: number;
-    start: number;
-    end: number;
-    original_text: string;
-    corrected_text: string;
-    source: string;
-    confirmed: boolean;
-  }>;
   degraded?: boolean;
   asr_provider?: string;
   diagnostics?: {

@@ -68,7 +68,7 @@ def _analysis(script_size=140):
 
 
 @pytest.mark.parametrize("duration", [30.0, 90.0, 119.0, 170.3, 600.0])
-def test_short_medium_long_video_keep_full_asr_timeline(monkeypatch, tmp_path: Path, duration: float):
+def test_short_medium_long_video_uses_internal_corrected_asr_without_exposing_transcript(monkeypatch, tmp_path: Path, duration: float):
     monkeypatch.setattr(viral_pipeline.settings, "viral_max_video_duration_seconds", 600)
     video = tmp_path / "video.mp4"
     video.write_bytes(b"video")
@@ -80,13 +80,19 @@ def test_short_medium_long_video_keep_full_asr_timeline(monkeypatch, tmp_path: P
             0,
             result=ASRResult(
                 ok=True,
-                transcript="第一段完整内容\n第二段完整内容",
-                segments=[ASRSegment(0, duration / 2, "第一段完整内容"), ASRSegment(duration / 2, duration, "第二段完整内容")],
+                transcript="完整财经转写内容" * int(duration * 3),
+                segments=[ASRSegment(0, duration / 2, "完整财经转写内容" * int(duration * 1.5)), ASRSegment(duration / 2, duration, "完整财经转写内容" * int(duration * 1.5))],
                 coverage_seconds=duration,
             ),
         ),
     )
-    monkeypatch.setattr(viral_pipeline, "analyze_viral_script", lambda *_args, **_kwargs: asyncio.sleep(0, result=_analysis()))
+    observed = {}
+
+    async def fake_analyze(*_args, **kwargs):
+        observed["raw_script"] = kwargs["raw_script"]
+        return _analysis()
+
+    monkeypatch.setattr(viral_pipeline, "analyze_viral_script", fake_analyze)
 
     result = asyncio.run(
         viral_pipeline._process_video_path(
@@ -105,8 +111,11 @@ def test_short_medium_long_video_keep_full_asr_timeline(monkeypatch, tmp_path: P
     )
 
     assert result["ok"] is True
-    assert result["transcript"].endswith("第二段完整内容")
-    assert len(result["timeline"]) == 2
+    assert observed["raw_script"].startswith("完整财经转写内容")
+    assert "transcript" not in result
+    assert "raw_transcript" not in result
+    assert "timeline" not in result
+    assert "review_segments" not in result
     assert result["diagnostics"]["asr_coverage_seconds"] == pytest.approx(duration, abs=0.001)
     assert result["degraded"] is False
 
@@ -167,8 +176,11 @@ def test_partial_asr_is_explicit_and_complete_failure_stops(monkeypatch, tmp_pat
         metadata={"duration": 170.0},
     )
     partial = asyncio.run(viral_pipeline._process_video_path(_Supabase(), **kwargs))
-    assert partial["ok"] is True and partial["degraded"] is True
-    assert "40.0/170.0" in partial["warning"]
+    assert partial["ok"] is False
+    assert partial["error_code"] == "asr_quality_insufficient"
+    assert partial["diagnostic"]["quality_check"] == "coverage"
+    assert "transcript" not in partial
+    assert "timeline" not in partial
 
     monkeypatch.setattr(viral_pipeline, "transcribe_audio", lambda *_args: asyncio.sleep(0, result=ASRResult(ok=False, fallback_reason="ASR provider failed")))
     failed = asyncio.run(viral_pipeline._process_video_path(_Supabase(), **kwargs))
@@ -186,7 +198,7 @@ def test_long_transcript_uses_every_chunk_and_full_rewrite_is_longer(monkeypatch
             seen_chunks.append(payload["transcript_chunk"])
             return {"summary": f"段落{payload['part']}摘要：" + payload["transcript_chunk"][:20]}
         full = any("完整版" in item for item in payload["requirements"])
-        size = 650 if full else 150
+        size = 1000 if full else 300
         scripts = [
             "。".join(f"观察编号{index}呈现用户需求变化" for index in range(size // 10)),
             "。".join(f"案例序号{index}说明产品应用场景" for index in range(size // 10)),
@@ -205,7 +217,9 @@ def test_long_transcript_uses_every_chunk_and_full_rewrite_is_longer(monkeypatch
 
     assert "".join(seen_chunks[:3]) == transcript
     assert full["diagnostics"]["hierarchical_chunk_count"] == 3
-    assert len(full["rewrites"][0]["script"]) > len(short["rewrites"][0]["script"]) * 2
+    assert viral_analyzer._cjk_len(full["rewrites"][0]["script"]) >= 900
+    assert viral_analyzer._cjk_len(short["rewrites"][0]["script"]) >= 250
+    assert viral_analyzer._cjk_len(full["rewrites"][0]["script"]) > viral_analyzer._cjk_len(short["rewrites"][0]["script"]) * 2
 
 
 def test_public_metadata_full_mode_is_downgraded_to_finite_summary(monkeypatch):
@@ -306,9 +320,9 @@ def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
         if "current_rewrites" not in payload:
             return _analysis(100)
         scripts = [
-            "。".join(f"原稿事实甲的论证步骤{i}仍受转写内容约束" for i in range(35)),
-            "。".join(f"原稿案例乙的条件与结论{i}均保留限定语" for i in range(35)),
-            "。".join(f"原稿数据丙的意义分析{i}不增加任何新数字" for i in range(35)),
+            "。".join(f"原稿事实甲的论证步骤{i}仍受转写内容约束" for i in range(60)),
+            "。".join(f"原稿案例乙的条件与结论{i}均保留限定语" for i in range(60)),
+            "。".join(f"原稿数据丙的意义分析{i}不增加任何新数字" for i in range(60)),
         ]
         return {"rewrites": [{"title": f"版本{i}", "script": scripts[i - 1]} for i in range(1, 4)]}
 
@@ -327,9 +341,9 @@ def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
     )
 
     assert len(calls) == 2
-    assert all(length >= 400 for length in result["diagnostics"]["rewrite_actual_chars"])
+    assert all(length >= 900 for length in result["diagnostics"]["rewrite_actual_chars"])
     assert "corrected_transcript" in calls[1]
-    assert calls[1]["requirements"][1].startswith("保留转写稿中的主要事实")
+    assert any("主要观点、论据、案例、数据和行动建议" in item for item in calls[1]["requirements"])
 
 
 def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
@@ -355,7 +369,8 @@ def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
     assert detail["code"] == "analysis_output_too_short"
     assert detail["stage"] == "rewriting"
     assert detail["retryable"] is False
-    assert detail["target_chars"] == 400
+    assert detail["target_chars"] == 900
+    assert detail["length_unit"] == "cjk_chars"
     assert len(detail["actual_chars"]) == 3
 
 
@@ -391,15 +406,12 @@ def test_frontend_upload_branch_sends_real_file_before_link_pipeline():
     assert upload_branch < link_branch
 
 
-def test_frontend_review_player_is_hard_bounded_and_confirmation_payload_is_local():
+def test_frontend_review_player_and_confirmation_flow_are_removed():
     source = (Path(__file__).parents[2] / "web" / "components" / "ViralAnalyzerClient.tsx").read_text(encoding="utf-8")
 
-    assert "const clipEnd = Math.max(start, Math.min(end, start + 8))" in source
-    assert "onLoadedMetadata={seekToClipStart}" in source
-    assert "audio.currentTime >= clipEnd" in source
-    assert "audio.currentTime = clipEnd" in source
-    assert "segment_index: item.segment_index" in source
-    assert "corrected_text: (reviewDrafts[item.segment_index] || \"\").trim()" in source
+    assert "SegmentAudioPlayer" not in source
+    assert "reviewDrafts" not in source
+    assert "确认此段" not in source
     assert 'formData.set("video_file", videoFile)' in source
     assert "runUploadedViralPipeline(formData" in source
 
@@ -465,14 +477,21 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "ASR 模型不可用" in component_source
     assert "AI 响应格式错误" in component_source
     assert "请求 ID：" in component_source
-    assert "自动转写稿（AI校正，建议人工复核）" in component_source
-    assert "查看原始ASR转写" in component_source
-    assert "校正" in component_source
-    assert "确认此段" in component_source
-    assert "全部确认后继续拆解" in component_source
-    assert "SegmentAudioPlayer" in component_source
-    assert "continueReviewedViralPipeline" in component_source
+    assert "约 250–450 中文字符" in component_source
+    assert "约 500–800 中文字符" in component_source
+    assert "约 900–1500 中文字符" in component_source
+    assert "自动转写稿（AI校正，建议人工复核）" not in component_source
+    assert "查看原始ASR转写" not in component_source
+    assert "确认此段" not in component_source
+    assert "全部确认后继续拆解" not in component_source
+    assert "SegmentAudioPlayer" not in component_source
+    assert "continueReviewedViralPipeline" not in component_source
     assert "setUploadProgress(null)" in component_source
+
+
+def test_review_continuation_endpoint_and_public_payload_are_removed():
+    paths = {route.path for route in viral_api.router.routes}
+    assert "/pipeline/continue" not in paths
 
 
 def test_real_multipart_12_7mb_route_and_cors(monkeypatch):

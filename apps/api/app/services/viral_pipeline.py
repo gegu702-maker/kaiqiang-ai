@@ -18,7 +18,7 @@ from app.services.financial_transcript import CorrectionResult, correct_financia
 from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.core.config import settings
 from app.services.viral_diagnostics import current_request_id
-from app.services.viral_review import create_review_token, verify_review_token
+from app.services.viral_review import verify_review_token
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio, probe_media_duration
 from app.services.video_link_resolver import resolve_video_link
 from app.services.viral_analyzer import FINAL_REWRITE_LIMIT, analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, smooth_spoken_script
@@ -41,6 +41,8 @@ class ViralPipelineStatus(str, Enum):
 
 REWRITE_TITLES = ["版本A：热点反差版", "版本B：用户痛点版", "版本C：商业机会版"]
 MIN_REWRITE_CJK_CHARS = 80
+MIN_ASR_COVERAGE_RATIO = 0.90
+MIN_ASR_CJK_CHARS_PER_SECOND = 2.0
 LANGUAGE_LABELS = {
     "zh": "中文",
     "en": "English",
@@ -87,7 +89,6 @@ def _failed(
         "fallback_options": FALLBACK_OPTIONS,
         "fallback_reason": fallback_reason,
         "project_id": "",
-        "transcript": "",
         "analysis": None,
         "rewrites": [],
         "metadata": metadata or {},
@@ -199,6 +200,31 @@ def _has_enough_metadata_text(text: str) -> bool:
 
 def _cjk_len(value: str) -> int:
     return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
+
+
+def _asr_quality_diagnostic(*, transcript: str, coverage_seconds: float, duration_seconds: float, language: str) -> dict[str, Any] | None:
+    coverage_ratio = coverage_seconds / duration_seconds if duration_seconds else 1.0
+    if duration_seconds and coverage_ratio < MIN_ASR_COVERAGE_RATIO:
+        return {
+            "quality_check": "coverage",
+            "coverage_seconds": round(coverage_seconds, 3),
+            "duration_seconds": round(duration_seconds, 3),
+            "coverage_ratio": round(coverage_ratio, 3),
+            "minimum_coverage_ratio": MIN_ASR_COVERAGE_RATIO,
+        }
+    if language == "zh" and coverage_seconds >= 60:
+        cjk_chars = _cjk_len(transcript)
+        density = cjk_chars / coverage_seconds
+        if density < MIN_ASR_CJK_CHARS_PER_SECOND:
+            return {
+                "quality_check": "transcript_density",
+                "coverage_seconds": round(coverage_seconds, 3),
+                "duration_seconds": round(duration_seconds, 3),
+                "cjk_chars": cjk_chars,
+                "cjk_chars_per_second": round(density, 3),
+                "minimum_cjk_chars_per_second": MIN_ASR_CJK_CHARS_PER_SECOND,
+            }
+    return None
 
 
 PIPELINE_CTA_POOL = [
@@ -346,10 +372,10 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
 
 async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], language: str, rewrite_length: str = "short") -> list[dict[str, str]]:
     length_guidance = {
-        "short": "30–60 秒，中文约 120–240 字",
-        "medium": "60–120 秒，中文约 240–500 字",
-        "full": "完整版，保留原内容主要观点、论据、案例和数据；长视频中文通常 500–1200 字",
-    }.get(rewrite_length, "30–60 秒，中文约 120–240 字")
+        "short": "短版，实际中文字符约 250–450，聚焦一个核心判断与行动建议",
+        "medium": "中版，实际中文字符约 500–800，展开主要观点和关键论据",
+        "full": "完整版，实际中文字符约 900–1500，覆盖主要观点、论据、案例、数据和行动建议",
+    }.get(rewrite_length, "短版，实际中文字符约 250–450，聚焦一个核心判断与行动建议")
     payload = {
         "language": LANGUAGE_LABELS.get(language, "中文"),
         "transcript": transcript,
@@ -511,10 +537,24 @@ async def _process_video_path(
         return result
 
     raw_segments = asr.segments or []
-    raw_timeline = [
-        {"segment_index": index, "start": segment.start, "end": segment.end, "timestamp": f"{_format_timestamp(segment.start)}–{_format_timestamp(segment.end)}", "text": segment.text}
-        for index, segment in enumerate(raw_segments)
-    ]
+    quality_error = _asr_quality_diagnostic(
+        transcript=asr.transcript,
+        coverage_seconds=asr.coverage_seconds,
+        duration_seconds=duration,
+        language=language,
+    )
+    if quality_error:
+        result = _failed(
+            status=ViralPipelineStatus.TRANSCRIBING,
+            fallback_reason="转写质量不足，未生成拆解。请重新上传清晰原视频或粘贴原文。",
+            metadata=metadata,
+            error_code="asr_quality_insufficient",
+            retryable=True,
+            diagnostic=quality_error,
+        )
+        result.update({"source_type": source_type, "degraded": True, "asr_provider": asr.provider})
+        _log_diagnostics({"source_type": source_type, "video_duration_seconds": duration, "asr_coverage_seconds": asr.coverage_seconds, "transcript_chars": 0, "segment_count": 0, "fallback": False, "prompt_input_chars": 0, "output_chars": 0})
+        return result
     if settings.viral_asr_domain.strip().lower() == "financial":
         correction = await correct_financial_transcript(raw_segments, language)
     else:
@@ -527,17 +567,7 @@ async def _process_video_path(
             provider="none",
         )
     corrected_transcript = correction.corrected_transcript
-    timeline = [
-        {"segment_index": index, "start": segment.start, "end": segment.end, "timestamp": f"{_format_timestamp(segment.start)}–{_format_timestamp(segment.end)}", "text": segment.text}
-        for index, segment in enumerate(correction.corrected_segments)
-    ]
     correction_count = sum(int(item.get("count") or 1) for item in correction.corrections)
-    coverage_ratio = asr.coverage_seconds / duration if duration else 1.0
-    degraded = bool(duration and coverage_ratio < 0.8)
-    warnings = ["自动转写已进行AI金融术语校正，仍建议结合原视频人工复核。"] if correction.provider != "none" else []
-    if degraded:
-        warnings.append(f"ASR 仅覆盖到 {asr.coverage_seconds:.1f}/{duration:.1f} 秒，结果可能不完整。")
-    warning = " ".join(warnings)
     correction_diagnostics = {
         "source_type": source_type,
         "video_duration_seconds": round(duration, 3),
@@ -545,7 +575,7 @@ async def _process_video_path(
         "transcript_chars": len(corrected_transcript),
         "raw_transcript_chars": len(asr.transcript),
         "corrected_transcript_chars": len(corrected_transcript),
-        "segment_count": len(timeline),
+        "segment_count": len(correction.corrected_segments),
         "correction_count": correction_count,
         "review_segment_count": len(correction.review_segments),
         "asr_recovery_attempted": asr.recovery_attempted,
@@ -555,54 +585,22 @@ async def _process_video_path(
         "output_chars": 0,
     }
     if not correction.quality_passed:
-        review_context = {
-            "request_id": request_id,
-            "raw_transcript": asr.transcript,
-            "raw_timeline": raw_timeline,
-            "suggested_timeline": timeline,
-            "review_indices": sorted({int(item["segment_index"]) for item in correction.review_segments if int(item.get("segment_index", -1)) >= 0}),
-            "global_review_reasons": [
-                str(item.get("reason") or "校正服务异常")
-                for item in correction.review_segments
-                if int(item.get("segment_index", -1)) < 0
-            ],
-            "metadata": metadata,
-            "diagnostics": correction_diagnostics,
-            "source_type": source_type,
-            "corrections": correction.corrections,
-        }
         result = _failed(
             status=ViralPipelineStatus.TRANSCRIBING,
-            fallback_reason="金融语义质量检查发现仍需人工确认的片段，已停止下游拆解，避免错误扩散。",
+            fallback_reason="转写校正质量不足，未生成拆解。请重新上传清晰原视频或粘贴原文。",
             metadata=metadata,
-            error_code="transcript_review_required",
-            retryable=False,
-            diagnostic={"review_segment_count": len(correction.review_segments)},
+            error_code="transcript_quality_insufficient",
+            retryable=True,
+            diagnostic={"quality_check": "financial_correction", "review_segment_count": len(correction.review_segments)},
         )
-        result.update(
-            {
-                "source_type": source_type,
-                "degraded": True,
-                "transcript": corrected_transcript,
-                "raw_transcript": asr.transcript,
-                "timeline": timeline,
-                "raw_timeline": raw_timeline,
-                "corrections": correction.corrections,
-                "correction_count": correction_count,
-                "review_segments": correction.review_segments,
-                "review_context": review_context,
-                "review_token": create_review_token(review_context),
-                "diagnostics": correction_diagnostics,
-                "warning": warning,
-            }
-        )
+        result.update({"source_type": source_type, "degraded": True, "asr_provider": asr.provider})
         _log_diagnostics(correction_diagnostics)
         return result
     logger.info(
         "viral_pipeline request_id=%s stage=analyzing outcome=started transcript_chars=%s segment_count=%s coverage_seconds=%.3f",
         request_id,
         len(corrected_transcript),
-        len(timeline),
+        len(correction.corrected_segments),
         asr.coverage_seconds,
     )
     try:
@@ -632,7 +630,7 @@ async def _process_video_path(
         "transcript_chars": len(corrected_transcript),
         "raw_transcript_chars": len(asr.transcript),
         "corrected_transcript_chars": len(corrected_transcript),
-        "segment_count": len(timeline),
+        "segment_count": len(correction.corrected_segments),
         "correction_count": correction_count,
         "review_segment_count": len(correction.review_segments),
         "asr_recovery_attempted": asr.recovery_attempted,
@@ -653,20 +651,13 @@ async def _process_video_path(
         "fallback_options": [],
         "fallback_reason": "",
         "project_id": project_id,
-        "transcript": corrected_transcript,
-        "raw_transcript": asr.transcript,
-        "timeline": timeline,
-        "raw_timeline": raw_timeline,
-        "corrections": correction.corrections,
-        "correction_count": correction_count,
-        "review_segments": correction.review_segments,
         "analysis": _analysis_payload(analysis),
         "rewrites": rewrites,
         "metadata": metadata,
         "source_type": source_type,
-        "analysis_quality": "partial" if degraded else "full",
-        "degraded": degraded,
-        "warning": warning,
+        "analysis_quality": "full",
+        "degraded": False,
+        "warning": "视频音频已完成内部转写与术语校正。",
         "asr_provider": asr.provider,
         "diagnostics": diagnostics,
         "code": "",
@@ -840,7 +831,7 @@ async def _share_text_fallback_analysis(
     }
 
 
-async def continue_reviewed_viral_pipeline(
+async def _legacy_review_continuation_not_exposed(
     supabase: Client,
     *,
     user_id: str,

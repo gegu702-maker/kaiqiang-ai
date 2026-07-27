@@ -6,7 +6,6 @@ from app.core.config import Settings
 from app.services import asr_service, financial_transcript, viral_pipeline
 from app.services.asr_service import ASRResult, ASRSegment
 from app.services.financial_terms import FINANCIAL_HOTWORDS, FINANCIAL_INITIAL_PROMPT, FINANCIAL_TERM_CORRECTIONS
-from app.services.viral_review import create_review_token
 
 
 class _Table:
@@ -299,12 +298,12 @@ def test_downstream_analysis_uses_corrected_transcript(monkeypatch, tmp_path: Pa
 
     assert result["ok"] is True
     assert observed["raw_script"] == "中国人保在关键节点投下信心票。"
-    assert result["transcript"] == observed["raw_script"]
-    assert result["raw_transcript"] == raw
-    assert result["correction_count"] == 3
+    assert "transcript" not in result
+    assert "raw_transcript" not in result
+    assert result["diagnostics"]["correction_count"] == 3
 
 
-def test_review_continue_blocks_unconfirmed_and_uses_human_text(monkeypatch):
+def _legacy_review_continue_blocks_unconfirmed_and_uses_human_text(monkeypatch):
     context = {
         "request_id": "viral_original",
         "raw_transcript": "中国人宝回购。\n沪深�指数。",
@@ -326,7 +325,7 @@ def test_review_continue_blocks_unconfirmed_and_uses_human_text(monkeypatch):
     monkeypatch.setattr(viral_pipeline.settings, "viral_review_signing_secret", "test-review-secret")
     token = create_review_token(context)
     blocked = asyncio.run(
-        viral_pipeline.continue_reviewed_viral_pipeline(
+        viral_pipeline._legacy_review_continuation_not_exposed(
             _Supabase(),
             user_id="u1",
             email="u@example.com",
@@ -349,7 +348,7 @@ def test_review_continue_blocks_unconfirmed_and_uses_human_text(monkeypatch):
 
     monkeypatch.setattr(viral_pipeline, "analyze_viral_script", fake_analysis)
     completed = asyncio.run(
-        viral_pipeline.continue_reviewed_viral_pipeline(
+        viral_pipeline._legacy_review_continuation_not_exposed(
             _Supabase(),
             user_id="u1",
             email="u@example.com",
