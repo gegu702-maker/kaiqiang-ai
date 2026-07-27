@@ -465,8 +465,9 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "new XMLHttpRequest()" in api_source
     assert "request.upload.onprogress" in api_source
     assert "client_timeout" in api_source and "request_aborted" in api_source
-    assert "cors_preflight_failed" in api_source
-    assert "api_unreachable_after_preflight" in api_source
+    assert 'method: "OPTIONS"' not in api_source
+    assert "cors_preflight_failed" not in api_source
+    assert "cors_or_api_unreachable" in api_source
     assert "api_unauthorized" in api_source and "upload_too_large" in api_source and "api_server_error" in api_source
     assert "const CLIENT_API_URL" in api_source
     assert "process.env.SERVER_API_URL || CLIENT_API_URL" in api_source
@@ -504,6 +505,7 @@ def test_review_continuation_endpoint_and_public_payload_are_removed():
 
 def test_real_multipart_12_7mb_route_and_cors(monkeypatch):
     observed = {}
+    preview_origin = "https://kaiqiang-ai-git-p237-long-video-d-eedb85-kaiqiang-ai-s-projects.vercel.app"
 
     async def fake_pipeline(_supabase, **kwargs):
         observed["filename"] = kwargs["upload"].filename
@@ -515,7 +517,7 @@ def test_real_multipart_12_7mb_route_and_cors(monkeypatch):
     app = FastAPI()
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["https://preview.example"],
+        allow_origins=[preview_origin],
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -526,21 +528,32 @@ def test_real_multipart_12_7mb_route_and_cors(monkeypatch):
     preflight = client.options(
         "/api/viral/pipeline/upload",
         headers={
-            "Origin": "https://preview.example",
+            "Origin": preview_origin,
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "authorization,content-type",
         },
     )
     assert preflight.status_code == 200
-    assert preflight.headers["access-control-allow-origin"] == "https://preview.example"
+    assert preflight.headers["access-control-allow-origin"] == preview_origin
+    assert "POST" in preflight.headers["access-control-allow-methods"]
+    allowed_headers = preflight.headers["access-control-allow-headers"].lower()
+    assert "authorization" in allowed_headers
+    assert "content-type" in allowed_headers
+
+    plain_options = client.options(
+        "/api/viral/pipeline/upload",
+        headers={"Origin": preview_origin},
+    )
+    assert plain_options.status_code == 204
+    assert plain_options.headers["access-control-allow-origin"] == preview_origin
 
     payload = b"x" * 13_299_712
     response = client.post(
         "/api/viral/pipeline/upload",
-        headers={"Origin": "https://preview.example", "Authorization": "Bearer token"},
+        headers={"Origin": preview_origin, "Authorization": "Bearer token"},
         files={"video_file": ("170-seconds.mp4", payload, "video/mp4")},
         data={"industry": "knowledge", "language": "zh", "rewrite_length": "full"},
     )
     assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "https://preview.example"
+    assert response.headers["access-control-allow-origin"] == preview_origin
     assert observed == {"filename": "170-seconds.mp4", "size": len(payload)}

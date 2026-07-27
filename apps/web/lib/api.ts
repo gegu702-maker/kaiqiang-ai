@@ -267,34 +267,6 @@ export async function runUploadedViralPipeline(
   onProgress?: (progress: ViralUploadProgress) => void,
 ): Promise<ViralPipelineResult> {
   const url = `${API_URL}/api/viral/pipeline/upload`;
-  try {
-    // Run a readable CORS probe first so a failed automatic XHR preflight is
-    // reported as CORS, rather than being collapsed into a generic network error.
-    const preflight = await fetch(url, {
-      method: "OPTIONS",
-      headers: {
-        Authorization: `Bearer ${accessToken || "preview-preflight"}`,
-        "Content-Type": "application/json",
-      },
-      cache: "no-store",
-    });
-    if (!preflight.ok) {
-      throw new Error(`HTTP ${preflight.status}`);
-    }
-  } catch (error) {
-    throw new Error(
-      [
-        "上传 CORS 预检失败",
-        "code: cors_preflight_failed",
-        "stage: uploading",
-        "request_id: unavailable（请求未进入上传 API）",
-        "retryable: true",
-        `endpoint: ${url}`,
-        `origin: ${window.location.origin}`,
-        `原因: ${error instanceof Error ? error.message : stringifyDetail(error)}`,
-      ].join("\n"),
-    );
-  }
   return new Promise<ViralPipelineResult>((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", url);
@@ -327,13 +299,13 @@ export async function runUploadedViralPipeline(
         new Error(
           [
             "上传请求失败",
-            "code: api_unreachable_after_preflight",
+            "code: cors_or_api_unreachable",
             "stage: uploading",
             "request_id: unavailable（请求未取得API响应）",
             "retryable: true",
             `endpoint: ${url}`,
             `origin: ${window.location.origin}`,
-            "CORS 预检已通过，但 POST 未获得响应；请检查 API 域名、证书、反向代理上传限制或网络中断。",
+            "浏览器自动 CORS 预检或 POST 网络链路未取得可读响应；请检查开发者工具 Network 中的 OPTIONS/POST 状态。",
           ].join("\n"),
         ),
       );

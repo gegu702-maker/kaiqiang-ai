@@ -3,7 +3,7 @@ import logging
 
 from typing import Literal
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from supabase import Client
 
 from app.core.auth import get_authenticated_user, get_bearer_token
@@ -212,3 +212,9 @@ async def run_uploaded_viral_agent_pipeline(
         return result
     finally:
         reset_request_id(context_token)
+
+
+@router.options("/pipeline/upload", include_in_schema=False)
+async def uploaded_viral_pipeline_options() -> Response:
+    """Keep non-preflight OPTIONS probes from falling through to FastAPI's 405."""
+    return Response(status_code=204)
