@@ -515,6 +515,15 @@ async def _process_video_path(
         request_id,
         audio_path.stat().st_size if audio_path.exists() else -1,
     )
+    try:
+        audio_duration = await probe_media_duration(audio_path)
+    except RuntimeError:
+        audio_duration = 0.0
+    logger.info(
+        "viral_pipeline request_id=%s stage=extracting_audio outcome=duration audio_duration_seconds=%.3f",
+        request_id,
+        audio_duration,
+    )
 
     asr = await transcribe_audio(audio_path, language, duration)
     if not asr.ok:
@@ -553,7 +562,7 @@ async def _process_video_path(
             diagnostic=quality_error,
         )
         result.update({"source_type": source_type, "degraded": True, "asr_provider": asr.provider})
-        _log_diagnostics({"source_type": source_type, "video_duration_seconds": duration, "asr_coverage_seconds": asr.coverage_seconds, "transcript_chars": 0, "segment_count": 0, "fallback": False, "prompt_input_chars": 0, "output_chars": 0})
+        _log_diagnostics({"source_type": source_type, "video_duration_seconds": duration, "audio_duration_seconds": audio_duration, "asr_coverage_seconds": asr.coverage_seconds, "last_timestamp_seconds": asr.last_timestamp_seconds, "transcript_chars": len(asr.transcript), "raw_transcript_chars": asr.raw_transcript_chars, "segment_count": len(raw_segments), "raw_segment_count": asr.raw_segment_count, "fallback": False, "prompt_input_chars": 0, "output_chars": 0})
         return result
     if settings.viral_asr_domain.strip().lower() == "financial":
         correction = await correct_financial_transcript(raw_segments, language)
@@ -571,11 +580,15 @@ async def _process_video_path(
     correction_diagnostics = {
         "source_type": source_type,
         "video_duration_seconds": round(duration, 3),
+        "audio_duration_seconds": round(audio_duration, 3),
         "asr_coverage_seconds": round(asr.coverage_seconds, 3),
+        "last_timestamp_seconds": round(asr.last_timestamp_seconds, 3),
         "transcript_chars": len(corrected_transcript),
         "raw_transcript_chars": len(asr.transcript),
         "corrected_transcript_chars": len(corrected_transcript),
         "segment_count": len(correction.corrected_segments),
+        "raw_segment_count": asr.raw_segment_count,
+        "word_timestamp_chars": asr.word_timestamp_chars,
         "correction_count": correction_count,
         "review_segment_count": len(correction.review_segments),
         "asr_recovery_attempted": asr.recovery_attempted,
@@ -638,6 +651,9 @@ async def _process_video_path(
         "fallback": False,
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
+        "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
+        "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
+        "length_unit": "cjk_chars",
     }
     _log_diagnostics(diagnostics)
     return {
@@ -718,6 +734,9 @@ async def _metadata_fallback_analysis(
         "fallback": True,
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
+        "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
+        "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
+        "length_unit": "cjk_chars",
     }
     _log_diagnostics(diagnostics)
     return {
@@ -798,6 +817,9 @@ async def _share_text_fallback_analysis(
         "fallback": True,
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
+        "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
+        "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
+        "length_unit": "cjk_chars",
     }
     _log_diagnostics(diagnostics)
     return {

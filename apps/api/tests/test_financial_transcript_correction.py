@@ -192,7 +192,7 @@ def test_word_timestamp_context_merges_china_ping_an_before_residual_review():
         )
     ]
 
-    segments, transcript, coverage = asr_service._normalize_transcription(iter(source))
+    segments, transcript, coverage, *_diagnostics = asr_service._normalize_transcription(iter(source))
 
     assert "中国平安" in transcript
     assert coverage == 61.0
@@ -216,12 +216,27 @@ def test_pathological_word_timestamp_is_split_into_review_safe_intervals():
         )
     ]
 
-    segments, transcript, coverage = asr_service._normalize_transcription(iter(source))
+    segments, transcript, coverage, *_diagnostics = asr_service._normalize_transcription(iter(source))
 
     assert transcript.replace("\n", "") == source[0].text
     assert coverage == 101.9
     assert len(segments) == 4
     assert max(segment.end - segment.start for segment in segments) <= 8.0
+
+
+def test_sparse_word_timestamps_do_not_discard_complete_segment_text():
+    full_text = "财经市场的完整观点和论据需要保留，不能因为词级时间戳稀疏而丢失正文。" * 8
+    source = SimpleNamespace(
+        start=0,
+        end=64,
+        text=full_text,
+        words=[SimpleNamespace(start=0, end=64, word="财经市场")],
+    )
+
+    chunks = asr_service._split_transcription_segment(source)
+
+    assert "".join(item.text for item in chunks) == full_text
+    assert max(item.end - item.start for item in chunks) <= 8.0
 
 
 def test_unicode_replacement_is_removed_and_exact_segment_requires_review(monkeypatch):

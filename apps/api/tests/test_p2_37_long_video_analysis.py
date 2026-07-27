@@ -473,13 +473,16 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "文件大小：" in component_source
     assert "仅基于公开信息（非完整拆解）" in component_source
     assert "完整版已禁用。请上传视频或粘贴原文" in component_source
-    assert 'disabled={!fullRewriteAvailable}' in component_source
+    assert "公开信息摘要（长度取决于可用信息）" in component_source
+    assert "hasCompleteUserInput" in component_source
+    assert "setFullRewriteAvailable(true);" in component_source
     assert "ASR 模型不可用" in component_source
     assert "AI 响应格式错误" in component_source
     assert "请求 ID：" in component_source
     assert "约 250–450 中文字符" in component_source
     assert "约 500–800 中文字符" in component_source
     assert "约 900–1500 中文字符" in component_source
+    assert "实际中文字数：" in component_source
     assert "自动转写稿（AI校正，建议人工复核）" not in component_source
     assert "查看原始ASR转写" not in component_source
     assert "确认此段" not in component_source

@@ -186,6 +186,8 @@ export function ViralAnalyzerClient({
   const [runStage, setRunStage] = useState<"idle" | "checking" | "uploading" | "processing" | "pipeline" | "manual">("idle");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const t = analyzerCopy[language];
+  const hasCompleteUserInput = Boolean(videoFile || (rawScript.trim() && !looksLikeUrl(rawScript)));
+  const isPublicMetadataFallback = !hasCompleteUserInput && (pipelineSourceType === "link_metadata_fallback" || pipelineSourceType === "share_text_fallback");
   const linkCheckCopy =
     language === "zh"
       ? {
@@ -326,6 +328,11 @@ export function ViralAnalyzerClient({
     setVideoFile(file);
     setVideoDuration(null);
     setUploadProgress(null);
+    // A previously analyzed link may have been public-metadata-only. A real
+    // upload is independent evidence and must immediately restore all modes.
+    setFullRewriteAvailable(true);
+    setPipelineSourceType("");
+    setPipelineWarning("");
     if (!file) return;
     const objectUrl = URL.createObjectURL(file);
     const media = document.createElement("video");
@@ -573,11 +580,17 @@ export function ViralAnalyzerClient({
                   value={rewriteLength}
                   onChange={(event) => setRewriteLength(event.target.value as "short" | "medium" | "full")}
                 >
-                  <option value="short">短版（约 250–450 中文字符）</option>
-                  <option value="medium">中版（约 500–800 中文字符）</option>
-                  <option value="full" disabled={!fullRewriteAvailable}>完整版（约 900–1500 中文字符）</option>
+                  {isPublicMetadataFallback ? (
+                    <option value="short">公开信息摘要（长度取决于可用信息）</option>
+                  ) : (
+                    <>
+                      <option value="short">短版（约 250–450 中文字符）</option>
+                      <option value="medium">中版（约 500–800 中文字符）</option>
+                      <option value="full">完整版（约 900–1500 中文字符）</option>
+                    </>
+                  )}
                 </select>
-                {!fullRewriteAvailable ? <span className="mt-2 block text-xs leading-5 text-amber-100">当前仅能生成“仅基于公开信息（非完整拆解）”，完整版已禁用。请上传视频或粘贴原文。</span> : null}
+                {isPublicMetadataFallback && !fullRewriteAvailable ? <span className="mt-2 block text-xs leading-5 text-amber-100">当前仅能生成“仅基于公开信息（非完整拆解）”，完整版已禁用。请上传视频或粘贴原文。</span> : null}
               </label>
 
               <div className={isWorkspace ? "grid gap-3" : "grid gap-3 sm:grid-cols-2"}>
@@ -684,6 +697,7 @@ export function ViralAnalyzerClient({
                       <p>分析来源：{pipelineSourceType === "uploaded_video_asr" ? "上传视频完整音轨" : pipelineSourceType === "link_video_asr" ? "链接视频音轨" : "仅基于公开信息（非完整拆解）"}</p>
                       <p>视频读取：{pipelineMetadata.downloadable ? "可用" : "受限，当前使用链接公开信息分析"}</p>
                       {pipelineDiagnostics ? <p>视频时长：{pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；音频解析已完成；fallback：{pipelineDiagnostics.fallback ? "是" : "否"}</p> : null}
+                      {pipelineDiagnostics?.rewrite_actual_chars?.length ? <p>实际中文字数：{pipelineDiagnostics.rewrite_actual_chars.join(" / ")}；目标下限：{pipelineDiagnostics.rewrite_target_chars ?? "—"}</p> : null}
                     </div>
                   </div>
                 </div>

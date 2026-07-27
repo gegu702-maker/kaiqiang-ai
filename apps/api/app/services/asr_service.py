@@ -56,7 +56,15 @@ def _split_text_interval(text: str, start: float, end: float, max_seconds: float
 
 def _split_transcription_segment(segment, max_seconds: float = 8.0) -> list[ASRSegment]:
     words = [word for word in (getattr(segment, "words", None) or []) if str(getattr(word, "word", "")).strip()]
-    if words:
+    segment_text = str(getattr(segment, "text", "")).strip()
+    compact_segment_text = "".join(segment_text.split())
+    compact_word_text = "".join(str(getattr(word, "word", "")) for word in words).strip()
+    # Faster-Whisper may expose only a sparse subset of word timestamps for a
+    # complete segment. Never replace the segment's recognized text with that
+    # sparse subset: it creates a deceptively full time range with a truncated
+    # transcript. Fall back to bounded sentence splitting in that case.
+    word_timestamps_complete = not compact_segment_text or len(compact_word_text) >= len(compact_segment_text) * 0.7
+    if words and word_timestamps_complete:
         chunks: list[ASRSegment] = []
         chunk_words = []
         for word in words:
@@ -98,7 +106,7 @@ def _split_transcription_segment(segment, max_seconds: float = 8.0) -> list[ASRS
             )
         return chunks
 
-    text = str(segment.text).strip()
+    text = segment_text
     if not text:
         return []
     start = float(segment.start)
@@ -165,15 +173,25 @@ class ASRResult:
     diagnostic: str = ""
     recovery_attempted: bool = False
     recovery_used: bool = False
+    last_timestamp_seconds: float = 0.0
+    raw_segment_count: int = 0
+    raw_transcript_chars: int = 0
+    word_timestamp_chars: int = 0
 
 
-def _normalize_transcription(segments) -> tuple[list[ASRSegment], str, float]:
+def _normalize_transcription(segments) -> tuple[list[ASRSegment], str, float, int, int, int]:
+    raw_segments = list(segments)
+    raw_transcript_chars = sum(len(str(getattr(segment, "text", "")).strip()) for segment in raw_segments)
+    word_timestamp_chars = sum(
+        len("".join(str(getattr(word, "word", "")) for word in (getattr(segment, "words", None) or [])))
+        for segment in raw_segments
+    )
     normalized = _merge_short_adjacent_context(
-        [chunk for segment in segments for chunk in _split_transcription_segment(segment)]
+        [chunk for segment in raw_segments for chunk in _split_transcription_segment(segment)]
     )
     transcript = "\n".join(segment.text for segment in normalized).strip()
     coverage = max((segment.end for segment in normalized), default=0.0)
-    return normalized, transcript, coverage
+    return normalized, transcript, coverage, len(raw_segments), raw_transcript_chars, word_timestamp_chars
 
 
 def _needs_vad_recovery(*, transcript: str, coverage_seconds: float, expected_duration: float, language: str) -> bool:
@@ -246,7 +264,7 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
         if domain == "financial" and settings.viral_asr_use_hotwords:
             transcribe_options["hotwords"] = FINANCIAL_HOTWORDS
         segments, _info = model.transcribe(str(audio_path), **transcribe_options)
-        normalized_segments, transcript, coverage_seconds = _normalize_transcription(segments)
+        normalized_segments, transcript, coverage_seconds, raw_segment_count, raw_transcript_chars, word_timestamp_chars = _normalize_transcription(segments)
         recovery_attempted = _needs_vad_recovery(
             transcript=transcript,
             coverage_seconds=coverage_seconds,
@@ -265,11 +283,14 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
             )
             recovery_options = {**transcribe_options, "vad_filter": False}
             recovery_segments, _recovery_info = model.transcribe(str(audio_path), **recovery_options)
-            recovered_normalized, recovered_transcript, recovered_coverage = _normalize_transcription(recovery_segments)
+            recovered_normalized, recovered_transcript, recovered_coverage, recovered_raw_segment_count, recovered_raw_transcript_chars, recovered_word_timestamp_chars = _normalize_transcription(recovery_segments)
             if len(recovered_transcript) > len(transcript) or recovered_coverage > coverage_seconds:
                 normalized_segments = recovered_normalized
                 transcript = recovered_transcript
                 coverage_seconds = recovered_coverage
+                raw_segment_count = recovered_raw_segment_count
+                raw_transcript_chars = recovered_raw_transcript_chars
+                word_timestamp_chars = recovered_word_timestamp_chars
                 recovery_used = True
             logger.warning(
                 "viral_asr request_id=%s stage=transcribe outcome=recovery_completed recovery_used=%s "
@@ -300,11 +321,14 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
         )
     logger.warning(
         "viral_asr request_id=%s stage=transcribe outcome=completed coverage_seconds=%.3f "
-        "segment_count=%s transcript_chars=%s recovery_attempted=%s recovery_used=%s",
+        "segment_count=%s transcript_chars=%s raw_segment_count=%s raw_transcript_chars=%s word_timestamp_chars=%s recovery_attempted=%s recovery_used=%s",
         request_id,
         coverage_seconds,
         len(normalized_segments),
         len(transcript),
+        raw_segment_count,
+        raw_transcript_chars,
+        word_timestamp_chars,
         recovery_attempted,
         recovery_used,
     )
@@ -315,6 +339,10 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
         coverage_seconds=coverage_seconds,
         recovery_attempted=recovery_attempted,
         recovery_used=recovery_used,
+        last_timestamp_seconds=coverage_seconds,
+        raw_segment_count=raw_segment_count,
+        raw_transcript_chars=raw_transcript_chars,
+        word_timestamp_chars=word_timestamp_chars,
     )
 
 

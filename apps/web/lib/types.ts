@@ -357,16 +357,23 @@ export type ViralPipelineResult = {
   diagnostics?: {
     source_type: string;
     video_duration_seconds: number;
+    audio_duration_seconds?: number;
     asr_coverage_seconds: number;
+    last_timestamp_seconds?: number;
     transcript_chars: number;
     raw_transcript_chars?: number;
     corrected_transcript_chars?: number;
     segment_count: number;
+    raw_segment_count?: number;
+    word_timestamp_chars?: number;
     correction_count?: number;
     review_segment_count?: number;
     fallback: boolean;
     prompt_input_chars: number;
     output_chars: number;
+    rewrite_target_chars?: number;
+    rewrite_actual_chars?: number[];
+    length_unit?: "cjk_chars";
   };
   diagnostic?: {
     http_status?: number | null;
