@@ -519,10 +519,13 @@ async def _process_video_path(
         audio_duration = await probe_media_duration(audio_path)
     except RuntimeError:
         audio_duration = 0.0
-    logger.info(
-        "viral_pipeline request_id=%s stage=extracting_audio outcome=duration audio_duration_seconds=%.3f",
+    logger.warning(
+        "viral_pipeline request_id=%s stage=extracting_audio outcome=completed ffmpeg_exit_code=0 "
+        "video_duration_seconds=%.3f audio_duration_seconds=%.3f audio_bytes=%s",
         request_id,
+        duration,
         audio_duration,
+        audio_path.stat().st_size if audio_path.exists() else -1,
     )
 
     asr = await transcribe_audio(audio_path, language, duration)
@@ -553,6 +556,25 @@ async def _process_video_path(
         language=language,
     )
     if quality_error:
+        logger.warning(
+            "viral_pipeline request_id=%s stage=transcribing outcome=quality_rejected code=asr_quality_insufficient "
+            "diagnostic=%s raw_segment_count=%s raw_transcript_chars=%s normalized_text_chars=%s "
+            "transcript_chars=%s word_timestamp_count=%s word_timestamp_chars=%s "
+            "first_timestamp_seconds=%.3f last_timestamp_seconds=%.3f replacement_char_count=%s control_char_count=%s "
+            "financial_correction_called=False",
+            request_id,
+            quality_error,
+            asr.raw_segment_count,
+            asr.raw_transcript_chars,
+            asr.normalized_text_chars,
+            len(asr.transcript),
+            asr.word_timestamp_count,
+            asr.word_timestamp_chars,
+            asr.first_timestamp_seconds,
+            asr.last_timestamp_seconds,
+            asr.replacement_char_count,
+            asr.control_char_count,
+        )
         result = _failed(
             status=ViralPipelineStatus.TRANSCRIBING,
             fallback_reason="转写质量不足，未生成拆解。请重新上传清晰原视频或粘贴原文。",

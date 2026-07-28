@@ -129,7 +129,9 @@ def test_word_timestamps_split_review_windows_to_original_asr_chunks():
         SimpleNamespace(start=4.0, end=7.0, word="沪深"),
         SimpleNamespace(start=7.0, end=9.0, word="300"),
     ]
-    chunks = asr_service._split_transcription_segment(SimpleNamespace(start=0, end=30, text="unused", words=words))
+    chunks = asr_service._split_transcription_segment(
+        SimpleNamespace(start=0, end=9, text="中国人保。沪深300", words=words)
+    )
     assert [(item.start, item.end, item.text) for item in chunks] == [
         (0.0, 4.0, "中国人保。"),
         (4.0, 9.0, "沪深300"),
@@ -173,6 +175,8 @@ def test_low_density_asr_retries_without_vad_and_uses_complete_pass(monkeypatch,
     assert result.recovery_used is True
     assert calls[0]["vad_filter"] is True
     assert calls[1]["vad_filter"] is False
+    assert calls[0]["word_timestamps"] is True
+    assert calls[1]["word_timestamps"] is False
     assert result.coverage_seconds == 170.333
     assert len(result.transcript.replace("\n", "")) == len(complete)
     assert max(segment.end - segment.start for segment in result.segments or []) <= 8.0
@@ -237,6 +241,43 @@ def test_sparse_word_timestamps_do_not_discard_complete_segment_text():
 
     assert "".join(item.text for item in chunks) == full_text
     assert max(item.end - item.start for item in chunks) <= 8.0
+
+
+def test_nearly_complete_word_timestamps_never_replace_canonical_segment_text():
+    full_text = "完整segment正文必须保留最后这部分论据。"
+    source = SimpleNamespace(
+        start=0,
+        end=12,
+        text=full_text,
+        words=[
+            SimpleNamespace(start=0, end=5, word="完整segment正文必须保留"),
+            SimpleNamespace(start=5, end=9, word="最后这部分"),
+        ],
+    )
+
+    chunks = asr_service._split_transcription_segment(source)
+
+    assert "".join(item.text for item in chunks) == full_text
+    assert max(item.end - item.start for item in chunks) <= 8.0
+
+
+def test_asr_generator_is_fully_consumed_once_and_preserves_all_segment_text():
+    source_texts = ["第一段完整正文。", "第二段完整正文。", "第三段完整正文。"]
+    yielded = []
+
+    def source():
+        for index, text in enumerate(source_texts):
+            yielded.append(index)
+            yield SimpleNamespace(start=index * 10, end=(index + 1) * 10, text=text, words=None)
+
+    segments, transcript, coverage, raw_count, raw_chars, *_diagnostics = asr_service._normalize_transcription(source())
+
+    assert yielded == [0, 1, 2]
+    assert raw_count == 3
+    assert raw_chars == sum(len(text) for text in source_texts)
+    assert "".join(segment.text for segment in segments) == "".join(source_texts)
+    assert transcript.replace("\n", "") == "".join(source_texts)
+    assert coverage == 30
 
 
 def test_unicode_replacement_is_removed_and_exact_segment_requires_review(monkeypatch):
