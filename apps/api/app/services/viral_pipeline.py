@@ -13,7 +13,7 @@ from fastapi import HTTPException, UploadFile
 from postgrest.exceptions import APIError
 from supabase import Client
 
-from app.services.asr_service import transcribe_audio
+from app.services.asr_service import run_asr_diagnostic_matrix, transcribe_audio
 from app.services.financial_transcript import CorrectionResult, correct_financial_transcript
 from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.core.config import settings
@@ -575,6 +575,18 @@ async def _process_video_path(
             asr.replacement_char_count,
             asr.control_char_count,
         )
+        if settings.viral_asr_diagnostic_matrix_enabled:
+            logger.warning(
+                "viral_asr_matrix request_id=%s stage=diagnostic outcome=started audio_path_retained=True",
+                request_id,
+            )
+            try:
+                await run_asr_diagnostic_matrix(audio_path, language, duration)
+            except Exception:
+                logger.exception(
+                    "viral_asr_matrix request_id=%s stage=diagnostic outcome=failed",
+                    request_id,
+                )
         result = _failed(
             status=ViralPipelineStatus.TRANSCRIBING,
             fallback_reason="转写质量不足，未生成拆解。请重新上传清晰原视频或粘贴原文。",

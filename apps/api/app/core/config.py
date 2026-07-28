@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     viral_asr_domain: str = ""
     viral_asr_use_initial_prompt: bool = True
     viral_asr_use_hotwords: bool = True
+    viral_asr_diagnostic_matrix_enabled: bool = False
     viral_review_signing_secret: str = ""
     viral_max_video_duration_seconds: int = 600
     viral_max_download_mb: int = 500

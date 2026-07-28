@@ -280,6 +280,40 @@ def test_asr_generator_is_fully_consumed_once_and_preserves_all_segment_text():
     assert coverage == 30
 
 
+def test_asr_diagnostic_matrix_uses_exact_controlled_parameters(monkeypatch, tmp_path: Path):
+    calls = []
+
+    class _Model:
+        def transcribe(self, _path, **kwargs):
+            calls.append(kwargs)
+            label = len(calls)
+            segments = [
+                SimpleNamespace(
+                    start=0,
+                    end=170.333,
+                    text=f"第{label}组完整财经正文。",
+                    no_speech_prob=0.01,
+                    avg_logprob=-0.2,
+                    compression_ratio=1.1,
+                )
+            ]
+            return iter(segments), SimpleNamespace()
+
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"wav")
+    monkeypatch.setattr(asr_service, "_get_model", lambda: _Model())
+
+    results = asr_service._run_asr_diagnostic_matrix(audio, "zh", 170.333)
+
+    assert len(results) == 4
+    assert [call["vad_filter"] for call in calls] == [False, True, False, False]
+    assert all(call["word_timestamps"] is False for call in calls)
+    assert ["initial_prompt" in call for call in calls] == [False, False, True, False]
+    assert ["hotwords" in call for call in calls] == [False, False, False, True]
+    assert all(result["segment_count"] == 1 for result in results)
+    assert all(result["coverage_ratio"] == 1.0 for result in results)
+
+
 def test_unicode_replacement_is_removed_and_exact_segment_requires_review(monkeypatch):
     async def no_changes(_self, **_kwargs):
         return {"segments": []}
