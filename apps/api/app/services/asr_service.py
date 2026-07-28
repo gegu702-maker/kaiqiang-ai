@@ -3,11 +3,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
-import json
 import logging
 import math
 from pathlib import Path
-import re
 import time
 
 from app.core.config import settings
@@ -490,112 +488,3 @@ def _get_model():
 
 async def transcribe_audio(audio_path: Path, language: str = "zh", expected_duration: float = 0.0) -> ASRResult:
     return await asyncio.to_thread(_transcribe_with_faster_whisper, audio_path, language, expected_duration)
-
-
-def _mean_segment_metric(segments, name: str) -> float | None:
-    values = [
-        float(value)
-        for segment in segments
-        if (value := getattr(segment, name, None)) is not None
-    ]
-    return round(sum(values) / len(values), 6) if values else None
-
-
-def _duplicate_segment_ratio(texts: list[str]) -> float:
-    total = sum(len(text) for text in texts)
-    if not total:
-        return 0.0
-    seen: set[str] = set()
-    duplicate_chars = 0
-    for text in texts:
-        compact = "".join(text.split())
-        if compact in seen:
-            duplicate_chars += len(text)
-        else:
-            seen.add(compact)
-    return round(duplicate_chars / total, 6)
-
-
-def _redact_asr_preview(text: str, limit: int = 60) -> str:
-    value = re.sub(r"https?://\S+", "[URL]", text)
-    value = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[EMAIL]", value)
-    value = re.sub(r"\d", "#", value)
-    return value[:limit]
-
-
-def _run_asr_diagnostic_matrix(audio_path: Path, language: str, expected_duration: float) -> list[dict]:
-    request_id = current_request_id()
-    model = _get_model()
-    base = {
-        "language": language if language in {"zh", "en"} else "zh",
-        "beam_size": settings.faster_whisper_beam_size,
-        "condition_on_previous_text": True,
-        "word_timestamps": False,
-    }
-    configurations = [
-        ("A", {**base, "vad_filter": False}),
-        ("B", {**base, "vad_filter": True}),
-        ("C", {**base, "vad_filter": False, "initial_prompt": FINANCIAL_INITIAL_PROMPT}),
-        ("D", {**base, "vad_filter": False, "hotwords": FINANCIAL_HOTWORDS}),
-    ]
-    results: list[dict] = []
-    for label, options in configurations:
-        started = time.perf_counter()
-        segment_generator, _info = model.transcribe(str(audio_path), **options)
-        segments = list(segment_generator)
-        elapsed = time.perf_counter() - started
-        texts = [str(getattr(segment, "text", "")).strip() for segment in segments]
-        transcript = "".join(texts)
-        cjk_chars = sum(1 for char in transcript if "\u4e00" <= char <= "\u9fff")
-        first_timestamp = min((float(segment.start) for segment in segments), default=0.0)
-        last_timestamp = max((float(segment.end) for segment in segments), default=0.0)
-        coverage_ratio = last_timestamp / expected_duration if expected_duration else 0.0
-        summary = {
-            "config": label,
-            "elapsed_seconds": round(elapsed, 3),
-            "segment_count": len(segments),
-            "text_chars": len(transcript),
-            "cjk_chars": cjk_chars,
-            "first_timestamp_seconds": round(first_timestamp, 3),
-            "last_timestamp_seconds": round(last_timestamp, 3),
-            "coverage_ratio": round(coverage_ratio, 6),
-            "cjk_chars_per_second": round(cjk_chars / max(last_timestamp, 1), 6),
-            "duplicate_segment_ratio": _duplicate_segment_ratio(texts),
-            "avg_no_speech_prob": _mean_segment_metric(segments, "no_speech_prob"),
-            "avg_logprob": _mean_segment_metric(segments, "avg_logprob"),
-            "avg_compression_ratio": _mean_segment_metric(segments, "compression_ratio"),
-            "vad_filter": options["vad_filter"],
-            "word_timestamps": options["word_timestamps"],
-            "initial_prompt": "initial_prompt" in options,
-            "hotwords": "hotwords" in options,
-            "preview_first": [_redact_asr_preview(text) for text in texts[:3]],
-            "preview_last": [_redact_asr_preview(text) for text in texts[-3:]],
-        }
-        logger.warning(
-            "viral_asr_matrix request_id=%s stage=diagnostic config=%s outcome=completed metrics=%s",
-            request_id,
-            label,
-            json.dumps(summary, ensure_ascii=False, separators=(",", ":")),
-        )
-        for index, segment in enumerate(segments):
-            text = texts[index]
-            logger.warning(
-                "viral_asr_matrix_segment request_id=%s config=%s index=%s start=%.3f end=%.3f "
-                "text_chars=%s cjk_chars=%s no_speech_prob=%s avg_logprob=%s compression_ratio=%s",
-                request_id,
-                label,
-                index,
-                float(segment.start),
-                float(segment.end),
-                len(text),
-                sum(1 for char in text if "\u4e00" <= char <= "\u9fff"),
-                getattr(segment, "no_speech_prob", None),
-                getattr(segment, "avg_logprob", None),
-                getattr(segment, "compression_ratio", None),
-            )
-        results.append(summary)
-    return results
-
-
-async def run_asr_diagnostic_matrix(audio_path: Path, language: str, expected_duration: float) -> list[dict]:
-    return await asyncio.to_thread(_run_asr_diagnostic_matrix, audio_path, language, expected_duration)

@@ -16,6 +16,7 @@ from app.services.viral_diagnostics import bind_request_id, new_request_id, rese
 
 router = APIRouter(prefix="/viral", tags=["viral"])
 logger = logging.getLogger(__name__)
+_viral_upload_lock = asyncio.Lock()
 
 
 class ViralAnalyzeRequest(BaseModel):
@@ -175,19 +176,30 @@ async def run_uploaded_viral_agent_pipeline(
     context_token = bind_request_id(request_id)
     user = get_authenticated_user(supabase, token)
     try:
-        return await asyncio.wait_for(
-            run_uploaded_viral_pipeline(
-                supabase,
-                upload=video_file,
-                user_id=user["id"],
-                email=user["email"],
-                source_url=source_url,
-                industry=industry,
-                language=language,
-                rewrite_length=rewrite_length,
-            ),
-            timeout=settings.viral_pipeline_timeout_seconds,
-        )
+        if _viral_upload_lock.locked():
+            result = _pipeline_failure(
+                request_id=request_id,
+                code="asr_busy",
+                stage="uploading",
+                message="当前已有一个视频正在转写，请稍后重试。",
+                retryable=True,
+            )
+            result.update({"source_type": "uploaded_video_asr", "degraded": False})
+            return result
+        async with _viral_upload_lock:
+            return await asyncio.wait_for(
+                run_uploaded_viral_pipeline(
+                    supabase,
+                    upload=video_file,
+                    user_id=user["id"],
+                    email=user["email"],
+                    source_url=source_url,
+                    industry=industry,
+                    language=language,
+                    rewrite_length=rewrite_length,
+                ),
+                timeout=settings.viral_pipeline_timeout_seconds,
+            )
     except asyncio.TimeoutError:
         logger.warning("viral_pipeline request_id=%s stage=upload_pipeline outcome=timeout", request_id)
         result = _pipeline_failure(

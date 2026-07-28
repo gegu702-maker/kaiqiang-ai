@@ -557,3 +557,29 @@ def test_real_multipart_12_7mb_route_and_cors(monkeypatch):
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == preview_origin
     assert observed == {"filename": "170-seconds.mp4", "size": len(payload)}
+
+
+def test_upload_returns_busy_without_starting_second_asr(monkeypatch):
+    class _BusyLock:
+        def locked(self):
+            return True
+
+    monkeypatch.setattr(viral_api, "_viral_upload_lock", _BusyLock())
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+
+    result = asyncio.run(
+        viral_api.run_uploaded_viral_agent_pipeline(
+            video_file=SimpleNamespace(filename="busy.mp4"),
+            source_url="",
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+            token="token",
+            supabase=_Supabase(),
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "asr_busy"
+    assert result["stage"] == "uploading"
+    assert result["retryable"] is True

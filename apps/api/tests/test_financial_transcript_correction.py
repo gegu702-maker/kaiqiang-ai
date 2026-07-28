@@ -21,11 +21,12 @@ class _Supabase:
         return _Table()
 
 
-def test_financial_asr_defaults_to_medium_with_prompt_and_word_timestamps():
+def test_financial_asr_defaults_to_single_bare_medium_pass():
     assert Settings.model_fields["faster_whisper_model_size"].default == "medium"
-    assert Settings.model_fields["faster_whisper_word_timestamps"].default is True
-    assert Settings.model_fields["viral_asr_use_initial_prompt"].default is True
-    assert Settings.model_fields["viral_asr_use_hotwords"].default is True
+    assert Settings.model_fields["faster_whisper_vad_filter"].default is False
+    assert Settings.model_fields["faster_whisper_word_timestamps"].default is False
+    assert Settings.model_fields["viral_asr_use_initial_prompt"].default is False
+    assert Settings.model_fields["viral_asr_use_hotwords"].default is False
 
 
 def _analysis():
@@ -112,6 +113,7 @@ def test_faster_whisper_financial_prompt_and_hotwords(monkeypatch, tmp_path: Pat
     monkeypatch.setattr(asr_service.settings, "viral_asr_domain", "financial")
     monkeypatch.setattr(asr_service.settings, "viral_asr_use_initial_prompt", True)
     monkeypatch.setattr(asr_service.settings, "viral_asr_use_hotwords", True)
+    monkeypatch.setattr(asr_service.settings, "faster_whisper_vad_filter", True)
     result = asr_service._transcribe_with_faster_whisper(audio, "zh")
 
     assert result.ok is True
@@ -167,6 +169,8 @@ def test_low_density_asr_retries_without_vad_and_uses_complete_pass(monkeypatch,
     monkeypatch.setattr(asr_service.settings, "viral_asr_domain", "financial")
     monkeypatch.setattr(asr_service.settings, "viral_asr_use_initial_prompt", True)
     monkeypatch.setattr(asr_service.settings, "viral_asr_use_hotwords", True)
+    monkeypatch.setattr(asr_service.settings, "faster_whisper_vad_filter", True)
+    monkeypatch.setattr(asr_service.settings, "faster_whisper_word_timestamps", True)
 
     result = asr_service._transcribe_with_faster_whisper(audio, "zh", 170.333)
 
@@ -180,6 +184,33 @@ def test_low_density_asr_retries_without_vad_and_uses_complete_pass(monkeypatch,
     assert result.coverage_seconds == 170.333
     assert len(result.transcript.replace("\n", "")) == len(complete)
     assert max(segment.end - segment.start for segment in result.segments or []) <= 8.0
+
+
+def test_default_business_asr_is_exactly_one_bare_a_pass(monkeypatch, tmp_path: Path):
+    calls = []
+
+    class _Model:
+        def transcribe(self, _path, **kwargs):
+            calls.append(kwargs)
+            return iter([SimpleNamespace(start=0, end=167.6, text="财经完整正文" * 100, words=None)]), SimpleNamespace()
+
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"wav")
+    monkeypatch.setattr(asr_service, "_get_model", lambda: _Model())
+    monkeypatch.setattr(asr_service.settings, "viral_asr_domain", "financial")
+    monkeypatch.setattr(asr_service.settings, "faster_whisper_vad_filter", False)
+    monkeypatch.setattr(asr_service.settings, "faster_whisper_word_timestamps", False)
+    monkeypatch.setattr(asr_service.settings, "viral_asr_use_initial_prompt", False)
+    monkeypatch.setattr(asr_service.settings, "viral_asr_use_hotwords", False)
+
+    result = asr_service._transcribe_with_faster_whisper(audio, "zh", 170.333)
+
+    assert result.ok is True
+    assert len(calls) == 1
+    assert calls[0]["vad_filter"] is False
+    assert calls[0]["word_timestamps"] is False
+    assert "initial_prompt" not in calls[0]
+    assert "hotwords" not in calls[0]
 
 
 def test_word_timestamp_context_merges_china_ping_an_before_residual_review():
@@ -278,40 +309,6 @@ def test_asr_generator_is_fully_consumed_once_and_preserves_all_segment_text():
     assert "".join(segment.text for segment in segments) == "".join(source_texts)
     assert transcript.replace("\n", "") == "".join(source_texts)
     assert coverage == 30
-
-
-def test_asr_diagnostic_matrix_uses_exact_controlled_parameters(monkeypatch, tmp_path: Path):
-    calls = []
-
-    class _Model:
-        def transcribe(self, _path, **kwargs):
-            calls.append(kwargs)
-            label = len(calls)
-            segments = [
-                SimpleNamespace(
-                    start=0,
-                    end=170.333,
-                    text=f"第{label}组完整财经正文。",
-                    no_speech_prob=0.01,
-                    avg_logprob=-0.2,
-                    compression_ratio=1.1,
-                )
-            ]
-            return iter(segments), SimpleNamespace()
-
-    audio = tmp_path / "audio.wav"
-    audio.write_bytes(b"wav")
-    monkeypatch.setattr(asr_service, "_get_model", lambda: _Model())
-
-    results = asr_service._run_asr_diagnostic_matrix(audio, "zh", 170.333)
-
-    assert len(results) == 4
-    assert [call["vad_filter"] for call in calls] == [False, True, False, False]
-    assert all(call["word_timestamps"] is False for call in calls)
-    assert ["initial_prompt" in call for call in calls] == [False, False, True, False]
-    assert ["hotwords" in call for call in calls] == [False, False, False, True]
-    assert all(result["segment_count"] == 1 for result in results)
-    assert all(result["coverage_ratio"] == 1.0 for result in results)
 
 
 def test_unicode_replacement_is_removed_and_exact_segment_requires_review(monkeypatch):
