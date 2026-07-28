@@ -157,3 +157,33 @@ async def probe_media_duration(video_path: Path) -> float:
         return float(json.loads(completed.stdout)["format"]["duration"])
     except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         raise RuntimeError(f"无法读取视频时长：{error}") from error
+
+
+async def probe_audio_stream(audio_path: Path) -> dict[str, Any]:
+    ffmpeg_name = Path(settings.ffmpeg_path)
+    ffprobe_path = str(ffmpeg_name.with_name("ffprobe.exe" if ffmpeg_name.suffix.lower() == ".exe" else "ffprobe"))
+    command = [
+        ffprobe_path,
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_name,sample_rate,channels,channel_layout",
+        "-of",
+        "json",
+        str(audio_path),
+    ]
+    try:
+        completed = await asyncio.to_thread(
+            subprocess.run,
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        streams = json.loads(completed.stdout).get("streams") or []
+        return dict(streams[0]) if streams else {}
+    except (FileNotFoundError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return {}

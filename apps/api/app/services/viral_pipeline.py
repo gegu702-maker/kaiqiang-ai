@@ -19,7 +19,7 @@ from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.core.config import settings
 from app.services.viral_diagnostics import current_request_id
 from app.services.viral_review import verify_review_token
-from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio, probe_media_duration
+from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio, probe_audio_stream, probe_media_duration
 from app.services.video_link_resolver import resolve_video_link
 from app.services.viral_analyzer import FINAL_REWRITE_LIMIT, analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, smooth_spoken_script
 
@@ -519,13 +519,20 @@ async def _process_video_path(
         audio_duration = await probe_media_duration(audio_path)
     except RuntimeError:
         audio_duration = 0.0
+    audio_stream = await probe_audio_stream(audio_path)
     logger.warning(
         "viral_pipeline request_id=%s stage=extracting_audio outcome=completed ffmpeg_exit_code=0 "
-        "video_duration_seconds=%.3f audio_duration_seconds=%.3f audio_bytes=%s",
+        "ffmpeg_command=%s video_duration_seconds=%.3f audio_duration_seconds=%.3f audio_bytes=%s "
+        "audio_codec=%s sample_rate=%s channels=%s channel_layout=%s",
         request_id,
+        "[ffmpeg,-y,-i,<uploaded_video>,-vn,-ac,1,-ar,16000,-f,wav,<audio.wav>]",
         duration,
         audio_duration,
         audio_path.stat().st_size if audio_path.exists() else -1,
+        audio_stream.get("codec_name"),
+        audio_stream.get("sample_rate"),
+        audio_stream.get("channels"),
+        audio_stream.get("channel_layout"),
     )
 
     asr = await transcribe_audio(audio_path, language, duration)

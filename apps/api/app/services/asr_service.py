@@ -191,8 +191,30 @@ class ASRResult:
     control_char_count: int = 0
 
 
-def _normalize_transcription(segments) -> tuple[list[ASRSegment], str, float, int, int, int, int, float, int, int, int]:
+def _normalize_transcription(
+    segments,
+    *,
+    pass_label: str = "",
+) -> tuple[list[ASRSegment], str, float, int, int, int, int, float, int, int, int]:
     raw_segments = list(segments)
+    if pass_label:
+        request_id = current_request_id()
+        for index, segment in enumerate(raw_segments):
+            text = str(getattr(segment, "text", "")).strip()
+            logger.warning(
+                "viral_asr_segment request_id=%s pass=%s index=%s start=%.3f end=%.3f text_chars=%s "
+                "cjk_chars=%s no_speech_prob=%s avg_logprob=%s compression_ratio=%s",
+                request_id,
+                pass_label,
+                index,
+                float(segment.start),
+                float(segment.end),
+                len(text),
+                sum(1 for char in text if "\u4e00" <= char <= "\u9fff"),
+                getattr(segment, "no_speech_prob", None),
+                getattr(segment, "avg_logprob", None),
+                getattr(segment, "compression_ratio", None),
+            )
     raw_transcript_chars = sum(len(str(getattr(segment, "text", "")).strip()) for segment in raw_segments)
     word_timestamp_count = sum(len(getattr(segment, "words", None) or []) for segment in raw_segments)
     word_timestamp_chars = sum(
@@ -292,6 +314,7 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
             transcribe_options["initial_prompt"] = FINANCIAL_INITIAL_PROMPT
         if domain == "financial" and settings.viral_asr_use_hotwords:
             transcribe_options["hotwords"] = FINANCIAL_HOTWORDS
+        initial_started = time.perf_counter()
         segments, _info = model.transcribe(str(audio_path), **transcribe_options)
         (
             normalized_segments,
@@ -305,12 +328,13 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
             normalized_text_chars,
             replacement_char_count,
             control_char_count,
-        ) = _normalize_transcription(segments)
+        ) = _normalize_transcription(segments, pass_label="initial")
+        initial_elapsed = time.perf_counter() - initial_started
         logger.warning(
             "viral_asr request_id=%s stage=transcribe outcome=pass_completed pass=initial "
             "raw_segment_count=%s raw_transcript_chars=%s word_timestamp_count=%s word_timestamp_chars=%s "
             "normalized_text_chars=%s transcript_chars=%s first_timestamp_seconds=%.3f last_timestamp_seconds=%.3f "
-            "replacement_char_count=%s control_char_count=%s",
+            "replacement_char_count=%s control_char_count=%s elapsed_seconds=%.3f",
             request_id,
             raw_segment_count,
             raw_transcript_chars,
@@ -322,6 +346,7 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
             coverage_seconds,
             replacement_char_count,
             control_char_count,
+            initial_elapsed,
         )
         recovery_attempted = _needs_vad_recovery(
             transcript=transcript,
@@ -340,6 +365,7 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
                 expected_duration,
             )
             recovery_options = {**transcribe_options, "vad_filter": False, "word_timestamps": False}
+            recovery_started = time.perf_counter()
             recovery_segments, _recovery_info = model.transcribe(str(audio_path), **recovery_options)
             (
                 recovered_normalized,
@@ -353,7 +379,8 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
                 recovered_normalized_text_chars,
                 recovered_replacement_char_count,
                 recovered_control_char_count,
-            ) = _normalize_transcription(recovery_segments)
+            ) = _normalize_transcription(recovery_segments, pass_label="recovery")
+            recovery_elapsed = time.perf_counter() - recovery_started
             if len(recovered_transcript) > len(transcript) or recovered_coverage > coverage_seconds:
                 normalized_segments = recovered_normalized
                 transcript = recovered_transcript
@@ -372,7 +399,8 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
                 "recovered_coverage_seconds=%.3f recovered_transcript_chars=%s recovered_raw_segment_count=%s "
                 "recovered_raw_transcript_chars=%s recovered_word_timestamp_count=%s recovered_word_timestamp_chars=%s "
                 "recovered_normalized_text_chars=%s recovered_first_timestamp_seconds=%.3f "
-                "recovered_replacement_char_count=%s recovered_control_char_count=%s",
+                "recovered_replacement_char_count=%s recovered_control_char_count=%s elapsed_seconds=%.3f "
+                "vad_filter=False word_timestamps=False initial_prompt=%s hotwords=%s",
                 request_id,
                 recovery_used,
                 recovered_coverage,
@@ -385,6 +413,9 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
                 recovered_first_timestamp_seconds,
                 recovered_replacement_char_count,
                 recovered_control_char_count,
+                recovery_elapsed,
+                "initial_prompt" in recovery_options,
+                "hotwords" in recovery_options,
             )
     except Exception as error:
         diagnostic = f"{type(error).__name__}: {error}"[:500]
