@@ -420,7 +420,93 @@ def test_full_content_uses_second_targeted_round_when_first_round_is_still_short
     assert result["diagnostic"]["actual_chars"] == [960, 980, 1000]
 
 
-def test_full_content_899_boundary_requests_gap_plus_safety_and_passes(monkeypatch):
+def test_full_content_realistic_model_returns_only_forty_percent(monkeypatch):
+    calls = []
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "supplements_requested" not in payload:
+            return _analysis_with_lengths([500, 520, 540])
+        return {
+            "supplements": [
+                {
+                    "index": item["index"],
+                    "title": item["title"],
+                    "additional_script": chr(ord("丁") + item["index"])
+                    * round(item["target_additional_chars"] * 0.4)
+                    + "。",
+                }
+                for item in payload["supplements_requested"]
+            ]
+        }
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", _preserve_analysis_lengths)
+
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            raw_script="完整转写中的观点、条件、案例、风险和行动建议。" * 80,
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+        )
+    )
+
+    assert len(calls) == 2
+    assert any("1100–1300" in item for item in calls[0]["requirements"])
+    assert any("因果解释、适用条件、具体例子、风险与误区、可执行建议" in item for item in calls[1]["requirements"])
+    assert any("机械重复" in item for item in calls[1]["requirements"])
+    assert [item["target_additional_chars"] for item in calls[1]["supplements_requested"]] == [1800, 1800, 1800]
+    assert result["diagnostic"]["actual_chars"] == [1220, 1240, 1260]
+
+
+def test_second_round_uses_observed_low_yield_and_reaches_safe_interval(monkeypatch):
+    calls = []
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "supplements_requested" not in payload:
+            return _analysis_with_lengths([400, 420, 440])
+        addition_length = 100 if payload["supplement_round"] == 1 else 650
+        return {
+            "supplements": [
+                {
+                    "index": item["index"],
+                    "title": item["title"],
+                    "additional_script": chr(ord("丁") + item["index"]) * addition_length + "。",
+                }
+                for item in payload["supplements_requested"]
+            ]
+        }
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", _preserve_analysis_lengths)
+
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            raw_script="完整转写中的观点、条件、案例、风险和行动建议。" * 80,
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+        )
+    )
+
+    second_requests = calls[2]["supplements_requested"]
+    assert all(item["planning_yield_rate"] == 0.1 for item in second_requests)
+    assert all(item["target_additional_chars"] == 1800 for item in second_requests)
+    assert result["diagnostic"]["actual_chars"] == [1150, 1170, 1190]
+    assert result["diagnostic"]["length_repair_rounds"][1]["items"][0]["returned_additional_chars"] == 100
+
+
+def test_full_content_899_boundary_targets_safe_final_interval_and_passes(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -455,17 +541,13 @@ def test_full_content_899_boundary_requests_gap_plus_safety_and_passes(monkeypat
 
     request = calls[1]["supplements_requested"]
     assert len(calls) == 2
-    assert request == [
-        {
-            "index": 2,
-            "title": "版本3",
-            "current_chars": 899,
-            "gap_chars": 1,
-            "target_additional_chars": 121,
-            "minimum_additional_chars": 1,
-            "maximum_additional_chars": 241,
-        }
-    ]
+    assert request[0]["index"] == 2
+    assert request[0]["current_chars"] == 899
+    assert request[0]["gap_chars"] == 1
+    assert request[0]["desired_final_chars"] == 1175
+    assert request[0]["planning_yield_rate"] == 0.25
+    assert request[0]["target_additional_chars"] == 1104
+    assert request[0]["maximum_additional_chars"] == 1800
     assert result["diagnostic"]["actual_chars"] == [950, 980, 1020]
 
 
@@ -501,6 +583,45 @@ def test_full_content_only_supplements_the_single_deficient_rewrite(monkeypatch)
     assert len(calls) == 2
     assert [item["index"] for item in calls[1]["supplements_requested"]] == [1]
     assert result["diagnostic"]["actual_chars"] == [930, 1030, 1100]
+
+
+def test_full_content_keeps_one_qualified_version_and_batches_two_deficient_versions(monkeypatch):
+    calls = []
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "supplements_requested" not in payload:
+            return _analysis_with_lengths([1000, 600, 700])
+        return {
+            "supplements": [
+                {
+                    "index": item["index"],
+                    "title": item["title"],
+                    "additional_script": chr(ord("丁") + item["index"]) * 500 + "。",
+                }
+                for item in payload["supplements_requested"]
+            ]
+        }
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", _preserve_analysis_lengths)
+
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            raw_script="完整转写。" * 200,
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+        )
+    )
+
+    assert [item["index"] for item in calls[1]["supplements_requested"]] == [1, 2]
+    assert result["diagnostic"]["actual_chars"] == [1000, 1100, 1200]
+    assert result["rewrites"][0]["script"] == calls[1]["current_rewrites"][0]["script"]
 
 
 def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
@@ -543,6 +664,18 @@ def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
     assert "实际为" in detail["message"]
     assert len(calls) == 1 + viral_analyzer.MAX_REWRITE_SUPPLEMENT_ROUNDS
     assert [call["supplement_round"] for call in calls[1:]] == [1, 2]
+    assert [round_["stage"] for round_ in detail["length_repair_rounds"]] == ["initial", "expanding", "expanding"]
+    assert detail["length_repair_rounds"][-1]["actual_chars"] == detail["actual_chars"]
+    assert all(
+        after >= before
+        for before, after in zip(
+            detail["length_repair_rounds"][0]["actual_chars"],
+            detail["length_repair_rounds"][-1]["actual_chars"],
+            strict=True,
+        )
+    )
+    assert detail["resource_limits"]["maximum_supplement_rounds"] == 2
+    assert detail["resource_limits"]["maximum_requested_additional_chars"] == 1800
 
 
 def test_overlong_rewrite_converges_at_complete_sentence_boundary():
@@ -557,6 +690,87 @@ def test_overlong_rewrite_converges_at_complete_sentence_boundary():
     assert trimmed.endswith("。")
     assert viral_analyzer._cjk_len(trimmed) == 1400
     assert "丙" not in trimmed
+
+
+def test_overlong_initial_rewrites_are_trimmed_without_supplement_call(monkeypatch):
+    calls = []
+    overlong = ("甲" * 700 + "。") + ("乙" * 700 + "。") + ("丙" * 300 + "。")
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        result = _analysis()
+        result["rewrites"] = [
+            {"title": f"版本{index + 1}", "script": overlong.replace("甲", chr(ord("甲") + index))}
+            for index in range(3)
+        ]
+        return result
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", _preserve_analysis_lengths)
+
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            raw_script="完整转写。" * 200,
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+        )
+    )
+
+    assert len(calls) == 1
+    assert result["diagnostic"]["actual_chars"] == [1400, 1400, 1400]
+    assert all(item["script"].endswith("。") for item in result["rewrites"])
+    assert result["diagnostic"]["length_repair_rounds"][-1]["stage"] == "sentence_boundary_trim"
+
+
+@pytest.mark.parametrize(
+    "expansion",
+    [
+        {"supplements": [{"index": 0, "title": "版本1", "additional_script": ""}]},
+        {},
+        {"supplements": [{"title": "缺少index", "additional_script": "补" * 500}]},
+    ],
+)
+def test_empty_or_missing_supplement_fields_end_in_structured_failure(monkeypatch, expansion):
+    calls = []
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "supplements_requested" not in payload:
+            return _analysis_with_lengths([600, 620, 640])
+        return expansion
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", _preserve_analysis_lengths)
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(
+            viral_analyzer.analyze_viral_script(
+                _Supabase(),
+                user_id="u1",
+                email="u@example.com",
+                raw_script="完整转写。" * 200,
+                industry="knowledge",
+                language="zh",
+                rewrite_length="full",
+            )
+        )
+
+    detail = raised.value.detail
+    assert detail["code"] == "analysis_output_too_short"
+    assert detail["actual_chars"] == [600, 620, 640]
+    assert len(detail["length_repair_rounds"]) == 3
+    assert all(
+        item["returned_additional_chars"] == 0
+        for round_ in detail["length_repair_rounds"][1:]
+        for item in round_["items"]
+    )
+    assert len(calls) == 3
 
 
 def test_rewrite_length_failure_preserves_actual_chars_in_pipeline_payload():

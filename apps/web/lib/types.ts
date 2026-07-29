@@ -243,6 +243,23 @@ export type ViralRewrite = {
   script: string;
 };
 
+export type ViralLengthRepairRound = {
+  round: number;
+  stage: "initial" | "expanding" | "sentence_boundary_trim";
+  actual_chars: number[];
+  before_chars?: number[];
+  items?: Array<{
+    index: number;
+    before_chars: number;
+    gap_chars: number;
+    desired_final_chars: number;
+    planning_yield_rate: number;
+    requested_additional_chars: number;
+    returned_additional_chars: number;
+    merged_chars: number;
+  }>;
+};
+
 export type ViralAnalyzeResult = {
   project_id?: string;
   request_id?: string;
@@ -267,6 +284,7 @@ export type ViralAnalyzeResult = {
     target_chars: number;
     maximum_chars: number;
     length_unit: "cjk_chars";
+    length_repair_rounds?: ViralLengthRepairRound[];
   };
   diagnostics?: {
     prompt_input_chars?: number;
@@ -277,6 +295,7 @@ export type ViralAnalyzeResult = {
     rewrite_target_chars?: number;
     rewrite_maximum_chars?: number;
     rewrite_actual_chars?: number[];
+    length_repair_rounds?: ViralLengthRepairRound[];
   };
 };
 
@@ -393,6 +412,7 @@ export type ViralPipelineResult = {
     rewrite_maximum_chars?: number;
     rewrite_actual_chars?: number[];
     length_unit?: "cjk_chars";
+    length_repair_rounds?: ViralLengthRepairRound[];
   };
   diagnostic?: {
     http_status?: number | null;
@@ -407,5 +427,12 @@ export type ViralPipelineResult = {
     target_chars?: number;
     maximum_chars?: number;
     actual_chars?: number[];
+    length_repair_rounds?: ViralLengthRepairRound[];
+    resource_limits?: {
+      maximum_supplement_rounds: number;
+      maximum_requested_additional_chars: number;
+      maximum_supplement_response_tokens: number;
+      maximum_final_chars: number;
+    };
   };
 };

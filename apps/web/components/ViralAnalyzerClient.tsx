@@ -186,6 +186,7 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
           target_chars: payload.diagnostics.rewrite_target_chars ?? 0,
           maximum_chars: payload.diagnostics.rewrite_maximum_chars ?? 0,
           length_unit: "cjk_chars",
+          length_repair_rounds: payload.diagnostics.length_repair_rounds,
         }
       : undefined,
   };
@@ -346,6 +347,11 @@ export function ViralAnalyzerClient({
       payload.error_code === "analysis_output_too_short" && payload.diagnostic?.actual_chars?.length
         ? `实际中文字数：${payload.diagnostic.actual_chars.join(" / ")}；目标：${payload.diagnostic.target_chars ?? 900}–${payload.diagnostic.maximum_chars ?? 1500}`
         : "";
+    const repairRounds = payload.diagnostic?.length_repair_rounds?.length
+      ? `长度修复轨迹：${payload.diagnostic.length_repair_rounds
+          .map((round) => `${round.stage === "initial" ? "初稿" : `第${round.round}轮`}[${round.actual_chars.join(" / ")}]`)
+          .join(" → ")}`
+      : "";
     const requestLine = payload.request_id ? `请求 ID：${payload.request_id}` : "";
     const retryLine = payload.retryable === true ? "可重试：是" : payload.retryable === false ? "可重试：否" : "";
     if (
@@ -354,7 +360,7 @@ export function ViralAnalyzerClient({
     ) {
       return "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。";
     }
-    return [`${title}（${code} / ${stage}）`, detail, actualChars, retryLine, requestLine].filter(Boolean).join("\n");
+    return [`${title}（${code} / ${stage}）`, detail, actualChars, repairRounds, retryLine, requestLine].filter(Boolean).join("\n");
   }
 
   function friendlyError(error: unknown) {

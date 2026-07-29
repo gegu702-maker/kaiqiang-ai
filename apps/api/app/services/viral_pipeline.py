@@ -121,7 +121,19 @@ def _analysis_error_result(
             failure_stage = ViralPipelineStatus.REWRITING
         diagnostic = {"http_status": None, "internal_http_status": error.status_code, "response_length": 0, "schema_error": ""}
         if isinstance(detail, dict):
-            diagnostic.update({key: detail[key] for key in ("target_chars", "maximum_chars", "actual_chars") if key in detail})
+            diagnostic.update(
+                {
+                    key: detail[key]
+                    for key in (
+                        "target_chars",
+                        "maximum_chars",
+                        "actual_chars",
+                        "length_repair_rounds",
+                        "resource_limits",
+                    )
+                    if key in detail
+                }
+            )
     else:
         message = "AI 拆解阶段发生未预期错误。"
         code = "analysis_unexpected_error"
@@ -683,6 +695,7 @@ async def _process_video_path(
         "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
         "rewrite_maximum_chars": analysis.get("diagnostics", {}).get("rewrite_maximum_chars"),
         "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
+        "length_repair_rounds": analysis.get("diagnostics", {}).get("length_repair_rounds", []),
         "length_unit": "cjk_chars",
     }
     _log_diagnostics(diagnostics)
@@ -767,6 +780,7 @@ async def _metadata_fallback_analysis(
         "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
         "rewrite_maximum_chars": analysis.get("diagnostics", {}).get("rewrite_maximum_chars"),
         "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
+        "length_repair_rounds": analysis.get("diagnostics", {}).get("length_repair_rounds", []),
         "length_unit": "cjk_chars",
     }
     _log_diagnostics(diagnostics)
@@ -851,6 +865,7 @@ async def _share_text_fallback_analysis(
         "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
         "rewrite_maximum_chars": analysis.get("diagnostics", {}).get("rewrite_maximum_chars"),
         "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
+        "length_repair_rounds": analysis.get("diagnostics", {}).get("length_repair_rounds", []),
         "length_unit": "cjk_chars",
     }
     _log_diagnostics(diagnostics)

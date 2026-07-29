@@ -5,6 +5,7 @@ import ast
 import json
 import logging
 import re
+import time
 from typing import Any
 
 import httpx
@@ -192,6 +193,7 @@ class LLMProvider:
             response: httpx.Response | None = None
             for transport_attempt in range(1, 3):
                 attempt_label = f"{attempt}_{transport_attempt}"
+                attempt_started = time.perf_counter()
                 try:
                     async with httpx.AsyncClient(timeout=httpx.Timeout(90, connect=15)) as client:
                         response = await client.post(
@@ -208,13 +210,14 @@ class LLMProvider:
                     logger.warning(
                         "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=timeout "
                         "http_status=none response_length=0 finish_reason=none truncated=false "
-                        "max_tokens=%s prompt_tokens=none completion_tokens=none total_tokens=none request_body_chars=%s",
+                        "max_tokens=%s prompt_tokens=none completion_tokens=none total_tokens=none request_body_chars=%s elapsed_ms=%s",
                         request_id,
                         provider_name,
                         model,
                         attempt_label,
                         max_tokens,
                         request_body_chars,
+                        round((time.perf_counter() - attempt_started) * 1000),
                     )
                     if transport_attempt == 1:
                         await asyncio.sleep(1)
@@ -224,7 +227,7 @@ class LLMProvider:
                     logger.warning(
                         "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=network_error type=%s "
                         "http_status=none response_length=0 finish_reason=none truncated=false "
-                        "max_tokens=%s prompt_tokens=none completion_tokens=none total_tokens=none request_body_chars=%s",
+                        "max_tokens=%s prompt_tokens=none completion_tokens=none total_tokens=none request_body_chars=%s elapsed_ms=%s",
                         request_id,
                         provider_name,
                         model,
@@ -232,6 +235,7 @@ class LLMProvider:
                         type(error).__name__,
                         max_tokens,
                         request_body_chars,
+                        round((time.perf_counter() - attempt_started) * 1000),
                     )
                     if transport_attempt == 1:
                         await asyncio.sleep(1)
@@ -257,7 +261,7 @@ class LLMProvider:
                 logger.warning(
                     "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=http_error code=%s "
                     "http_status=%s response_length=%s finish_reason=none truncated=false max_tokens=%s "
-                    "prompt_tokens=none completion_tokens=none total_tokens=none request_body_chars=%s upstream_error=%r",
+                    "prompt_tokens=none completion_tokens=none total_tokens=none request_body_chars=%s elapsed_ms=%s upstream_error=%r",
                     request_id,
                     provider_name,
                     model,
@@ -267,6 +271,7 @@ class LLMProvider:
                     response_length,
                     max_tokens,
                     request_body_chars,
+                    round((time.perf_counter() - attempt_started) * 1000),
                     upstream_error,
                 )
                 if retryable and transport_attempt == 1:
@@ -320,7 +325,7 @@ class LLMProvider:
             logger.warning(
                 "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=received http_status=%s "
                 "response_length=%s finish_reason=%s truncated=%s max_tokens=%s prompt_tokens=%s "
-                "completion_tokens=%s total_tokens=%s request_body_chars=%s content_length=%s",
+                "completion_tokens=%s total_tokens=%s request_body_chars=%s content_length=%s elapsed_ms=%s",
                 request_id,
                 provider_name,
                 model,
@@ -335,6 +340,7 @@ class LLMProvider:
                 usage.get("total_tokens", "none"),
                 request_body_chars,
                 len(raw),
+                round((time.perf_counter() - attempt_started) * 1000),
             )
             if finish_reason == "length":
                 raise LLMProviderError(

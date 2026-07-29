@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 import logging
+import math
 import re
 from typing import Any
 
@@ -87,7 +88,18 @@ SCRIPT_PUNCT_RE = re.compile(r"[\s，。！？、；：,.!?;:\"'“”‘’（�
 
 FINAL_REWRITE_LIMIT = 3
 MAX_REWRITE_SUPPLEMENT_ROUNDS = 2
-REWRITE_SUPPLEMENT_SAFETY_CHARS = 120
+FULL_REWRITE_GENERATION_MIN_CHARS = 1100
+FULL_REWRITE_GENERATION_MAX_CHARS = 1300
+FULL_REWRITE_REPAIR_TARGET_CHARS = 1175
+# Real Preview requests returned roughly 22%–40% of the requested Chinese
+# characters in low-yield rounds. Use the conservative end of that evidence
+# instead of assuming that the model will follow an exact character count.
+REWRITE_HISTORICAL_YIELD_FLOOR = 0.25
+REWRITE_MIN_OBSERVED_YIELD = 0.10
+REWRITE_MAX_PLANNING_YIELD = 0.50
+REWRITE_SECOND_ROUND_MULTIPLIER = 1.25
+MAX_REQUESTED_ADDITIONAL_CJK_CHARS = 1800
+MAX_SUPPLEMENT_RESPONSE_TOKENS = 8000
 REWRITE_STRATEGIES = [
     {
         "title": "版本A：热点反差版",
@@ -210,6 +222,27 @@ def _list_of_strings(value: Any, fallback: list[str]) -> list[str]:
 
 def _cjk_len(value: str) -> int:
     return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
+
+
+def _planned_supplement_chars(
+    *,
+    current_chars: int,
+    supplement_round: int,
+    previous_requested_chars: int | None = None,
+    previous_returned_chars: int | None = None,
+) -> tuple[int, float]:
+    desired_additional_chars = max(1, FULL_REWRITE_REPAIR_TARGET_CHARS - current_chars)
+    planning_yield = REWRITE_HISTORICAL_YIELD_FLOOR
+    multiplier = 1.0
+    if supplement_round > 1 and previous_requested_chars:
+        observed_yield = max(0.0, (previous_returned_chars or 0) / previous_requested_chars)
+        planning_yield = min(
+            REWRITE_MAX_PLANNING_YIELD,
+            max(REWRITE_MIN_OBSERVED_YIELD, observed_yield),
+        )
+        multiplier = REWRITE_SECOND_ROUND_MULTIPLIER
+    requested_chars = math.ceil(desired_additional_chars / planning_yield * multiplier)
+    return min(MAX_REQUESTED_ADDITIONAL_CJK_CHARS, requested_chars), planning_yield
 
 
 def _trim_to_sentence_boundary(value: str, *, minimum_chars: int, maximum_chars: int) -> str:
@@ -704,7 +737,11 @@ async def analyze_viral_script(
     length_guidance = {
         "short": "短版，约 250–450 个中文字符，聚焦一个核心判断与行动建议",
         "medium": "中版，约 500–800 个中文字符，展开主要观点和关键论据",
-        "full": "完整版，约 900–1500 个中文字符，覆盖主要观点、论据、案例、数据和行动建议",
+        "full": (
+            f"完整版，内部生成目标为 {FULL_REWRITE_GENERATION_MIN_CHARS}–"
+            f"{FULL_REWRITE_GENERATION_MAX_CHARS} 个中文字符（后端最终验收仍为 900–1500），"
+            "覆盖主要观点、论据、案例、数据、适用条件、风险和行动建议"
+        ),
     }[rewrite_length]
     if source_scope == "public_metadata":
         length_guidance = (
@@ -826,7 +863,10 @@ async def analyze_viral_script(
     result = normalize_analysis(data)
     minimum_rewrite_chars = public_minimum_rewrite_chars if source_scope == "public_metadata" else minimum_chars
     normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
-    logger.info(
+    length_repair_rounds: list[dict[str, Any]] = [
+        {"round": 0, "stage": "initial", "actual_chars": list(normalized_lengths)}
+    ]
+    logger.warning(
         "viral_rewrite_lengths request_id=%s attempt=initial source_scope=%s requested_length=%s effective_length=%s target_chars=%s raw_chars=%s normalized_chars=%s",
         current_request_id(),
         source_scope,
@@ -837,16 +877,19 @@ async def analyze_viral_script(
         normalized_lengths,
     )
     if source_scope == "full_content":
+        previous_round_by_index: dict[int, dict[str, int]] = {}
         for supplement_round in range(1, MAX_REWRITE_SUPPLEMENT_ROUNDS + 1):
             supplements_requested = []
             for index, (rewrite, actual_chars) in enumerate(zip(result["rewrites"], normalized_lengths, strict=True)):
                 if actual_chars >= minimum_rewrite_chars:
                     continue
                 gap_chars = minimum_rewrite_chars - actual_chars
-                maximum_additional_chars = max(0, maximum_chars - actual_chars)
-                target_additional_chars = min(
-                    maximum_additional_chars,
-                    gap_chars + REWRITE_SUPPLEMENT_SAFETY_CHARS,
+                previous = previous_round_by_index.get(index, {})
+                target_additional_chars, planning_yield = _planned_supplement_chars(
+                    current_chars=actual_chars,
+                    supplement_round=supplement_round,
+                    previous_requested_chars=previous.get("requested_chars"),
+                    previous_returned_chars=previous.get("returned_chars"),
                 )
                 supplements_requested.append(
                     {
@@ -854,12 +897,10 @@ async def analyze_viral_script(
                         "title": rewrite["title"],
                         "current_chars": actual_chars,
                         "gap_chars": gap_chars,
+                        "desired_final_chars": FULL_REWRITE_REPAIR_TARGET_CHARS,
+                        "planning_yield_rate": round(planning_yield, 4),
                         "target_additional_chars": target_additional_chars,
-                        "minimum_additional_chars": gap_chars,
-                        "maximum_additional_chars": min(
-                            maximum_additional_chars,
-                            target_additional_chars + REWRITE_SUPPLEMENT_SAFETY_CHARS,
-                        ),
+                        "maximum_additional_chars": MAX_REQUESTED_ADDITIONAL_CJK_CHARS,
                     }
                 )
             if not supplements_requested:
@@ -867,7 +908,7 @@ async def analyze_viral_script(
 
             expansion = await LLMProvider().generate_json(
                 system=(
-                    "你是口播稿定向补写编辑。只输出合法 JSON。"
+                    "你是口播稿定向扩写编辑。只输出合法 JSON。"
                     "只能使用转写稿和已有拆解中明确出现的事实，不得新增数字、机构、案例、政策或观点。"
                 ),
                 payload={
@@ -884,14 +925,17 @@ async def analyze_viral_script(
                     "maximum_supplement_rounds": MAX_REWRITE_SUPPLEMENT_ROUNDS,
                     "supplements_requested": supplements_requested,
                     "requirements": [
-                        "只为 supplements_requested 中列出的版本生成接在现有正文末尾的缺口段落，不得重写、缩短或返回完整原稿",
-                        "每个版本独立按 gap_chars 补足缺口；additional_script 应以 target_additional_chars 为目标，并处于 minimum_additional_chars 与 maximum_additional_chars 之间",
-                        f"补充段与现有正文合并后，每版必须达到 {minimum_rewrite_chars}–{maximum_chars} 个中文字符",
-                        "完整版必须覆盖转写稿中的主要观点、论据、案例、数据和行动建议；短版与中版只保留与目标长度匹配的核心信息",
+                        "只为 supplements_requested 中列出的版本生成接在现有正文末尾的扩写段落，不得重写、缩短或返回完整原稿",
+                        "每个版本独立扩写；additional_script 以 target_additional_chars 为生成目标，不要在合并后刚到900字时提前结束",
+                        f"扩写指向合并后约 1100–1250 个中文字符；后端会在完整句边界控制最终不超过 {maximum_chars} 字",
+                        f"任何单条 additional_script 不得超过 {MAX_REQUESTED_ADDITIONAL_CJK_CHARS} 个中文字符",
+                        "按现有版本尚未充分展开的内容，补充有信息价值的因果解释、适用条件、具体例子、风险与误区、可执行建议",
+                        "优先覆盖转写稿中的主要观点、论据、案例、数据和行动建议，不要求五类内容机械平均分配",
                         "保留转写稿中的主要事实、数据、案例、论证顺序和限定条件",
-                        "不得用空泛重复句凑字数，不得新增转写稿中不存在的信息",
-                        "补充段必须能自然承接对应现有正文，保持该版本原有角度，且不可重复现有句子",
-                        "补充段使用完整口播句子并以句末标点收束，便于在上限内按完整句边界合并",
+                        "不得复述已有句子，不得用空话、同义改写或机械重复凑字数，不得新增转写稿中不存在的信息",
+                        "扩写段必须自然承接对应现有正文，保持该版本原有角度和口播风格",
+                        "不得重复已有行动号召，不得在扩写段增加第二个CTA",
+                        "扩写段使用完整口播句子并以句末标点收束，便于在上限内按完整句边界合并",
                     ],
                     "schema": {
                         "supplements": [
@@ -903,12 +947,14 @@ async def analyze_viral_script(
                         ]
                     },
                 },
-                max_tokens=8000,
+                max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
             )
             requested_indexes = {item["index"] for item in supplements_requested}
+            supplements_value = expansion.get("supplements")
+            supplements_value = supplements_value if isinstance(supplements_value, list) else []
             supplements_by_index = {
                 item.get("index"): str(item.get("additional_script") or "").strip()
-                for item in expansion.get("supplements", [])
+                for item in supplements_value
                 if (
                     isinstance(item, dict)
                     and isinstance(item.get("index"), int)
@@ -930,29 +976,63 @@ async def analyze_viral_script(
                     }
                 )
             # The initial rewrites have already been normalized and diversified.
-            # Running the merged text through dedupe again can replace a complete
-            # long script with a short template; preserve it and only sanitize the
-            # newly appended continuation.
+            # Preserve them and sanitize only the appended continuation.
             result = {**result, "rewrites": merged_rewrites}
             normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
+            returned_chars_by_index = {
+                item["index"]: _cjk_len(supplements_by_index.get(item["index"], ""))
+                for item in supplements_requested
+            }
+            round_items = []
+            for item in supplements_requested:
+                index = item["index"]
+                returned_chars = returned_chars_by_index[index]
+                previous_round_by_index[index] = {
+                    "requested_chars": item["target_additional_chars"],
+                    "returned_chars": returned_chars,
+                }
+                round_items.append(
+                    {
+                        "index": index,
+                        "before_chars": before_round_lengths[index],
+                        "gap_chars": item["gap_chars"],
+                        "desired_final_chars": item["desired_final_chars"],
+                        "planning_yield_rate": item["planning_yield_rate"],
+                        "requested_additional_chars": item["target_additional_chars"],
+                        "returned_additional_chars": returned_chars,
+                        "merged_chars": normalized_lengths[index],
+                    }
+                )
+            length_repair_rounds.append(
+                {
+                    "round": supplement_round,
+                    "stage": "expanding",
+                    "items": round_items,
+                    "actual_chars": list(normalized_lengths),
+                }
+            )
             logger.warning(
                 "viral_rewrite_lengths request_id=%s attempt=supplement_%s source_scope=%s requested_length=%s effective_length=%s "
-                "target_chars=%s requested_indexes=%s gaps=%s target_additional_chars=%s initial_chars=%s supplement_chars=%s normalized_chars=%s",
+                "target_chars=%s desired_final_chars=%s requested_indexes=%s gaps=%s planning_yield_rates=%s "
+                "target_additional_chars=%s initial_chars=%s supplement_chars=%s normalized_chars=%s",
                 current_request_id(),
                 supplement_round,
                 source_scope,
                 requested_rewrite_length,
                 rewrite_length,
                 minimum_rewrite_chars,
+                FULL_REWRITE_REPAIR_TARGET_CHARS,
                 [item["index"] for item in supplements_requested],
                 [item["gap_chars"] for item in supplements_requested],
+                [item["planning_yield_rate"] for item in supplements_requested],
                 [item["target_additional_chars"] for item in supplements_requested],
                 before_round_lengths,
-                [_cjk_len(supplements_by_index.get(item["index"], "")) for item in supplements_requested],
+                [returned_chars_by_index[item["index"]] for item in supplements_requested],
                 normalized_lengths,
             )
 
     if any(length > maximum_chars for length in normalized_lengths):
+        before_trim_lengths = list(normalized_lengths)
         result = {
             **result,
             "rewrites": [
@@ -968,6 +1048,14 @@ async def analyze_viral_script(
             ],
         }
         normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
+        length_repair_rounds.append(
+            {
+                "round": len(length_repair_rounds),
+                "stage": "sentence_boundary_trim",
+                "before_chars": before_trim_lengths,
+                "actual_chars": list(normalized_lengths),
+            }
+        )
         logger.warning(
             "viral_rewrite_lengths request_id=%s attempt=sentence_boundary_trim target_chars=%s maximum_chars=%s normalized_chars=%s",
             current_request_id(),
@@ -993,6 +1081,13 @@ async def analyze_viral_script(
                 "actual_chars": normalized_lengths,
                 "length_unit": "cjk_chars",
                 "rewrite_length": rewrite_length,
+                "length_repair_rounds": length_repair_rounds,
+                "resource_limits": {
+                    "maximum_supplement_rounds": MAX_REWRITE_SUPPLEMENT_ROUNDS,
+                    "maximum_requested_additional_chars": MAX_REQUESTED_ADDITIONAL_CJK_CHARS,
+                    "maximum_supplement_response_tokens": MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                    "maximum_final_chars": maximum_chars,
+                },
             },
         )
 
@@ -1035,6 +1130,7 @@ async def analyze_viral_script(
             "target_chars": minimum_rewrite_chars,
             "maximum_chars": maximum_chars,
             "length_unit": "cjk_chars",
+            "length_repair_rounds": length_repair_rounds,
         },
         "diagnostics": {
             "prompt_input_chars": prompt_input_chars + len(analysis_input),
@@ -1045,5 +1141,6 @@ async def analyze_viral_script(
             "rewrite_target_chars": minimum_rewrite_chars,
             "rewrite_maximum_chars": maximum_chars,
             "rewrite_actual_chars": normalized_lengths,
+            "length_repair_rounds": length_repair_rounds,
         },
     }
