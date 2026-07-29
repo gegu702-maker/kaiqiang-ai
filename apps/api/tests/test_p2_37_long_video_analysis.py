@@ -93,7 +93,7 @@ def test_long_valid_rewrites_are_not_replaced_when_body_mentions_structure():
         },
         {
             "title": "版本B：用户痛点版",
-            "script": "如果你在做内容，不要只复述结果。更实用的结构是解释用户为什么犹豫，再给出可以验证的行动。" + "乙方需要结合适用条件逐项判断。" * 24,
+            "script": "如果你在做内容，不要只复述结果。更实用的结构是解释用户为什么犹豫，再核对现场数据字段和JSON接口。" + "乙方需要结合适用条件逐项判断。" * 24,
         },
         {
             "title": "版本C：商业机会版",
