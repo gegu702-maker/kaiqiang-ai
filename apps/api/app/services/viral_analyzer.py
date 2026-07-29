@@ -262,7 +262,7 @@ def sanitize_rewrite_script(script: str) -> str:
     text = TEMPLATE_META_SENTENCE_RE.sub("", text)
     text = BRACKET_TEMPLATE_RE.sub("", text)
     text = re.sub(r"\s+", " ", text)
-    return text.strip(" ：:，,。；;")
+    return text.strip(" ：:，,；;")
 
 
 def _with_sentence_end(text: str) -> str:
@@ -289,7 +289,7 @@ def smooth_spoken_script(script: str) -> str:
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"\s+([。！？!?])", r"\1", text)
     text = re.sub(r"\s+", " ", text)
-    return text.strip(" ：:，,。；;")
+    return text.strip(" ：:，,；;")
 
 
 def is_script_polluted(script: str) -> bool:

@@ -92,6 +92,7 @@ def test_smooth_spoken_script_removes_mechanical_phrasing():
     assert "信息价值" not in polished
     assert "行动号召" not in polished
     assert "真正" not in polished
+    assert polished.endswith("。")
 
 
 def test_smooth_spoken_script_repairs_bad_sentence_joins():

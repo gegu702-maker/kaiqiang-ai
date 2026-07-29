@@ -485,6 +485,7 @@ def test_full_content_realistic_model_returns_only_forty_percent(monkeypatch):
     assert any("机械重复" in item for item in calls[1]["requirements"])
     assert [item["target_additional_chars"] for item in calls[1]["supplements_requested"]] == [1800, 1800, 1800]
     assert result["diagnostic"]["actual_chars"] == [1220, 1240, 1260]
+    assert all(item["script"].endswith("。") for item in result["rewrites"])
 
 
 def test_second_round_uses_observed_low_yield_and_reaches_safe_interval(monkeypatch):
