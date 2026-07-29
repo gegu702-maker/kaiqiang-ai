@@ -86,6 +86,8 @@ COMMON_CTA_RE = re.compile(
 SCRIPT_PUNCT_RE = re.compile(r"[\s，。！？、；：,.!?;:\"'“”‘’（）()\[\]【】《》<>-]+")
 
 FINAL_REWRITE_LIMIT = 3
+MAX_REWRITE_SUPPLEMENT_ROUNDS = 2
+REWRITE_SUPPLEMENT_SAFETY_CHARS = 120
 REWRITE_STRATEGIES = [
     {
         "title": "版本A：热点反差版",
@@ -208,6 +210,20 @@ def _list_of_strings(value: Any, fallback: list[str]) -> list[str]:
 
 def _cjk_len(value: str) -> int:
     return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
+
+
+def _trim_to_sentence_boundary(value: str, *, minimum_chars: int, maximum_chars: int) -> str:
+    text = str(value or "").strip()
+    if _cjk_len(text) <= maximum_chars:
+        return text
+
+    candidates: list[str] = []
+    for match in re.finditer(r"[。！？!?](?:[”’\"])?", text):
+        candidate = text[: match.end()].strip()
+        candidate_chars = _cjk_len(candidate)
+        if minimum_chars <= candidate_chars <= maximum_chars:
+            candidates.append(candidate)
+    return candidates[-1] if candidates else text
 
 
 def sanitize_rewrite_script(script: str) -> str:
@@ -820,90 +836,143 @@ async def analyze_viral_script(
         rewrite_lengths(data),
         normalized_lengths,
     )
-    if source_scope == "full_content" and any(length < minimum_rewrite_chars for length in normalized_lengths):
-        supplements_requested = []
-        for index, (rewrite, actual_chars) in enumerate(zip(result["rewrites"], normalized_lengths, strict=True)):
-            if actual_chars >= minimum_rewrite_chars:
-                continue
-            supplements_requested.append(
-                {
-                    "index": index,
-                    "title": rewrite["title"],
-                    "current_chars": actual_chars,
-                    "minimum_additional_chars": minimum_rewrite_chars - actual_chars + 100,
-                    "maximum_additional_chars": max(0, maximum_chars - actual_chars),
-                }
+    if source_scope == "full_content":
+        for supplement_round in range(1, MAX_REWRITE_SUPPLEMENT_ROUNDS + 1):
+            supplements_requested = []
+            for index, (rewrite, actual_chars) in enumerate(zip(result["rewrites"], normalized_lengths, strict=True)):
+                if actual_chars >= minimum_rewrite_chars:
+                    continue
+                gap_chars = minimum_rewrite_chars - actual_chars
+                maximum_additional_chars = max(0, maximum_chars - actual_chars)
+                target_additional_chars = min(
+                    maximum_additional_chars,
+                    gap_chars + REWRITE_SUPPLEMENT_SAFETY_CHARS,
+                )
+                supplements_requested.append(
+                    {
+                        "index": index,
+                        "title": rewrite["title"],
+                        "current_chars": actual_chars,
+                        "gap_chars": gap_chars,
+                        "target_additional_chars": target_additional_chars,
+                        "minimum_additional_chars": gap_chars,
+                        "maximum_additional_chars": min(
+                            maximum_additional_chars,
+                            target_additional_chars + REWRITE_SUPPLEMENT_SAFETY_CHARS,
+                        ),
+                    }
+                )
+            if not supplements_requested:
+                break
+
+            expansion = await LLMProvider().generate_json(
+                system=(
+                    "你是口播稿定向补写编辑。只输出合法 JSON。"
+                    "只能使用转写稿和已有拆解中明确出现的事实，不得新增数字、机构、案例、政策或观点。"
+                ),
+                payload={
+                    "corrected_transcript": raw_script,
+                    "analysis": {
+                        "topic": result["topic"],
+                        "core_points": result["core_points"],
+                        "arguments": result["arguments"],
+                        "cases": result["cases"],
+                        "data_points": result["data_points"],
+                    },
+                    "current_rewrites": result["rewrites"],
+                    "supplement_round": supplement_round,
+                    "maximum_supplement_rounds": MAX_REWRITE_SUPPLEMENT_ROUNDS,
+                    "supplements_requested": supplements_requested,
+                    "requirements": [
+                        "只为 supplements_requested 中列出的版本生成接在现有正文末尾的缺口段落，不得重写、缩短或返回完整原稿",
+                        "每个版本独立按 gap_chars 补足缺口；additional_script 应以 target_additional_chars 为目标，并处于 minimum_additional_chars 与 maximum_additional_chars 之间",
+                        f"补充段与现有正文合并后，每版必须达到 {minimum_rewrite_chars}–{maximum_chars} 个中文字符",
+                        "完整版必须覆盖转写稿中的主要观点、论据、案例、数据和行动建议；短版与中版只保留与目标长度匹配的核心信息",
+                        "保留转写稿中的主要事实、数据、案例、论证顺序和限定条件",
+                        "不得用空泛重复句凑字数，不得新增转写稿中不存在的信息",
+                        "补充段必须能自然承接对应现有正文，保持该版本原有角度，且不可重复现有句子",
+                        "补充段使用完整口播句子并以句末标点收束，便于在上限内按完整句边界合并",
+                    ],
+                    "schema": {
+                        "supplements": [
+                            {
+                                "index": "与 supplements_requested.index 完全一致的整数",
+                                "title": "对应版本标题",
+                                "additional_script": "只含需要追加的新口播正文",
+                            }
+                        ]
+                    },
+                },
+                max_tokens=8000,
             )
-        expansion = await LLMProvider().generate_json(
-            system=(
-                "你是口播稿定向补写编辑。只输出合法 JSON。"
-                "只能使用转写稿和已有拆解中明确出现的事实，不得新增数字、机构、案例、政策或观点。"
-            ),
-            payload={
-                "corrected_transcript": raw_script,
-                "analysis": {
-                    "topic": result["topic"],
-                    "core_points": result["core_points"],
-                    "arguments": result["arguments"],
-                    "cases": result["cases"],
-                    "data_points": result["data_points"],
-                },
-                "current_rewrites": result["rewrites"],
-                "supplements_requested": supplements_requested,
-                "requirements": [
-                    "只为 supplements_requested 中列出的版本生成接在现有正文末尾的补充段，不得重写、缩短或返回完整原稿",
-                    "additional_script 的中文字符数必须处于对应 minimum_additional_chars 与 maximum_additional_chars 之间",
-                    f"补充段与现有正文合并后，每版必须达到 {minimum_rewrite_chars}–{maximum_chars} 个中文字符",
-                    "完整版必须覆盖转写稿中的主要观点、论据、案例、数据和行动建议；短版与中版只保留与目标长度匹配的核心信息",
-                    "保留转写稿中的主要事实、数据、案例、论证顺序和限定条件",
-                    "不得用空泛重复句凑字数，不得新增转写稿中不存在的信息",
-                    "补充段必须能自然承接对应现有正文，且不可重复现有句子",
-                ],
-                "schema": {
-                    "supplements": [
-                        {
-                            "index": "与 supplements_requested.index 完全一致的整数",
-                            "title": "对应版本标题",
-                            "additional_script": "只含需要追加的新口播正文",
-                        }
-                    ]
-                },
-            },
-            max_tokens=8000,
-        )
-        supplements_by_index = {
-            item.get("index"): str(item.get("additional_script") or "").strip()
-            for item in expansion.get("supplements", [])
-            if isinstance(item, dict) and isinstance(item.get("index"), int)
-        }
-        merged_rewrites = []
-        for index, rewrite in enumerate(result["rewrites"]):
-            supplement = supplements_by_index.get(index, "")
-            merged_rewrites.append(
+            requested_indexes = {item["index"] for item in supplements_requested}
+            supplements_by_index = {
+                item.get("index"): str(item.get("additional_script") or "").strip()
+                for item in expansion.get("supplements", [])
+                if (
+                    isinstance(item, dict)
+                    and isinstance(item.get("index"), int)
+                    and item.get("index") in requested_indexes
+                )
+            }
+            before_round_lengths = list(normalized_lengths)
+            merged_rewrites = []
+            for index, rewrite in enumerate(result["rewrites"]):
+                supplement = supplements_by_index.get(index, "")
+                merged_rewrites.append(
+                    {
+                        "title": rewrite["title"],
+                        "script": (
+                            smooth_spoken_script(_join_sentences(rewrite["script"], supplement))
+                            if supplement
+                            else rewrite["script"]
+                        ),
+                    }
+                )
+            # The initial rewrites have already been normalized and diversified.
+            # Running the merged text through dedupe again can replace a complete
+            # long script with a short template; preserve it and only sanitize the
+            # newly appended continuation.
+            result = {**result, "rewrites": merged_rewrites}
+            normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
+            logger.warning(
+                "viral_rewrite_lengths request_id=%s attempt=supplement_%s source_scope=%s requested_length=%s effective_length=%s "
+                "target_chars=%s requested_indexes=%s gaps=%s target_additional_chars=%s initial_chars=%s supplement_chars=%s normalized_chars=%s",
+                current_request_id(),
+                supplement_round,
+                source_scope,
+                requested_rewrite_length,
+                rewrite_length,
+                minimum_rewrite_chars,
+                [item["index"] for item in supplements_requested],
+                [item["gap_chars"] for item in supplements_requested],
+                [item["target_additional_chars"] for item in supplements_requested],
+                before_round_lengths,
+                [_cjk_len(supplements_by_index.get(item["index"], "")) for item in supplements_requested],
+                normalized_lengths,
+            )
+
+    if any(length > maximum_chars for length in normalized_lengths):
+        result = {
+            **result,
+            "rewrites": [
                 {
-                    "title": rewrite["title"],
-                    "script": (
-                        smooth_spoken_script(_join_sentences(rewrite["script"], supplement))
-                        if supplement
-                        else rewrite["script"]
+                    **rewrite,
+                    "script": _trim_to_sentence_boundary(
+                        rewrite["script"],
+                        minimum_chars=minimum_rewrite_chars,
+                        maximum_chars=maximum_chars,
                     ),
                 }
-            )
-        # The initial rewrites have already been normalized and diversified.
-        # Running the merged text through dedupe again can replace a complete
-        # long script with a short template; preserve it and only sanitize the
-        # newly appended continuation.
-        result = {**result, "rewrites": merged_rewrites}
+                for rewrite in result["rewrites"]
+            ],
+        }
         normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
         logger.warning(
-            "viral_rewrite_lengths request_id=%s attempt=supplement source_scope=%s requested_length=%s effective_length=%s target_chars=%s initial_chars=%s supplement_chars=%s normalized_chars=%s",
+            "viral_rewrite_lengths request_id=%s attempt=sentence_boundary_trim target_chars=%s maximum_chars=%s normalized_chars=%s",
             current_request_id(),
-            source_scope,
-            requested_rewrite_length,
-            rewrite_length,
             minimum_rewrite_chars,
-            [item["current_chars"] for item in supplements_requested],
-            [_cjk_len(supplements_by_index.get(item["index"], "")) for item in supplements_requested],
+            maximum_chars,
             normalized_lengths,
         )
     invalid_lengths = [length for length in normalized_lengths if length < minimum_rewrite_chars or length > maximum_chars]

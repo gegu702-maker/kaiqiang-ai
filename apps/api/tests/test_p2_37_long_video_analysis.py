@@ -68,6 +68,20 @@ def _analysis(script_size=140):
     }
 
 
+def _analysis_with_lengths(lengths):
+    result = _analysis()
+    result["rewrites"] = [
+        {"title": f"版本{index + 1}", "script": chr(ord("甲") + index) * length + "。"}
+        for index, length in enumerate(lengths)
+    ]
+    return result
+
+
+def _preserve_analysis_lengths(payload, *, language):
+    del language
+    return payload
+
+
 @pytest.mark.parametrize("duration", [30.0, 90.0, 119.0, 170.3, 600.0])
 def test_short_medium_long_video_uses_internal_corrected_asr_without_exposing_transcript(monkeypatch, tmp_path: Path, duration: float):
     monkeypatch.setattr(viral_pipeline.settings, "viral_max_video_duration_seconds", 600)
@@ -360,8 +374,138 @@ def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
     )
 
 
-def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
+def test_full_content_uses_second_targeted_round_when_first_round_is_still_short(monkeypatch):
+    calls = []
+
     async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "supplements_requested" not in payload:
+            return _analysis_with_lengths([300, 320, 340])
+        round_number = payload["supplement_round"]
+        addition_length = 400 if round_number == 1 else 260
+        return {
+            "supplements": [
+                {
+                    "index": item["index"],
+                    "title": item["title"],
+                    "additional_script": chr(ord("丁") + item["index"]) * addition_length + "。",
+                }
+                for item in payload["supplements_requested"]
+            ]
+        }
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", _preserve_analysis_lengths)
+
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            raw_script="完整转写中的观点、论据、案例、数据和行动建议。" * 80,
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+        )
+    )
+
+    assert len(calls) == 3
+    assert calls[1]["supplement_round"] == 1
+    assert calls[2]["supplement_round"] == 2
+    assert [item["gap_chars"] for item in calls[1]["supplements_requested"]] == [600, 580, 560]
+    assert [item["current_chars"] for item in calls[2]["supplements_requested"]] == [700, 720, 740]
+    assert result["diagnostic"]["actual_chars"] == [960, 980, 1000]
+
+
+def test_full_content_899_boundary_requests_gap_plus_safety_and_passes(monkeypatch):
+    calls = []
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "supplements_requested" not in payload:
+            return _analysis_with_lengths([950, 980, 899])
+        return {
+            "supplements": [
+                {
+                    "index": 2,
+                    "title": "版本3",
+                    "additional_script": "边" * 121 + "。",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", _preserve_analysis_lengths)
+
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            raw_script="完整转写。" * 200,
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+        )
+    )
+
+    request = calls[1]["supplements_requested"]
+    assert len(calls) == 2
+    assert request == [
+        {
+            "index": 2,
+            "title": "版本3",
+            "current_chars": 899,
+            "gap_chars": 1,
+            "target_additional_chars": 121,
+            "minimum_additional_chars": 1,
+            "maximum_additional_chars": 241,
+        }
+    ]
+    assert result["diagnostic"]["actual_chars"] == [950, 980, 1020]
+
+
+def test_full_content_only_supplements_the_single_deficient_rewrite(monkeypatch):
+    calls = []
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "supplements_requested" not in payload:
+            return _analysis_with_lengths([930, 700, 1100])
+        return {
+            "supplements": [
+                {"index": 1, "title": "版本2", "additional_script": "补" * 330 + "。"}
+            ]
+        }
+
+    monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
+    monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
+    monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", _preserve_analysis_lengths)
+
+    result = asyncio.run(
+        viral_analyzer.analyze_viral_script(
+            _Supabase(),
+            user_id="u1",
+            email="u@example.com",
+            raw_script="完整转写。" * 200,
+            industry="knowledge",
+            language="zh",
+            rewrite_length="full",
+        )
+    )
+
+    assert len(calls) == 2
+    assert [item["index"] for item in calls[1]["supplements_requested"]] == [1]
+    assert result["diagnostic"]["actual_chars"] == [930, 1030, 1100]
+
+
+def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
+    calls = []
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
         if "supplements_requested" not in payload:
             return _analysis(100)
         return {
@@ -395,6 +539,22 @@ def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
     assert detail["length_unit"] == "cjk_chars"
     assert len(detail["actual_chars"]) == 3
     assert "实际为" in detail["message"]
+    assert len(calls) == 1 + viral_analyzer.MAX_REWRITE_SUPPLEMENT_ROUNDS
+    assert [call["supplement_round"] for call in calls[1:]] == [1, 2]
+
+
+def test_overlong_rewrite_converges_at_complete_sentence_boundary():
+    script = ("甲" * 700 + "。") + ("乙" * 700 + "。") + ("丙" * 300 + "。")
+
+    trimmed = viral_analyzer._trim_to_sentence_boundary(
+        script,
+        minimum_chars=900,
+        maximum_chars=1500,
+    )
+
+    assert trimmed.endswith("。")
+    assert viral_analyzer._cjk_len(trimmed) == 1400
+    assert "丙" not in trimmed
 
 
 def test_rewrite_length_failure_preserves_actual_chars_in_pipeline_payload():
@@ -585,6 +745,20 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "SegmentAudioPlayer" not in component_source
     assert "continueReviewedViralPipeline" not in component_source
     assert "setUploadProgress(null)" in component_source
+
+
+def test_frontend_analysis_submission_has_synchronous_duplicate_gate_and_loading_state():
+    component_source = (Path(__file__).parents[2] / "web" / "components" / "ViralAnalyzerClient.tsx").read_text(encoding="utf-8")
+    handler = component_source[component_source.index("async function handleAnalyze()") : component_source.index("async function copyScript")]
+
+    assert "const analysisInFlightRef = useRef(false);" in component_source
+    assert "if (analysisInFlightRef.current) return;" in handler
+    assert "analysisInFlightRef.current = true;" in handler
+    assert handler.index("analysisInFlightRef.current = true;") < handler.index("setLoading(true);")
+    assert "analysisInFlightRef.current = false;" in handler
+    assert handler.index("analysisInFlightRef.current = false;") < handler.index("setLoading(false);")
+    assert "disabled={loading || checking}" in component_source
+    assert "{loading ? loadingLabel() : t.start}" in component_source
 
 
 def test_review_continuation_endpoint_and_public_payload_are_removed():

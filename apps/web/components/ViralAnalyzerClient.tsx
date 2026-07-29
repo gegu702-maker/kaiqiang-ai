@@ -3,7 +3,7 @@
 import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Sparkles, UploadCloud, WandSparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { analyzeViralScript, checkVideoLink, runUploadedViralPipeline, runViralPipeline, type ViralUploadProgress } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
@@ -194,6 +194,7 @@ export function ViralAnalyzerClient({
   const [checking, setChecking] = useState(false);
   const [runStage, setRunStage] = useState<"idle" | "checking" | "uploading" | "processing" | "pipeline" | "manual">("idle");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const analysisInFlightRef = useRef(false);
   const t = analyzerCopy[language];
   const successfulActualChars = result?.diagnostic?.actual_chars ?? result?.diagnostics?.rewrite_actual_chars ?? [];
   const hasCompleteUserInput = Boolean(videoFile || (rawScript.trim() && !looksLikeUrl(rawScript)));
@@ -406,6 +407,8 @@ export function ViralAnalyzerClient({
   }
 
   async function handleAnalyze() {
+    if (analysisInFlightRef.current) return;
+    analysisInFlightRef.current = true;
     setError("");
     setResult(null);
     setLinkCheck(null);
@@ -492,6 +495,7 @@ export function ViralAnalyzerClient({
     } catch (err) {
       setError(friendlyError(err));
     } finally {
+      analysisInFlightRef.current = false;
       setLoading(false);
       setRunStage("idle");
       setUploadProgress(null);
