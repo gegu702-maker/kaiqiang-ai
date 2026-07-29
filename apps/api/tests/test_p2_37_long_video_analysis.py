@@ -84,6 +84,29 @@ def _preserve_analysis_lengths(payload, *, language):
     return payload
 
 
+def test_long_valid_rewrites_are_not_replaced_when_body_mentions_structure():
+    payload = _analysis()
+    payload["rewrites"] = [
+        {
+            "title": "版本A：热点反差版",
+            "script": "你以为这只是价格变化，其实库存和现金流才是关键。这段内容的结构是先看需求，再看供给，最后检查风险。" + "甲方公开信息说明经营条件仍在变化。" * 24,
+        },
+        {
+            "title": "版本B：用户痛点版",
+            "script": "如果你在做内容，不要只复述结果。更实用的结构是解释用户为什么犹豫，再给出可以验证的行动。" + "乙方需要结合适用条件逐项判断。" * 24,
+        },
+        {
+            "title": "版本C：商业机会版",
+            "script": "站在经营者视角，供应链变化不能只看一次销量。这段论证的结构是库存、周转、售后和现金流。" + "丙方应同时记录机会、成本和止损条件。" * 24,
+        },
+    ]
+
+    result = viral_analyzer.validate_viral_analysis_payload(payload, language="zh")
+
+    assert all(viral_analyzer._cjk_len(item["script"]) > 300 for item in result["rewrites"])
+    assert all("公开信息" in item["script"] or "适用条件" in item["script"] or "止损条件" in item["script"] for item in result["rewrites"])
+
+
 @pytest.mark.parametrize("duration", [30.0, 90.0, 119.0, 170.3, 600.0])
 def test_short_medium_long_video_uses_internal_corrected_asr_without_exposing_transcript(monkeypatch, tmp_path: Path, duration: float):
     monkeypatch.setattr(viral_pipeline.settings, "viral_max_video_duration_seconds", 600)

@@ -55,10 +55,7 @@ MIN_STRUCTURE_ITEMS = 5
 POLLUTION_PATTERNS = (
     "可复用模板",
     "可套用模板",
-    "模板是",
-    "结构是",
     "这个版本适合",
-    "建议用户",
     "分析如下",
     "字段",
     "JSON",
@@ -70,9 +67,11 @@ POLLUTION_PATTERNS = (
     "【热点事件】",
 )
 SCRIPT_PREFIX_RE = re.compile(r"^\s*(?:script|文案|口播文案|正文|版本[A-ZＡ-Ｚ]?)\s*[:：]\s*", re.IGNORECASE)
-TEMPLATE_BLOCK_RE = re.compile(
-    r"(?:可复用模板是|可套用模板是|模板是|该版本的模板|这个版本适合|建议用户|分析：|结构：|可套用模板：|可复用模板：).*",
-    re.DOTALL,
+TEMPLATE_META_SENTENCE_RE = re.compile(
+    r"(?:^|(?<=[。！？!?]))\s*"
+    r"(?:可复用模板是|可套用模板是|该版本的模板|这个版本适合|"
+    r"建议用户\s*[:：]|分析\s*[:：]|结构\s*[:：]|可套用模板\s*[:：]|可复用模板\s*[:：])"
+    r"[^。！？!?]*(?:[。！？!?]|$)"
 )
 BRACKET_TEMPLATE_RE = re.compile(r"(?:[（(【\\[][^）)】\\]]{0,24}(?:开头|热点事件|痛点|行动号召|信息增量|案例|类比)[^）)】\\]]*[）)】\\]]\s*\+?)+")
 COMMON_CTA_RE = re.compile(
@@ -262,7 +261,7 @@ def _trim_to_sentence_boundary(value: str, *, minimum_chars: int, maximum_chars:
 def sanitize_rewrite_script(script: str) -> str:
     text = str(script or "").strip()
     text = SCRIPT_PREFIX_RE.sub("", text)
-    text = TEMPLATE_BLOCK_RE.sub("", text)
+    text = TEMPLATE_META_SENTENCE_RE.sub("", text)
     text = BRACKET_TEMPLATE_RE.sub("", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip(" ：:，,。；;")
@@ -297,7 +296,11 @@ def smooth_spoken_script(script: str) -> str:
 
 def is_script_polluted(script: str) -> bool:
     text = str(script or "")
-    return any(pattern in text for pattern in POLLUTION_PATTERNS) or bool(BRACKET_TEMPLATE_RE.search(text))
+    return (
+        any(pattern in text for pattern in POLLUTION_PATTERNS)
+        or bool(TEMPLATE_META_SENTENCE_RE.search(text))
+        or bool(BRACKET_TEMPLATE_RE.search(text))
+    )
 
 
 def _normalize_for_similarity(text: str) -> str:
@@ -528,7 +531,6 @@ def dedupe_and_diversify_rewrites(
         if (
             is_script_polluted(script)
             or _cjk_len(script) < MIN_REWRITE_CJK_CHARS
-            or _phrase_buckets(script)
             or signature in seen_signatures
         ):
             script = _compose_diverse_script(
