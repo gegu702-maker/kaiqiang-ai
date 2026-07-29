@@ -255,7 +255,10 @@ export function ViralAnalyzerClient({
   }
 
   function friendlyPipelineMessage(
-    payload: Pick<ViralPipelineResult, "failed_at" | "error_code" | "code" | "stage" | "message" | "fallback_reason" | "request_id" | "retryable">,
+    payload: Pick<
+      ViralPipelineResult,
+      "failed_at" | "error_code" | "code" | "stage" | "message" | "fallback_reason" | "request_id" | "retryable" | "diagnostic"
+    >,
   ) {
     const code = payload.code || payload.error_code || "unknown_error";
     const stage = payload.stage || payload.failed_at || "failed";
@@ -295,6 +298,10 @@ export function ViralAnalyzerClient({
     };
     const title = codeLabels[code] || stageLabels[stage] || "拆解失败";
     const detail = payload.message || payload.fallback_reason || "服务端未返回具体原因。";
+    const actualChars =
+      payload.error_code === "analysis_output_too_short" && payload.diagnostic?.actual_chars?.length
+        ? `实际中文字数：${payload.diagnostic.actual_chars.join(" / ")}；目标：${payload.diagnostic.target_chars ?? 900}–${payload.diagnostic.maximum_chars ?? 1500}`
+        : "";
     const requestLine = payload.request_id ? `请求 ID：${payload.request_id}` : "";
     const retryLine = payload.retryable === true ? "可重试：是" : payload.retryable === false ? "可重试：否" : "";
     if (
@@ -303,7 +310,7 @@ export function ViralAnalyzerClient({
     ) {
       return "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。";
     }
-    return [`${title}（${code} / ${stage}）`, detail, retryLine, requestLine].filter(Boolean).join("\n");
+    return [`${title}（${code} / ${stage}）`, detail, actualChars, retryLine, requestLine].filter(Boolean).join("\n");
   }
 
   function friendlyError(error: unknown) {

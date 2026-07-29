@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
@@ -317,14 +317,19 @@ def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
 
     async def fake_generate(_self, *, payload, **_kwargs):
         calls.append(payload)
-        if "current_rewrites" not in payload:
+        if "supplements_requested" not in payload:
             return _analysis(100)
-        scripts = [
-            "。".join(f"原稿事实甲的论证步骤{i}仍受转写内容约束" for i in range(60)),
-            "。".join(f"原稿案例乙的条件与结论{i}均保留限定语" for i in range(60)),
-            "。".join(f"原稿数据丙的意义分析{i}不增加任何新数字" for i in range(60)),
+        additions = [
+            "。".join(f"补充原稿事实甲的论证步骤{i}仍受转写内容约束" for i in range(55)),
+            "。".join(f"补充原稿案例乙的条件与结论{i}均保留限定语" for i in range(55)),
+            "。".join(f"补充原稿数据丙的意义分析{i}不增加任何新数字" for i in range(55)),
         ]
-        return {"rewrites": [{"title": f"版本{i}", "script": scripts[i - 1]} for i in range(1, 4)]}
+        return {
+            "supplements": [
+                {"index": i, "title": f"版本{i + 1}", "additional_script": additions[i]}
+                for i in range(3)
+            ]
+        }
 
     monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
     monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
@@ -343,12 +348,25 @@ def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
     assert len(calls) == 2
     assert all(length >= 900 for length in result["diagnostics"]["rewrite_actual_chars"])
     assert "corrected_transcript" in calls[1]
+    assert "supplements_requested" in calls[1]
+    assert "rewrites" not in calls[1]["schema"]
     assert any("主要观点、论据、案例、数据和行动建议" in item for item in calls[1]["requirements"])
+    assert all(
+        item["script"].startswith(calls[1]["current_rewrites"][index]["script"])
+        for index, item in enumerate(result["rewrites"])
+    )
 
 
 def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
-    async def fake_generate(_self, **_kwargs):
-        return _analysis(100)
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if "supplements_requested" not in payload:
+            return _analysis(100)
+        return {
+            "supplements": [
+                {"index": item["index"], "title": item["title"], "additional_script": "补充太短。"}
+                for item in payload["supplements_requested"]
+            ]
+        }
 
     monkeypatch.setattr(viral_analyzer, "_assert_viral_quota", lambda *_args, **_kwargs: {"plan": "pro", "used": 0, "monthly_limit": 99})
     monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
@@ -370,8 +388,33 @@ def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
     assert detail["stage"] == "rewriting"
     assert detail["retryable"] is False
     assert detail["target_chars"] == 900
+    assert detail["maximum_chars"] == 1500
     assert detail["length_unit"] == "cjk_chars"
     assert len(detail["actual_chars"]) == 3
+    assert "实际为" in detail["message"]
+
+
+def test_rewrite_length_failure_preserves_actual_chars_in_pipeline_payload():
+    error = HTTPException(
+        status_code=502,
+        detail={
+            "code": "analysis_output_too_short",
+            "stage": "rewriting",
+            "message": "AI 改写长度未达到 900–1500 个中文字符；实际为 731 / 601 / 495。",
+            "retryable": False,
+            "target_chars": 900,
+            "maximum_chars": 1500,
+            "actual_chars": [731, 601, 495],
+        },
+    )
+
+    result = viral_pipeline._analysis_error_result(error, metadata={}, source_type="uploaded_video_asr")
+
+    assert result["error_code"] == "analysis_output_too_short"
+    assert result["diagnostic"]["target_chars"] == 900
+    assert result["diagnostic"]["maximum_chars"] == 1500
+    assert result["diagnostic"]["actual_chars"] == [731, 601, 495]
+    assert "731 / 601 / 495" in result["fallback_reason"]
 
 
 def test_link_download_is_attempted_before_metadata_fallback(monkeypatch, tmp_path: Path):

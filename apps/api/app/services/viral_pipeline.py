@@ -121,7 +121,7 @@ def _analysis_error_result(
             failure_stage = ViralPipelineStatus.REWRITING
         diagnostic = {"http_status": None, "internal_http_status": error.status_code, "response_length": 0, "schema_error": ""}
         if isinstance(detail, dict):
-            diagnostic.update({key: detail[key] for key in ("target_chars", "actual_chars") if key in detail})
+            diagnostic.update({key: detail[key] for key in ("target_chars", "maximum_chars", "actual_chars") if key in detail})
     else:
         message = "AI 拆解阶段发生未预期错误。"
         code = "analysis_unexpected_error"

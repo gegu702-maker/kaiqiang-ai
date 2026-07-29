@@ -385,5 +385,8 @@ export type ViralPipelineResult = {
     exception_type?: string;
     actual_duration_seconds?: number;
     allowed_duration_seconds?: number;
+    target_chars?: number;
+    maximum_chars?: number;
+    actual_chars?: number[];
   };
 };
