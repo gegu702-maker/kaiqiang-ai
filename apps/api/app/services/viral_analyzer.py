@@ -961,6 +961,12 @@ async def analyze_viral_script(
     return {
         **result,
         "quota": {**quota, "used": quota["used"] + 1},
+        "diagnostic": {
+            "actual_chars": normalized_lengths,
+            "target_chars": minimum_rewrite_chars,
+            "maximum_chars": maximum_chars,
+            "length_unit": "cjk_chars",
+        },
         "diagnostics": {
             "prompt_input_chars": prompt_input_chars + len(analysis_input),
             "hierarchical_chunk_count": summary_chunk_count,
@@ -968,6 +974,7 @@ async def analyze_viral_script(
             "rewrite_length_requested": requested_rewrite_length,
             "rewrite_length_effective": rewrite_length,
             "rewrite_target_chars": minimum_rewrite_chars,
+            "rewrite_maximum_chars": maximum_chars,
             "rewrite_actual_chars": normalized_lengths,
         },
     }

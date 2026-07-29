@@ -245,6 +245,7 @@ export type ViralRewrite = {
 
 export type ViralAnalyzeResult = {
   project_id?: string;
+  request_id?: string;
   topic: string;
   hook: string;
   selling_points: string[];
@@ -259,6 +260,22 @@ export type ViralAnalyzeResult = {
     plan: PlanCode;
     used: number;
     monthly_limit: number | null;
+  };
+  diagnostic?: {
+    actual_chars: number[];
+    target_chars: number;
+    maximum_chars: number;
+    length_unit: "cjk_chars";
+  };
+  diagnostics?: {
+    prompt_input_chars?: number;
+    hierarchical_chunk_count?: number;
+    output_chars?: number;
+    rewrite_length_requested?: "short" | "medium" | "full";
+    rewrite_length_effective?: "short" | "medium" | "full";
+    rewrite_target_chars?: number;
+    rewrite_maximum_chars?: number;
+    rewrite_actual_chars?: number[];
   };
 };
 
@@ -372,6 +389,7 @@ export type ViralPipelineResult = {
     prompt_input_chars: number;
     output_chars: number;
     rewrite_target_chars?: number;
+    rewrite_maximum_chars?: number;
     rewrite_actual_chars?: number[];
     length_unit?: "cjk_chars";
   };

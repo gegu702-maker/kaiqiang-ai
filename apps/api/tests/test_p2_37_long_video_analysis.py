@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -11,7 +12,7 @@ from app.api import viral as viral_api
 from app.core.auth import get_bearer_token
 from app.core.supabase import get_supabase
 from app.services.asr_service import ASRResult, ASRSegment
-from app.services import viral_analyzer, viral_pipeline
+from app.services import viral_analyzer, viral_diagnostics, viral_pipeline
 
 
 class _Table:
@@ -347,6 +348,8 @@ def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
 
     assert len(calls) == 2
     assert all(length >= 900 for length in result["diagnostics"]["rewrite_actual_chars"])
+    assert result["diagnostic"]["actual_chars"] == result["diagnostics"]["rewrite_actual_chars"]
+    assert result["diagnostic"]["length_unit"] == "cjk_chars"
     assert "corrected_transcript" in calls[1]
     assert "supplements_requested" in calls[1]
     assert "rewrites" not in calls[1]["schema"]
@@ -415,6 +418,46 @@ def test_rewrite_length_failure_preserves_actual_chars_in_pipeline_payload():
     assert result["diagnostic"]["maximum_chars"] == 1500
     assert result["diagnostic"]["actual_chars"] == [731, 601, 495]
     assert "731 / 601 / 495" in result["fallback_reason"]
+
+
+def test_manual_text_entry_binds_and_returns_structured_request_id(monkeypatch, caplog):
+    observed = {}
+
+    async def fake_analyze(*_args, **_kwargs):
+        observed["request_id"] = viral_diagnostics.current_request_id()
+        return {
+            **_analysis(1000),
+            "diagnostic": {
+                "actual_chars": [902, 1068, 1111],
+                "target_chars": 900,
+                "maximum_chars": 1500,
+                "length_unit": "cjk_chars",
+            },
+        }
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+    monkeypatch.setattr(viral_api, "analyze_viral_script", fake_analyze)
+    caplog.set_level("INFO", logger="app.api.viral")
+
+    result = asyncio.run(
+        viral_api.analyze_viral(
+            payload=viral_api.ViralAnalyzeRequest(
+                raw_script="完整财经文本",
+                industry="knowledge",
+                language="zh",
+                rewrite_length="full",
+            ),
+            token="token",
+            supabase=_Supabase(),
+        )
+    )
+
+    assert re.fullmatch(r"viral_[0-9a-f]{16}", observed["request_id"])
+    assert result["request_id"] == observed["request_id"]
+    assert result["diagnostic"]["actual_chars"] == [902, 1068, 1111]
+    assert f"request_id={result['request_id']}" in caplog.text
+    assert "actual_chars=[902, 1068, 1111]" in caplog.text
+    assert viral_diagnostics.current_request_id() == ""
 
 
 def test_link_download_is_attempted_before_metadata_fallback(monkeypatch, tmp_path: Path):
@@ -532,6 +575,9 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "约 500–800 中文字符" in component_source
     assert "约 900–1500 中文字符" in component_source
     assert "实际中文字数：" in component_source
+    assert "result.request_id" in component_source
+    assert "result?.diagnostic?.actual_chars" in component_source
+    assert 'actual_chars: payload.diagnostics.rewrite_actual_chars' in component_source
     assert "自动转写稿（AI校正，建议人工复核）" not in component_source
     assert "查看原始ASR转写" not in component_source
     assert "确认此段" not in component_source

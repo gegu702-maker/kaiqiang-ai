@@ -3,7 +3,7 @@ import logging
 
 from typing import Literal
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from supabase import Client
 
 from app.core.auth import get_authenticated_user, get_bearer_token
@@ -149,17 +149,39 @@ async def analyze_viral(
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> dict:
-    user = get_authenticated_user(supabase, token)
-    return await analyze_viral_script(
-        supabase,
-        user_id=user["id"],
-        email=user["email"],
-        source_url=payload.source_url,
-        raw_script=payload.raw_script,
-        industry=payload.industry,
-        language=payload.language,
-        rewrite_length=payload.rewrite_length,
-    )
+    request_id = new_request_id()
+    context_token = bind_request_id(request_id)
+    try:
+        user = get_authenticated_user(supabase, token)
+        result = await analyze_viral_script(
+            supabase,
+            user_id=user["id"],
+            email=user["email"],
+            source_url=payload.source_url,
+            raw_script=payload.raw_script,
+            industry=payload.industry,
+            language=payload.language,
+            rewrite_length=payload.rewrite_length,
+        )
+        actual_chars = result.get("diagnostic", {}).get("actual_chars", [])
+        logger.info(
+            "viral_analyze request_id=%s stage=ready outcome=completed actual_chars=%s",
+            request_id,
+            actual_chars,
+        )
+        return {**result, "request_id": request_id}
+    except HTTPException as error:
+        if isinstance(error.detail, dict):
+            error.detail.setdefault("request_id", request_id)
+        logger.warning(
+            "viral_analyze request_id=%s stage=%s outcome=failed code=%s",
+            request_id,
+            error.detail.get("stage", "analyzing") if isinstance(error.detail, dict) else "analyzing",
+            error.detail.get("code", "analysis_http_error") if isinstance(error.detail, dict) else "analysis_http_error",
+        )
+        raise
+    finally:
+        reset_request_id(context_token)
 
 
 @router.post("/pipeline/upload")

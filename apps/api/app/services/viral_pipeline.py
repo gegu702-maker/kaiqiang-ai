@@ -681,6 +681,7 @@ async def _process_video_path(
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
         "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
+        "rewrite_maximum_chars": analysis.get("diagnostics", {}).get("rewrite_maximum_chars"),
         "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
         "length_unit": "cjk_chars",
     }
@@ -764,6 +765,7 @@ async def _metadata_fallback_analysis(
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
         "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
+        "rewrite_maximum_chars": analysis.get("diagnostics", {}).get("rewrite_maximum_chars"),
         "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
         "length_unit": "cjk_chars",
     }
@@ -847,6 +849,7 @@ async def _share_text_fallback_analysis(
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
         "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
+        "rewrite_maximum_chars": analysis.get("diagnostics", {}).get("rewrite_maximum_chars"),
         "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
         "length_unit": "cjk_chars",
     }

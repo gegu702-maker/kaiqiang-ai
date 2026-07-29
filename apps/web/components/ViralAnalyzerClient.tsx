@@ -137,6 +137,7 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
   if (!payload.analysis) return null;
   return {
     project_id: payload.project_id,
+    request_id: payload.request_id,
     topic: payload.analysis.topic,
     hook: payload.analysis.hook,
     selling_points: payload.analysis.selling_points,
@@ -147,6 +148,14 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
     cases: payload.analysis.cases,
     data_points: payload.analysis.data_points,
     rewrites: payload.rewrites,
+    diagnostic: payload.diagnostics?.rewrite_actual_chars?.length
+      ? {
+          actual_chars: payload.diagnostics.rewrite_actual_chars,
+          target_chars: payload.diagnostics.rewrite_target_chars ?? 0,
+          maximum_chars: payload.diagnostics.rewrite_maximum_chars ?? 0,
+          length_unit: "cjk_chars",
+        }
+      : undefined,
   };
 }
 
@@ -186,6 +195,7 @@ export function ViralAnalyzerClient({
   const [runStage, setRunStage] = useState<"idle" | "checking" | "uploading" | "processing" | "pipeline" | "manual">("idle");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const t = analyzerCopy[language];
+  const successfulActualChars = result?.diagnostic?.actual_chars ?? result?.diagnostics?.rewrite_actual_chars ?? [];
   const hasCompleteUserInput = Boolean(videoFile || (rawScript.trim() && !looksLikeUrl(rawScript)));
   const isPublicMetadataFallback = !hasCompleteUserInput && (pipelineSourceType === "link_metadata_fallback" || pipelineSourceType === "share_text_fallback");
   const linkCheckCopy =
@@ -713,6 +723,17 @@ export function ViralAnalyzerClient({
                 <p className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm text-slate-400 break-words [overflow-wrap:anywhere]">
                   {t.quota}: {result.quota.monthly_limit === null ? `${result.quota.used} / ${t.customQuota}` : `${result.quota.used} / ${result.quota.monthly_limit}`}
                 </p>
+              ) : null}
+              {result.request_id || successfulActualChars.length ? (
+                <div className="rounded-lg border border-cyan/20 bg-cyan/5 p-3 text-sm leading-6 text-slate-300">
+                  {result.request_id ? <p>请求 ID：{result.request_id}</p> : null}
+                  {successfulActualChars.length ? (
+                    <p>
+                      实际中文字数：{successfulActualChars.join(" / ")}
+                      {result.diagnostic?.target_chars ? `；目标：${result.diagnostic.target_chars}–${result.diagnostic.maximum_chars}` : ""}
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
               <ResultCard title={t.topic}>{result.topic}</ResultCard>
               <ResultCard title={t.hook}>{result.hook}</ResultCard>
