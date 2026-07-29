@@ -11,6 +11,14 @@ import type { ViralAnalyzeResult, ViralIndustry, ViralLinkErrorCode, ViralPipeli
 
 type Locale = "zh" | "en";
 
+type ManualSubmissionCache = {
+  fingerprint: string;
+  submissionId: string;
+  status: "processing" | "succeeded" | "failed";
+  result?: ViralAnalyzeResult;
+  error?: string;
+};
+
 export type ViralAnalyzerWorkflowState = {
   hasLink: boolean;
   hasAnalysis: boolean;
@@ -133,6 +141,30 @@ function looksLikeUrl(value: string) {
   return URL_RE.test(value.trim());
 }
 
+async function manualSubmissionFingerprint(input: {
+  sourceUrl: string;
+  rawScript: string;
+  industry: ViralIndustry;
+  language: Locale;
+  rewriteLength: "short" | "medium" | "full";
+}) {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({
+      source_url: input.sourceUrl,
+      raw_script: input.rawScript,
+      industry: input.industry,
+      language: input.language,
+      rewrite_length: input.rewriteLength,
+    }),
+  );
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function newClientSubmissionId() {
+  return `viral_submission_${crypto.randomUUID().replaceAll("-", "")}`;
+}
+
 function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResult | null {
   if (!payload.analysis) return null;
   return {
@@ -195,6 +227,7 @@ export function ViralAnalyzerClient({
   const [runStage, setRunStage] = useState<"idle" | "checking" | "uploading" | "processing" | "pipeline" | "manual">("idle");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const analysisInFlightRef = useRef(false);
+  const manualSubmissionRef = useRef<ManualSubmissionCache | null>(null);
   const t = analyzerCopy[language];
   const successfulActualChars = result?.diagnostic?.actual_chars ?? result?.diagnostics?.rewrite_actual_chars ?? [];
   const hasCompleteUserInput = Boolean(videoFile || (rawScript.trim() && !looksLikeUrl(rawScript)));
@@ -409,6 +442,39 @@ export function ViralAnalyzerClient({
   async function handleAnalyze() {
     if (analysisInFlightRef.current) return;
     analysisInFlightRef.current = true;
+    const sourceLooksLikeUrl = looksLikeUrl(sourceUrl);
+    const scriptLooksLikeUrl = looksLikeUrl(rawScript);
+    const hasManualScript = Boolean(rawScript.trim() && !scriptLooksLikeUrl);
+    const linkCandidate = sourceLooksLikeUrl ? sourceUrl : scriptLooksLikeUrl ? rawScript : "";
+    let manualFingerprint = "";
+    if (!videoFile && hasManualScript) {
+      try {
+        manualFingerprint = await manualSubmissionFingerprint({
+          sourceUrl: sourceLooksLikeUrl ? sourceUrl : "",
+          rawScript,
+          industry,
+          language,
+          rewriteLength,
+        });
+      } catch {
+        setError("无法生成提交指纹，请刷新页面后重试。");
+        analysisInFlightRef.current = false;
+        return;
+      }
+      const cached = manualSubmissionRef.current;
+      if (cached?.fingerprint === manualFingerprint && cached.status === "succeeded" && cached.result) {
+        setError("");
+        setResult(cached.result);
+        analysisInFlightRef.current = false;
+        return;
+      }
+      if (cached?.fingerprint === manualFingerprint && cached.status === "failed" && cached.error) {
+        setResult(null);
+        setError(cached.error);
+        analysisInFlightRef.current = false;
+        return;
+      }
+    }
     setError("");
     setResult(null);
     setLinkCheck(null);
@@ -420,10 +486,6 @@ export function ViralAnalyzerClient({
     setLoading(true);
     try {
       const accessToken = await getSessionToken();
-      const sourceLooksLikeUrl = looksLikeUrl(sourceUrl);
-      const scriptLooksLikeUrl = looksLikeUrl(rawScript);
-      const hasManualScript = rawScript.trim() && !scriptLooksLikeUrl;
-      const linkCandidate = sourceLooksLikeUrl ? sourceUrl : scriptLooksLikeUrl ? rawScript : "";
 
       if (videoFile) {
         setRunStage("uploading");
@@ -481,6 +543,12 @@ export function ViralAnalyzerClient({
       }
 
       setRunStage("manual");
+      const submissionId = newClientSubmissionId();
+      manualSubmissionRef.current = {
+        fingerprint: manualFingerprint,
+        submissionId,
+        status: "processing",
+      };
       const payload = await analyzeViralScript(
         {
           source_url: sourceLooksLikeUrl ? sourceUrl : "",
@@ -488,18 +556,39 @@ export function ViralAnalyzerClient({
           industry,
           language,
           rewrite_length: rewriteLength,
+          client_submission_id: submissionId,
         },
         accessToken,
       );
+      manualSubmissionRef.current = {
+        fingerprint: manualFingerprint,
+        submissionId,
+        status: "succeeded",
+        result: payload,
+      };
       setResult(payload);
     } catch (err) {
-      setError(friendlyError(err));
+      const message = friendlyError(err);
+      const cached = manualSubmissionRef.current;
+      if (manualFingerprint && cached?.fingerprint === manualFingerprint && cached.status === "processing") {
+        manualSubmissionRef.current = {
+          ...cached,
+          status: "failed",
+          error: message,
+        };
+      }
+      setError(message);
     } finally {
       analysisInFlightRef.current = false;
       setLoading(false);
       setRunStage("idle");
       setUploadProgress(null);
     }
+  }
+
+  function handleRegenerate() {
+    manualSubmissionRef.current = null;
+    void handleAnalyze();
   }
 
   async function copyScript(script: string, index: number) {
@@ -686,7 +775,20 @@ export function ViralAnalyzerClient({
                   ) : null}
                 </div>
               ) : null}
-              {error ? <p className="whitespace-pre-wrap rounded-md border border-rose-300/20 bg-rose-400/10 p-3 text-sm leading-6 text-rose-100">{error}</p> : null}
+              {error ? (
+                <div className="rounded-md border border-rose-300/20 bg-rose-400/10 p-3 text-sm leading-6 text-rose-100">
+                  <p className="whitespace-pre-wrap">{error}</p>
+                  {manualSubmissionRef.current?.status === "failed" && !videoFile && Boolean(rawScript.trim() && !looksLikeUrl(rawScript)) ? (
+                    <button
+                      type="button"
+                      onClick={handleRegenerate}
+                      className="mt-3 rounded-md border border-rose-200/30 px-3 py-1.5 text-xs font-semibold text-rose-50 transition hover:bg-rose-200/10"
+                    >
+                      重新生成
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
           {isWorkspace && controlPanelFooter ? <div className="space-y-5">{controlPanelFooter}</div> : null}

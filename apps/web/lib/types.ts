@@ -246,6 +246,7 @@ export type ViralRewrite = {
 export type ViralAnalyzeResult = {
   project_id?: string;
   request_id?: string;
+  client_submission_id?: string | null;
   topic: string;
   hook: string;
   selling_points: string[];

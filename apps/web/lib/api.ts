@@ -195,6 +195,7 @@ export async function analyzeViralScript(
     industry: string;
     language: Locale;
     rewrite_length?: "short" | "medium" | "full";
+    client_submission_id: string;
   },
   accessToken?: string,
 ): Promise<ViralAnalyzeResult> {

@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import logging
 
 from typing import Literal
@@ -13,6 +15,11 @@ from app.services.video_link_resolver import check_video_link, resolve_video_lin
 from app.services.viral_analyzer import analyze_viral_script
 from app.services.viral_pipeline import run_uploaded_viral_pipeline, run_viral_pipeline
 from app.services.viral_diagnostics import bind_request_id, new_request_id, reset_request_id
+from app.services.viral_idempotency import (
+    IdempotencyConflict,
+    IdempotencyOutcome,
+    viral_analysis_idempotency,
+)
 
 router = APIRouter(prefix="/viral", tags=["viral"])
 logger = logging.getLogger(__name__)
@@ -25,6 +32,7 @@ class ViralAnalyzeRequest(BaseModel):
     industry: str
     language: str = "zh"
     rewrite_length: Literal["short", "medium", "full"] = "short"
+    client_submission_id: str = Field(default="", max_length=96, pattern=r"^(|viral_submission_[0-9a-f]{32})$")
 
 
 class ViralLinkResolveRequest(BaseModel):
@@ -67,6 +75,26 @@ def _pipeline_failure(*, request_id: str, code: str, stage: str, message: str, r
         "rewrites": [],
         "metadata": {},
     }
+
+
+def _viral_analyze_fingerprint(payload: ViralAnalyzeRequest) -> str:
+    canonical = json.dumps(
+        {
+            "source_url": payload.source_url,
+            "raw_script": payload.raw_script,
+            "industry": payload.industry,
+            "language": payload.language,
+            "rewrite_length": payload.rewrite_length,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _raise_idempotent_failure(outcome: IdempotencyOutcome) -> None:
+    raise HTTPException(status_code=outcome.status_code, detail=outcome.payload)
 
 
 @router.post("/link/resolve")
@@ -149,10 +177,57 @@ async def analyze_viral(
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> dict:
+    user = get_authenticated_user(supabase, token)
+    submission_id = payload.client_submission_id
+    fingerprint = _viral_analyze_fingerprint(payload)
+    claim = None
+    if submission_id:
+        try:
+            claim = viral_analysis_idempotency.claim(
+                user_id=user["id"],
+                submission_id=submission_id,
+                fingerprint=fingerprint,
+            )
+        except IdempotencyConflict as error:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "idempotency_conflict",
+                    "stage": "pending",
+                    "message": str(error),
+                    "retryable": False,
+                    "client_submission_id": submission_id,
+                },
+            ) from error
+        if not claim.is_owner:
+            state = "completed" if claim.future.done() else "processing"
+            logger.info(
+                "viral_analyze_idempotency client_submission_id=%s fingerprint=%s state=%s outcome=reused",
+                submission_id,
+                fingerprint[:12],
+                state,
+            )
+            outcome = await viral_analysis_idempotency.wait(claim)
+            logger.info(
+                "viral_analyze_idempotency request_id=%s client_submission_id=%s fingerprint=%s state=completed outcome=reused status=%s",
+                outcome.payload.get("request_id", "unavailable"),
+                submission_id,
+                fingerprint[:12],
+                outcome.status_code,
+            )
+            if outcome.status_code >= 400:
+                _raise_idempotent_failure(outcome)
+            return outcome.payload
+
     request_id = new_request_id()
     context_token = bind_request_id(request_id)
     try:
-        user = get_authenticated_user(supabase, token)
+        logger.info(
+            "viral_analyze_idempotency request_id=%s client_submission_id=%s fingerprint=%s state=processing outcome=owner",
+            request_id,
+            submission_id or "unavailable",
+            fingerprint[:12],
+        )
         result = await analyze_viral_script(
             supabase,
             user_id=user["id"],
@@ -169,16 +244,63 @@ async def analyze_viral(
             request_id,
             actual_chars,
         )
-        return {**result, "request_id": request_id}
+        response_payload = {
+            **result,
+            "request_id": request_id,
+            "client_submission_id": submission_id or None,
+        }
+        if claim is not None:
+            viral_analysis_idempotency.complete(
+                user_id=user["id"],
+                submission_id=submission_id,
+                outcome=IdempotencyOutcome(status_code=200, payload=response_payload),
+            )
+        return response_payload
     except HTTPException as error:
         if isinstance(error.detail, dict):
             error.detail.setdefault("request_id", request_id)
+            error.detail.setdefault("client_submission_id", submission_id or None)
+        if claim is not None:
+            failure_payload = (
+                error.detail
+                if isinstance(error.detail, dict)
+                else {
+                    "code": "analysis_http_error",
+                    "stage": "analyzing",
+                    "message": str(error.detail),
+                    "request_id": request_id,
+                    "client_submission_id": submission_id or None,
+                }
+            )
+            viral_analysis_idempotency.complete(
+                user_id=user["id"],
+                submission_id=submission_id,
+                outcome=IdempotencyOutcome(status_code=error.status_code, payload=failure_payload),
+            )
         logger.warning(
             "viral_analyze request_id=%s stage=%s outcome=failed code=%s",
             request_id,
             error.detail.get("stage", "analyzing") if isinstance(error.detail, dict) else "analyzing",
             error.detail.get("code", "analysis_http_error") if isinstance(error.detail, dict) else "analysis_http_error",
         )
+        raise
+    except BaseException:
+        if claim is not None:
+            viral_analysis_idempotency.complete(
+                user_id=user["id"],
+                submission_id=submission_id,
+                outcome=IdempotencyOutcome(
+                    status_code=500,
+                    payload={
+                        "code": "analysis_internal_error",
+                        "stage": "analyzing",
+                        "message": "分析服务内部错误。",
+                        "retryable": False,
+                        "request_id": request_id,
+                        "client_submission_id": submission_id or None,
+                    },
+                ),
+            )
         raise
     finally:
         reset_request_id(context_token)

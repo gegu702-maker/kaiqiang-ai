@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from app.core.auth import get_bearer_token
 from app.core.supabase import get_supabase
 from app.services.asr_service import ASRResult, ASRSegment
 from app.services import viral_analyzer, viral_diagnostics, viral_pipeline
+from app.services.viral_idempotency import InMemoryIdempotencyStore, viral_analysis_idempotency
 
 
 class _Table:
@@ -620,6 +622,197 @@ def test_manual_text_entry_binds_and_returns_structured_request_id(monkeypatch, 
     assert viral_diagnostics.current_request_id() == ""
 
 
+def test_manual_text_same_submission_concurrently_calls_analyzer_once(monkeypatch):
+    viral_analysis_idempotency.clear()
+    calls = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_analyze(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return {
+            **_analysis(1000),
+            "diagnostic": {
+                "actual_chars": [902, 1068, 1111],
+                "target_chars": 900,
+                "maximum_chars": 1500,
+                "length_unit": "cjk_chars",
+            },
+        }
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+    monkeypatch.setattr(viral_api, "analyze_viral_script", fake_analyze)
+    payload = viral_api.ViralAnalyzeRequest(
+        raw_script="完整财经文本",
+        industry="knowledge",
+        language="zh",
+        rewrite_length="full",
+        client_submission_id="viral_submission_0123456789abcdef0123456789abcdef",
+    )
+
+    async def run():
+        first = asyncio.create_task(viral_api.analyze_viral(payload=payload, token="token", supabase=_Supabase()))
+        await started.wait()
+        second = asyncio.create_task(viral_api.analyze_viral(payload=payload, token="token", supabase=_Supabase()))
+        await asyncio.sleep(0)
+        release.set()
+        return await asyncio.gather(first, second)
+
+    first_result, second_result = asyncio.run(run())
+    assert calls == 1
+    assert first_result == second_result
+    assert first_result["request_id"] == second_result["request_id"]
+    assert first_result["client_submission_id"] == payload.client_submission_id
+
+
+def test_manual_text_completed_submission_reuses_success_without_analyzer(monkeypatch):
+    viral_analysis_idempotency.clear()
+    calls = 0
+
+    async def fake_analyze(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            **_analysis(1000),
+            "diagnostic": {
+                "actual_chars": [930, 940, 950],
+                "target_chars": 900,
+                "maximum_chars": 1500,
+                "length_unit": "cjk_chars",
+            },
+        }
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+    monkeypatch.setattr(viral_api, "analyze_viral_script", fake_analyze)
+    payload = viral_api.ViralAnalyzeRequest(
+        raw_script="同一输入",
+        industry="knowledge",
+        language="zh",
+        rewrite_length="full",
+        client_submission_id="viral_submission_11111111111111111111111111111111",
+    )
+
+    first = asyncio.run(viral_api.analyze_viral(payload=payload, token="token", supabase=_Supabase()))
+    second = asyncio.run(viral_api.analyze_viral(payload=payload, token="token", supabase=_Supabase()))
+    assert calls == 1
+    assert second == first
+
+
+def test_manual_text_failed_submission_reuses_first_failure(monkeypatch):
+    viral_analysis_idempotency.clear()
+    calls = 0
+
+    async def fake_analyze(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "analysis_output_too_short",
+                "stage": "rewriting",
+                "message": "长度不足。",
+                "retryable": False,
+                "actual_chars": [899, 930, 940],
+            },
+        )
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+    monkeypatch.setattr(viral_api, "analyze_viral_script", fake_analyze)
+    payload = viral_api.ViralAnalyzeRequest(
+        raw_script="失败输入",
+        industry="knowledge",
+        language="zh",
+        rewrite_length="full",
+        client_submission_id="viral_submission_22222222222222222222222222222222",
+    )
+
+    failures = []
+    for _ in range(2):
+        with pytest.raises(HTTPException) as raised:
+            asyncio.run(viral_api.analyze_viral(payload=payload, token="token", supabase=_Supabase()))
+        failures.append((raised.value.status_code, raised.value.detail))
+
+    assert calls == 1
+    assert failures[0] == failures[1]
+    assert failures[0][1]["request_id"].startswith("viral_")
+    assert failures[0][1]["client_submission_id"] == payload.client_submission_id
+
+
+def test_manual_text_changed_input_with_new_submission_runs_again(monkeypatch):
+    viral_analysis_idempotency.clear()
+    calls = 0
+
+    async def fake_analyze(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {**_analysis(1000), "diagnostic": {"actual_chars": [910, 920, 930]}}
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+    monkeypatch.setattr(viral_api, "analyze_viral_script", fake_analyze)
+    first_payload = viral_api.ViralAnalyzeRequest(
+        raw_script="输入一",
+        industry="knowledge",
+        language="zh",
+        rewrite_length="full",
+        client_submission_id="viral_submission_33333333333333333333333333333333",
+    )
+    second_payload = viral_api.ViralAnalyzeRequest(
+        raw_script="输入二",
+        industry="knowledge",
+        language="zh",
+        rewrite_length="full",
+        client_submission_id="viral_submission_44444444444444444444444444444444",
+    )
+
+    asyncio.run(viral_api.analyze_viral(payload=first_payload, token="token", supabase=_Supabase()))
+    asyncio.run(viral_api.analyze_viral(payload=second_payload, token="token", supabase=_Supabase()))
+    assert calls == 2
+
+
+def test_idempotency_store_threaded_claim_has_exactly_one_owner():
+    store = InMemoryIdempotencyStore()
+
+    def claim():
+        return store.claim(user_id="u1", submission_id="submission", fingerprint="fingerprint")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        claims = list(executor.map(lambda _index: claim(), range(32)))
+
+    assert sum(item.is_owner for item in claims) == 1
+    assert len({id(item.future) for item in claims}) == 1
+
+
+def test_manual_text_rejects_reused_submission_id_for_different_input(monkeypatch):
+    viral_analysis_idempotency.clear()
+
+    async def fake_analyze(*_args, **_kwargs):
+        return {**_analysis(1000), "diagnostic": {"actual_chars": [910, 920, 930]}}
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+    monkeypatch.setattr(viral_api, "analyze_viral_script", fake_analyze)
+    submission_id = "viral_submission_55555555555555555555555555555555"
+    first_payload = viral_api.ViralAnalyzeRequest(
+        raw_script="输入一",
+        industry="knowledge",
+        client_submission_id=submission_id,
+    )
+    conflicting_payload = viral_api.ViralAnalyzeRequest(
+        raw_script="输入二",
+        industry="knowledge",
+        client_submission_id=submission_id,
+    )
+    asyncio.run(viral_api.analyze_viral(payload=first_payload, token="token", supabase=_Supabase()))
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(viral_api.analyze_viral(payload=conflicting_payload, token="token", supabase=_Supabase()))
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail["code"] == "idempotency_conflict"
+
+
 def test_link_download_is_attempted_before_metadata_fallback(monkeypatch, tmp_path: Path):
     called = []
     monkeypatch.setattr(
@@ -759,6 +952,14 @@ def test_frontend_analysis_submission_has_synchronous_duplicate_gate_and_loading
     assert handler.index("analysisInFlightRef.current = false;") < handler.index("setLoading(false);")
     assert "disabled={loading || checking}" in component_source
     assert "{loading ? loadingLabel() : t.start}" in component_source
+    assert "manualSubmissionFingerprint" in component_source
+    assert "client_submission_id: submissionId" in component_source
+    assert 'status === "succeeded"' in handler
+    assert 'status === "failed"' in handler
+    assert handler.count("analyzeViralScript(") == 1
+    assert "manualSubmissionRef.current = null;" in component_source
+    for field in ("source_url", "raw_script", "industry", "language", "rewrite_length"):
+        assert field in component_source[component_source.index("async function manualSubmissionFingerprint") : component_source.index("function newClientSubmissionId")]
 
 
 def test_review_continuation_endpoint_and_public_payload_are_removed():
