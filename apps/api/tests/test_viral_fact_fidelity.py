@@ -8,6 +8,7 @@ from app.services.viral_fact_fidelity import (
     build_source_fact_ledger,
     unsupported_hard_facts,
 )
+from app.services.llm_provider import LLMProviderError
 from scripts.p2_37_text_acceptance import FINANCE_FIXTURE
 
 
@@ -407,7 +408,14 @@ def test_parallel_initial_generation_exception_is_controlled(monkeypatch):
     detail = raised.value.detail
     assert detail["code"] == "analysis_independent_generation_failed"
     assert detail["stage"] == "independent_initial"
-    assert detail["failed_versions"] == [{"index": 1, "error_type": "RuntimeError"}]
+    assert detail["failed_versions"] == [
+        {
+            "index": 1,
+            "error_type": "RuntimeError",
+            "error_code": "unexpected_provider_error",
+            "retryable": False,
+        }
+    ]
 
 
 def test_missing_independent_rewrite_json_field_is_controlled(monkeypatch):
@@ -422,3 +430,182 @@ def test_missing_independent_rewrite_json_field_is_controlled(monkeypatch):
     detail = raised.value.detail
     assert detail["code"] == "analysis_independent_generation_failed"
     assert detail["failed_versions"] == [{"index": 2, "error_type": "missing_rewrite_script"}]
+
+
+def _successful_review(payload):
+    return {
+        "reviews": [
+            {
+                "index": item["index"],
+                "audited_script": item["script"],
+                "removed_unsupported_claims": [],
+                "unsupported_spans": [],
+                "unsupported_remaining": False,
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+            }
+            for item in payload["current_rewrites"]
+        ]
+    }
+
+
+def test_b_connection_failure_retries_only_b_and_never_exceeds_concurrency_limit(monkeypatch):
+    calls = [0, 0, 0]
+    active = 0
+    maximum_active = 0
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        nonlocal active, maximum_active
+        if "variant_task" not in payload:
+            return _successful_review(payload)
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        active += 1
+        maximum_active = max(maximum_active, active)
+        try:
+            await asyncio.sleep(0.01)
+            if index == 1 and calls[index] == 1:
+                raise LLMProviderError(
+                    code="llm_network_error",
+                    message="connection reset",
+                    retryable=True,
+                )
+            return _initial_variant(payload, scripts)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_BASE_DELAY_SECONDS", 0)
+    monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_JITTER_SECONDS", 0)
+    result = _run(monkeypatch, fake_generate)
+
+    assert calls == [1, 2, 1]
+    assert maximum_active == 2
+    assert result["diagnostic"]["maximum_observed_concurrency"] == 2
+    assert [len(item["attempts"]) for item in result["diagnostic"]["version_states"]] == [1, 2, 1]
+    assert all(item["state"] == "succeeded" for item in result["diagnostic"]["version_states"])
+
+
+@pytest.mark.parametrize(
+    ("code", "http_status"),
+    [
+        ("llm_timeout", None),
+        ("llm_network_error", None),
+        ("llm_rate_limited", 429),
+        ("llm_upstream_timeout", 504),
+        ("llm_http_error", 503),
+    ],
+)
+def test_retryable_provider_failures_use_local_retry(monkeypatch, code, http_status):
+    calls = [0, 0, 0]
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        if index == 1 and calls[index] == 1:
+            raise LLMProviderError(
+                code=code,
+                message="transient",
+                retryable=True,
+                http_status=http_status,
+            )
+        return _initial_variant(payload, scripts)
+
+    monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_BASE_DELAY_SECONDS", 0)
+    monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_JITTER_SECONDS", 0)
+    result = _run(monkeypatch, fake_generate)
+    assert calls == [1, 2, 1]
+    b_attempts = result["diagnostic"]["version_states"][1]["attempts"]
+    assert [item["state"] for item in b_attempts] == ["failed", "succeeded"]
+    assert b_attempts[0]["error_code"] == code
+
+
+def test_local_retry_uses_exponential_delay_with_jitter(monkeypatch):
+    calls = [0, 0, 0]
+    sleeps = []
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        if index == 1 and calls[index] == 1:
+            raise LLMProviderError(
+                code="llm_rate_limited",
+                message="rate limited",
+                retryable=True,
+                http_status=429,
+            )
+        return _initial_variant(payload, scripts)
+
+    monkeypatch.setattr(viral_analyzer.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(viral_analyzer.random, "uniform", lambda _low, _high: 0.05)
+    monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_BASE_DELAY_SECONDS", 0.1)
+    monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_JITTER_SECONDS", 0.1)
+    _run(monkeypatch, fake_generate)
+    assert calls == [1, 2, 1]
+    assert sleeps == [pytest.approx(0.15)]
+
+
+def test_truncated_or_contract_failure_does_not_retry_and_preserves_other_successes(monkeypatch):
+    calls = [0, 0, 0]
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        if index == 1:
+            raise LLMProviderError(
+                code="llm_response_truncated",
+                message="finish_reason=length",
+                retryable=True,
+                http_status=200,
+            )
+        return _initial_variant(payload, scripts)
+
+    with pytest.raises(HTTPException) as raised:
+        _run(monkeypatch, fake_generate)
+    detail = raised.value.detail
+    assert calls == [1, 1, 1]
+    assert detail["retryable"] is False
+    assert detail["succeeded_versions"] == [0, 2]
+    assert [item["state"] for item in detail["version_states"]] == ["succeeded", "failed", "succeeded"]
+    assert detail["failed_versions"][0]["error_code"] == "llm_response_truncated"
+
+
+def test_request_level_llm_call_budget_is_strict(monkeypatch):
+    calls = [0, 0, 0]
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" in payload:
+            index = payload["variant_task"]["index"]
+            calls[index] += 1
+            if calls[index] == 1:
+                raise LLMProviderError(
+                    code="llm_network_error",
+                    message="transient",
+                    retryable=True,
+                )
+            return _initial_variant(payload, scripts)
+        if "current_rewrites" in payload:
+            review = _successful_review(payload)
+            for item in review["reviews"]:
+                item["audited_script"] = _sized("不足", "丁", 650)
+            return review
+        raise AssertionError("provider must not be called after budget exhaustion")
+
+    monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_BASE_DELAY_SECONDS", 0)
+    monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_JITTER_SECONDS", 0)
+    with pytest.raises(HTTPException) as raised:
+        _run(monkeypatch, fake_generate)
+    detail = raised.value.detail
+    assert calls == [2, 2, 2]
+    assert detail["llm_call_count"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
+    assert detail["maximum_llm_calls"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS

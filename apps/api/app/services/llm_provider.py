@@ -143,7 +143,16 @@ def safe_parse_json_response(raw: str) -> dict[str, Any]:
 
 
 class LLMProvider:
-    async def generate_json(self, *, system: str, payload: dict[str, Any], max_tokens: int = 8000) -> dict[str, Any]:
+    async def generate_json(
+        self,
+        *,
+        system: str,
+        payload: dict[str, Any],
+        max_tokens: int = 8000,
+        attempt_label: str = "initial",
+        max_transport_attempts: int = 2,
+        allow_format_repair: bool = True,
+    ) -> dict[str, Any]:
         provider = settings.llm_provider.lower()
         if provider == "deepseek":
             return await self._chat_json(
@@ -154,6 +163,9 @@ class LLMProvider:
                 payload=payload,
                 provider_name="DeepSeek",
                 max_tokens=max_tokens,
+                attempt_label=attempt_label,
+                max_transport_attempts=max_transport_attempts,
+                allow_format_repair=allow_format_repair,
             )
         if provider == "openai":
             return await self._chat_json(
@@ -164,6 +176,9 @@ class LLMProvider:
                 payload=payload,
                 provider_name="OpenAI",
                 max_tokens=max_tokens,
+                attempt_label=attempt_label,
+                max_transport_attempts=max_transport_attempts,
+                allow_format_repair=allow_format_repair,
             )
         if provider == "mock":
             return self._mock(payload)
@@ -179,6 +194,9 @@ class LLMProvider:
         payload: dict[str, Any],
         provider_name: str,
         max_tokens: int,
+        attempt_label: str,
+        max_transport_attempts: int,
+        allow_format_repair: bool,
     ) -> dict[str, Any]:
         request_id = current_request_id()
         if not api_key:
@@ -191,8 +209,13 @@ class LLMProvider:
         async def request_completion(messages: list[dict[str, str]], *, attempt: str) -> tuple[str, int, str]:
             request_body_chars = len(json.dumps(messages, ensure_ascii=False))
             response: httpx.Response | None = None
-            for transport_attempt in range(1, 3):
-                attempt_label = f"{attempt}_{transport_attempt}"
+            transport_limit = max(1, max_transport_attempts)
+            for transport_attempt in range(1, transport_limit + 1):
+                transport_label = (
+                    attempt
+                    if transport_limit == 1
+                    else f"{attempt}_{transport_attempt}"
+                )
                 attempt_started = time.perf_counter()
                 try:
                     async with httpx.AsyncClient(timeout=httpx.Timeout(90, connect=15)) as client:
@@ -214,15 +237,20 @@ class LLMProvider:
                         request_id,
                         provider_name,
                         model,
-                        attempt_label,
+                        transport_label,
                         max_tokens,
                         request_body_chars,
                         round((time.perf_counter() - attempt_started) * 1000),
                     )
-                    if transport_attempt == 1:
+                    if transport_attempt < transport_limit:
                         await asyncio.sleep(1)
                         continue
-                    raise LLMProviderError(code="llm_timeout", message="AI 服务调用超时，重试一次后仍失败。", retryable=True) from error
+                    timeout_message = (
+                        "AI 服务调用超时，受控重试后仍失败。"
+                        if transport_limit > 1
+                        else "AI 服务调用超时。"
+                    )
+                    raise LLMProviderError(code="llm_timeout", message=timeout_message, retryable=True) from error
                 except httpx.HTTPError as error:
                     logger.warning(
                         "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=network_error type=%s "
@@ -231,16 +259,21 @@ class LLMProvider:
                         request_id,
                         provider_name,
                         model,
-                        attempt_label,
+                        transport_label,
                         type(error).__name__,
                         max_tokens,
                         request_body_chars,
                         round((time.perf_counter() - attempt_started) * 1000),
                     )
-                    if transport_attempt == 1:
+                    if transport_attempt < transport_limit:
                         await asyncio.sleep(1)
                         continue
-                    raise LLMProviderError(code="llm_network_error", message="AI 服务连接中断，重试一次后仍失败。", retryable=True) from error
+                    network_message = (
+                        "AI 服务连接中断，受控重试后仍失败。"
+                        if transport_limit > 1
+                        else "AI 服务连接中断。"
+                    )
+                    raise LLMProviderError(code="llm_network_error", message=network_message, retryable=True) from error
 
                 response_length = len(response.content)
                 if response.status_code < 400:
@@ -265,7 +298,7 @@ class LLMProvider:
                     request_id,
                     provider_name,
                     model,
-                    attempt_label,
+                    transport_label,
                     code,
                     response.status_code,
                     response_length,
@@ -274,10 +307,10 @@ class LLMProvider:
                     round((time.perf_counter() - attempt_started) * 1000),
                     upstream_error,
                 )
-                if retryable and transport_attempt == 1:
+                if retryable and transport_attempt < transport_limit:
                     await asyncio.sleep(1)
                     continue
-                suffix = "，重试一次后仍失败。" if retryable and transport_attempt == 2 else ""
+                suffix = "，受控重试后仍失败。" if retryable and transport_attempt == transport_limit and transport_limit > 1 else ""
                 raise LLMProviderError(
                     code=code,
                     message=f"{message.rstrip('。')}{suffix or '。'}",
@@ -358,7 +391,7 @@ class LLMProvider:
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
-            attempt="initial",
+            attempt=attempt_label,
         )
         try:
             return safe_parse_json_response(raw)
@@ -375,6 +408,16 @@ class LLMProvider:
                 initial_schema_error,
             )
 
+        if not allow_format_repair:
+            raise LLMProviderError(
+                code="llm_json_contract_error",
+                message="AI 响应不符合 JSON 契约。",
+                retryable=False,
+                http_status=http_status,
+                response_length=len(raw),
+                schema_error=initial_schema_error,
+            )
+
         repaired_raw, repaired_status, repaired_finish = await request_completion(
             [
                 {
@@ -383,7 +426,7 @@ class LLMProvider:
                 },
                 {"role": "user", "content": raw},
             ],
-            attempt="format_repair",
+            attempt=f"{attempt_label}_format_repair",
         )
         try:
             return safe_parse_json_response(repaired_raw)

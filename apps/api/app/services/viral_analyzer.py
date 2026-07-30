@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from difflib import SequenceMatcher
 import logging
 import math
+import random
 import re
 import time
 from typing import Any
@@ -14,7 +15,7 @@ from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.services.billing import current_period_start, ensure_profile
-from app.services.llm_provider import LLMProvider
+from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.services.viral_diagnostics import current_request_id
 from app.services.viral_fact_fidelity import (
     build_source_fact_ledger,
@@ -102,6 +103,44 @@ MAX_REQUESTED_ADDITIONAL_CJK_CHARS = 1800
 MAX_SUPPLEMENT_RESPONSE_TOKENS = 8000
 MAX_SOURCE_CONSTRAINED_LLM_CALLS = 7
 MIN_SOURCE_FACT_COVERAGE_RATE = 0.35
+SOURCE_INITIAL_CONCURRENCY = 2
+SOURCE_INITIAL_MAX_ATTEMPTS = 2
+SOURCE_RETRY_BASE_DELAY_SECONDS = 0.4
+SOURCE_RETRY_JITTER_SECONDS = 0.2
+
+
+class _LLMCallBudgetExceeded(Exception):
+    pass
+
+
+class _LLMCallBudget:
+    def __init__(self, maximum_calls: int) -> None:
+        self.maximum_calls = maximum_calls
+        self.used_calls = 0
+        self._lock = asyncio.Lock()
+
+    async def reserve(self) -> int:
+        async with self._lock:
+            if self.used_calls >= self.maximum_calls:
+                raise _LLMCallBudgetExceeded
+            self.used_calls += 1
+            return self.used_calls
+
+
+def _retryable_initial_provider_error(error: LLMProviderError) -> bool:
+    if error.code in {
+        "llm_timeout",
+        "llm_network_error",
+        "llm_rate_limited",
+        "llm_upstream_timeout",
+    }:
+        return True
+    return (
+        error.code == "llm_http_error"
+        and error.retryable
+        and error.http_status is not None
+        and error.http_status >= 500
+    )
 REWRITE_STRATEGIES = [
     {
         "title": "版本A：热点反差版",
@@ -866,8 +905,12 @@ async def analyze_viral_script(
         )
 
     stage_timings: list[dict[str, Any]] = []
+    llm_budget = _LLMCallBudget(MAX_SOURCE_CONSTRAINED_LLM_CALLS)
     llm_call_count = 0
     independent_initial_results: list[dict[str, Any]] = []
+    version_states: list[dict[str, Any]] = []
+    active_initial_calls = 0
+    maximum_initial_concurrency = 0
     if source_scope == "full_content":
         variant_requirements = (
             "热点反差：只用来源事实呈现“信号不等于结论”的反差，不创造新闻、案例或结果",
@@ -888,8 +931,20 @@ async def analyze_viral_script(
             for requirement in prompt_payload["requirements"]
             if not any(marker in requirement for marker in multi_variant_requirement_markers)
         ]
+        initial_semaphore = asyncio.Semaphore(SOURCE_INITIAL_CONCURRENCY)
+        concurrency_lock = asyncio.Lock()
+        version_states = [
+            {
+                "index": index,
+                "state": "pending",
+                "attempts": [],
+                "has_valid_response": False,
+            }
+            for index in range(FINAL_REWRITE_LIMIT)
+        ]
 
         async def generate_variant(index: int) -> tuple[dict[str, Any], int]:
+            nonlocal active_initial_calls, maximum_initial_concurrency
             variant_started = time.perf_counter()
             variant_schema: dict[str, Any] = {
                 "rewrite": {
@@ -929,24 +984,162 @@ async def analyze_viral_script(
                 ],
                 "schema": variant_schema,
             }
-            response = await LLMProvider().generate_json(
-                system=(
-                    "你是来源约束的短视频口播编导。原始转写和来源事实账本是唯一事实来源。"
-                    f"独立完成一个{output_language}版本；不得生成其他版本。只输出合法 JSON。"
-                ),
-                payload=variant_payload,
-                max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
-            )
-            return response, round((time.perf_counter() - variant_started) * 1000)
+            state = version_states[index]
+            for attempt in range(1, SOURCE_INITIAL_MAX_ATTEMPTS + 1):
+                if attempt > 1:
+                    state["state"] = "retrying"
+                    delay_seconds = (
+                        SOURCE_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 2))
+                        + random.uniform(0.0, SOURCE_RETRY_JITTER_SECONDS)
+                    )
+                    state["retry_delay_ms"] = round(delay_seconds * 1000)
+                    await asyncio.sleep(delay_seconds)
+
+                attempt_started = time.perf_counter()
+                attempt_record: dict[str, Any] = {
+                    "attempt": attempt,
+                    "state": "running",
+                    "started_at": datetime.now(UTC).isoformat(),
+                }
+                state["state"] = "running"
+                state["attempts"].append(attempt_record)
+                try:
+                    async with initial_semaphore:
+                        call_number = await llm_budget.reserve()
+                        attempt_record["llm_call_number"] = call_number
+                        async with concurrency_lock:
+                            active_initial_calls += 1
+                            maximum_initial_concurrency = max(
+                                maximum_initial_concurrency,
+                                active_initial_calls,
+                            )
+                        try:
+                            response = await LLMProvider().generate_json(
+                                system=(
+                                    "你是来源约束的短视频口播编导。原始转写和来源事实账本是唯一事实来源。"
+                                    f"独立完成一个{output_language}版本；不得生成其他版本。只输出合法 JSON。"
+                                ),
+                                payload=variant_payload,
+                                max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                                attempt_label=f"variant_{index}_attempt_{attempt}",
+                                max_transport_attempts=1,
+                                allow_format_repair=False,
+                            )
+                        finally:
+                            async with concurrency_lock:
+                                active_initial_calls -= 1
+                except LLMProviderError as error:
+                    retryable = _retryable_initial_provider_error(error)
+                    attempt_record.update(
+                        {
+                            "state": "failed",
+                            "error_code": error.code,
+                            "error_type": type(error).__name__,
+                            "retryable": retryable,
+                            "http_status": error.http_status,
+                            "elapsed_ms": round((time.perf_counter() - attempt_started) * 1000),
+                        }
+                    )
+                    logger.warning(
+                        "viral_variant request_id=%s index=%s attempt=%s state=failed "
+                        "category=%s retryable=%s http_status=%s elapsed_ms=%s",
+                        current_request_id(),
+                        index,
+                        attempt,
+                        error.code,
+                        retryable,
+                        error.http_status,
+                        attempt_record["elapsed_ms"],
+                    )
+                    if retryable and attempt < SOURCE_INITIAL_MAX_ATTEMPTS:
+                        state["state"] = "retrying"
+                        continue
+                    state["state"] = "failed"
+                    state["error_code"] = error.code
+                    raise
+                except _LLMCallBudgetExceeded:
+                    attempt_record.update(
+                        {
+                            "state": "failed",
+                            "error_code": "llm_call_budget_exhausted",
+                            "error_type": "_LLMCallBudgetExceeded",
+                            "retryable": False,
+                            "elapsed_ms": round((time.perf_counter() - attempt_started) * 1000),
+                        }
+                    )
+                    state["state"] = "failed"
+                    state["error_code"] = "llm_call_budget_exhausted"
+                    raise
+                except Exception as error:
+                    attempt_record.update(
+                        {
+                            "state": "failed",
+                            "error_code": "unexpected_provider_error",
+                            "error_type": type(error).__name__,
+                            "retryable": False,
+                            "elapsed_ms": round((time.perf_counter() - attempt_started) * 1000),
+                        }
+                    )
+                    state["state"] = "failed"
+                    state["error_code"] = "unexpected_provider_error"
+                    raise
+
+                attempt_record.update(
+                    {
+                        "state": "succeeded",
+                        "elapsed_ms": round((time.perf_counter() - attempt_started) * 1000),
+                    }
+                )
+                state["state"] = "succeeded"
+                state["has_valid_response"] = True
+                state["elapsed_ms"] = round((time.perf_counter() - variant_started) * 1000)
+                logger.warning(
+                    "viral_variant request_id=%s index=%s attempt=%s state=succeeded "
+                    "llm_call_number=%s elapsed_ms=%s",
+                    current_request_id(),
+                    index,
+                    attempt,
+                    attempt_record["llm_call_number"],
+                    attempt_record["elapsed_ms"],
+                )
+                return response, state["elapsed_ms"]
+            raise RuntimeError("unreachable variant retry state")
 
         initial_started = time.perf_counter()
         generated = await asyncio.gather(
             *(generate_variant(index) for index in range(FINAL_REWRITE_LIMIT)),
             return_exceptions=True,
         )
-        llm_call_count += FINAL_REWRITE_LIMIT
+        llm_call_count = llm_budget.used_calls
+        initial_elapsed_ms = round((time.perf_counter() - initial_started) * 1000)
+        stage_timings.append(
+            {
+                "stage": "independent_initial",
+                "elapsed_ms": initial_elapsed_ms,
+                "variant_elapsed_ms": [
+                    state.get("elapsed_ms")
+                    for state in version_states
+                ],
+                "parallel": True,
+                "concurrency_limit": SOURCE_INITIAL_CONCURRENCY,
+                "maximum_observed_concurrency": maximum_initial_concurrency,
+            }
+        )
         failures = [
-            {"index": index, "error_type": type(value).__name__}
+            {
+                "index": index,
+                "error_type": type(value).__name__,
+                "error_code": (
+                    value.code
+                    if isinstance(value, LLMProviderError)
+                    else version_states[index].get("error_code", "")
+                ),
+                "retryable": (
+                    _retryable_initial_provider_error(value)
+                    if isinstance(value, LLMProviderError)
+                    else False
+                ),
+            }
             for index, value in enumerate(generated)
             if isinstance(value, BaseException)
         ]
@@ -957,21 +1150,23 @@ async def analyze_viral_script(
                     "code": "analysis_independent_generation_failed",
                     "stage": "independent_initial",
                     "message": "独立版本生成未全部完成。",
-                    "retryable": True,
+                    "retryable": any(item["retryable"] for item in failures),
                     "failed_versions": failures,
+                    "succeeded_versions": [
+                        state["index"]
+                        for state in version_states
+                        if state["state"] == "succeeded"
+                    ],
+                    "version_states": version_states,
+                    "stage_timings": stage_timings,
+                    "llm_call_count": llm_call_count,
+                    "maximum_observed_concurrency": maximum_initial_concurrency,
                     "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
                 },
             )
         independent_initial_results = [value[0] for value in generated if not isinstance(value, BaseException)]
         initial_variant_elapsed = [value[1] for value in generated if not isinstance(value, BaseException)]
-        stage_timings.append(
-            {
-                "stage": "independent_initial",
-                "elapsed_ms": round((time.perf_counter() - initial_started) * 1000),
-                "variant_elapsed_ms": initial_variant_elapsed,
-                "parallel": True,
-            }
-        )
+        stage_timings[-1]["variant_elapsed_ms"] = initial_variant_elapsed
         first_analysis = independent_initial_results[0].get("analysis")
         data = first_analysis if isinstance(first_analysis, dict) else independent_initial_results[0]
         independent_rewrites: list[dict[str, Any]] = []
@@ -1385,6 +1580,22 @@ async def analyze_viral_script(
 
     if requires_fact_review:
         fact_review_started = time.perf_counter()
+        try:
+            fact_review_call_number = await llm_budget.reserve()
+        except _LLMCallBudgetExceeded:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "analysis_llm_call_budget_exhausted",
+                    "stage": "fact_review",
+                    "message": "模型调用已达到请求级资源上限。",
+                    "retryable": False,
+                    "actual_chars": normalized_lengths,
+                    "stage_timings": stage_timings,
+                    "llm_call_count": llm_budget.used_calls,
+                    "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
+                },
+            )
         fact_review = await LLMProvider().generate_json(
             system=(
                 "你是严格的来源事实审校编辑。原始转写是唯一事实来源。"
@@ -1447,8 +1658,11 @@ async def analyze_viral_script(
                 },
             },
             max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+            attempt_label=f"fact_review_call_{fact_review_call_number}",
+            max_transport_attempts=1,
+            allow_format_repair=False,
         )
-        llm_call_count += 1
+        llm_call_count = llm_budget.used_calls
         stage_timings.append(
             {
                 "stage": "fact_review",
@@ -1579,16 +1793,26 @@ async def analyze_viral_script(
         repair_failed_indexes: list[int] = []
         if repair_indexes:
             async def repair_variant(index: int) -> tuple[int, dict[str, Any], int]:
+                nonlocal active_initial_calls, maximum_initial_concurrency
                 repair_started = time.perf_counter()
                 rewrite = result["rewrites"][index]
                 used_ids = list(rewrite.get("used_source_fact_ids") or [])
                 unused_ids = [fact_id for fact_id in source_fact_ledger["fact_ids"] if fact_id not in used_ids]
-                response = await LLMProvider().generate_json(
-                    system=(
-                        "你是来源约束的口播修复编辑。原始转写和来源事实账本是唯一事实来源。"
-                        "必须用来源事实替换违规内容；禁止自由扩写。只输出合法 JSON。"
-                    ),
-                    payload={
+                async with initial_semaphore:
+                    call_number = await llm_budget.reserve()
+                    async with concurrency_lock:
+                        active_initial_calls += 1
+                        maximum_initial_concurrency = max(
+                            maximum_initial_concurrency,
+                            active_initial_calls,
+                        )
+                    try:
+                        response = await LLMProvider().generate_json(
+                            system=(
+                                "你是来源约束的口播修复编辑。原始转写和来源事实账本是唯一事实来源。"
+                                "必须用来源事实替换违规内容；禁止自由扩写。只输出合法 JSON。"
+                            ),
+                            payload={
                         "corrected_transcript": raw_script,
                         "source_fact_ledger": source_fact_ledger,
                         "variant": {
@@ -1631,9 +1855,15 @@ async def analyze_viral_script(
                             "unsupported_spans": [],
                             "unsupported_remaining": False,
                         },
-                    },
-                    max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
-                )
+                            },
+                            max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                            attempt_label=f"source_repair_{index}_call_{call_number}",
+                            max_transport_attempts=1,
+                            allow_format_repair=False,
+                        )
+                    finally:
+                        async with concurrency_lock:
+                            active_initial_calls -= 1
                 return index, response, round((time.perf_counter() - repair_started) * 1000)
 
             repair_started = time.perf_counter()
@@ -1641,7 +1871,7 @@ async def analyze_viral_script(
                 *(repair_variant(index) for index in repair_indexes),
                 return_exceptions=True,
             )
-            llm_call_count += len(repair_indexes)
+            llm_call_count = llm_budget.used_calls
             variant_elapsed_ms: list[int | None] = []
             repaired_rewrites = list(result["rewrites"])
             for expected_index, value in zip(repair_indexes, repair_results, strict=True):
@@ -1888,6 +2118,9 @@ async def analyze_viral_script(
             "stage_timings": stage_timings,
             "llm_call_count": llm_call_count,
             "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
+            "version_states": version_states,
+            "initial_concurrency_limit": SOURCE_INITIAL_CONCURRENCY,
+            "maximum_observed_concurrency": maximum_initial_concurrency,
             **length_target.diagnostics(),
         },
         "diagnostics": {
@@ -1906,6 +2139,9 @@ async def analyze_viral_script(
             "stage_timings": stage_timings,
             "llm_call_count": llm_call_count,
             "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
+            "version_states": version_states,
+            "initial_concurrency_limit": SOURCE_INITIAL_CONCURRENCY,
+            "maximum_observed_concurrency": maximum_initial_concurrency,
             **length_target.diagnostics(),
         },
     }
