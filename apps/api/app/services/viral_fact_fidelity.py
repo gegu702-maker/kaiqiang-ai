@@ -253,3 +253,76 @@ def build_source_fact_ledger(source: str) -> dict[str, Any]:
             "一般性解释必须明确写成判断方法或待核对条件，不能声称已经发生",
         ],
     }
+
+
+def _character_ngrams(value: str, size: int) -> set[str]:
+    normalized = _normalized_token(value)
+    if len(normalized) < size:
+        return {normalized} if normalized else set()
+    return {
+        normalized[index : index + size]
+        for index in range(len(normalized) - size + 1)
+    }
+
+
+def map_source_fact_coverage(
+    ledger: dict[str, Any],
+    script: str,
+    *,
+    claimed_fact_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Map facts to visible script evidence without trusting model self-report."""
+    script_normalized = _normalized_token(script)
+    script_four_grams = _character_ngrams(script, 4)
+    claimed = {
+        str(item)
+        for item in (claimed_fact_ids or [])
+        if str(item) in set(ledger.get("fact_ids") or [])
+    }
+    directly_supported: list[str] = []
+    uncertain: list[str] = []
+    evidence: list[dict[str, Any]] = []
+
+    for fact in ledger.get("facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        fact_id = str(fact.get("id") or "")
+        source_evidence = str(fact.get("evidence") or fact.get("claim") or "")
+        evidence_normalized = _normalized_token(source_evidence)
+        evidence_eight_grams = _character_ngrams(source_evidence, 8)
+        matching_eight_grams = sorted(
+            item for item in evidence_eight_grams if item and item in script_normalized
+        )
+        exact = bool(evidence_normalized and evidence_normalized in script_normalized)
+        direct = exact or bool(matching_eight_grams)
+        matching_four_grams = sorted(
+            _character_ngrams(source_evidence, 4).intersection(script_four_grams)
+        )
+        if direct:
+            directly_supported.append(fact_id)
+        elif fact_id in claimed or matching_four_grams:
+            uncertain.append(fact_id)
+        evidence.append(
+            {
+                "fact_id": fact_id,
+                "direct": direct,
+                "exact_evidence": exact,
+                "matching_evidence_fragments": matching_eight_grams[:3],
+                "lexical_overlap_fragments": matching_four_grams[:3],
+                "model_claimed": fact_id in claimed,
+            }
+        )
+
+    return {
+        "directly_supported_fact_ids": directly_supported,
+        "uncertain_fact_ids": uncertain,
+        "unsupported_spans": unsupported_hard_facts(
+            "\n".join(
+                str(item.get("evidence") or "")
+                for item in (ledger.get("facts") or [])
+                if isinstance(item, dict)
+            ),
+            script,
+        ),
+        "evidence": evidence,
+    }

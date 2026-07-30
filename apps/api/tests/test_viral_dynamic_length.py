@@ -270,7 +270,7 @@ def test_overlong_initial_rewrites_are_fact_reviewed_and_compressed(monkeypatch)
     "repair_response",
     [{}, {"repaired_script": ""}, {"repaired_script": "太短。", "unsupported_remaining": True}],
 )
-def test_empty_or_missing_repair_fields_end_in_structured_failure(monkeypatch, repair_response):
+def test_empty_or_missing_repair_fields_use_deterministic_source_scaffold(monkeypatch, repair_response):
     async def fake_generate(_self, *, payload, **_kwargs):
         return _source_flow_response(
             payload,
@@ -280,14 +280,23 @@ def test_empty_or_missing_repair_fields_end_in_structured_failure(monkeypatch, r
         )
 
     _prepare(monkeypatch, fake_generate)
-    with pytest.raises(HTTPException) as raised:
-        _run()
-    detail = raised.value.detail
-    assert detail["code"] == "analysis_fact_fidelity_failed"
-    assert detail["target_min_chars"] == 674
-    assert detail["target_center_chars"] == 749
-    assert detail["target_max_chars"] == 824
-    assert detail["stage"] == "source_constrained_repair"
+    result = _run()
+    assert all(
+        674 <= length <= 824 for length in result["diagnostic"]["actual_chars"]
+    )
+    reconstructions = result["diagnostic"]["fact_fidelity"][
+        "final_source_reconstruction"
+    ]
+    assert [item["outcome"] for item in reconstructions] == [
+        "source_scaffold",
+        "source_scaffold",
+        "source_scaffold",
+    ]
+    assert result["diagnostic"]["fact_fidelity"]["hard_violations_after"] == [
+        [],
+        [],
+        [],
+    ]
 
 
 def test_public_metadata_never_claims_exact_duration_match():

@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from app.services import viral_analyzer
 from app.services.viral_fact_fidelity import (
     build_source_fact_ledger,
+    map_source_fact_coverage,
     unsupported_hard_facts,
 )
 from app.services.llm_provider import LLMProviderError
@@ -360,7 +361,7 @@ def test_b_unsourced_yoy_and_consecutive_quarters_are_replaced_with_source_fact(
     assert result["diagnostic"]["fact_fidelity"]["hard_violations_after"] == [[], [], []]
 
 
-def test_all_source_facts_used_but_short_allows_only_nonfactual_connective_repair(monkeypatch):
+def test_model_claiming_all_source_facts_does_not_clear_verified_unused_facts(monkeypatch):
     calls = []
     initial_scripts = [_sized(("反差", "痛点", "表达")[index], ("甲", "乙", "丙")[index], 650) for index in range(3)]
 
@@ -382,7 +383,8 @@ def test_all_source_facts_used_but_short_allows_only_nonfactual_connective_repai
                     for index, script in enumerate(initial_scripts)
                 ]
             }
-        assert payload["unused_source_fact_ids"] == []
+        assert payload["unused_source_fact_ids"]
+        assert payload["used_source_fact_ids"] == []
         index = payload["variant"]["index"]
         return {
             "repaired_script": _sized(("反差", "痛点", "表达")[index], ("甲", "乙", "丙")[index], 690),
@@ -394,7 +396,121 @@ def test_all_source_facts_used_but_short_allows_only_nonfactual_connective_repai
 
     result = _run(monkeypatch, fake_generate)
     assert result["diagnostic"]["actual_chars"] == [690, 690, 690]
-    assert all(item["coverage_rate"] == 1.0 for item in result["diagnostic"]["source_fact_coverage"])
+    assert all(
+        item["coverage_rate"] < 1.0
+        for item in result["diagnostic"]["source_fact_coverage"]
+    )
+    assert all(
+        item["unused_source_fact_ids"]
+        for item in result["diagnostic"]["source_fact_coverage"]
+    )
+
+
+def test_no_progress_b_and_c_receive_one_final_source_reconstruction_each(monkeypatch):
+    calls = []
+    initial_scripts = [
+        _sized("热点反差", "甲", 747),
+        _sized("用户痛点", "乙", 658),
+        _sized("信息表达", "丙", 526),
+    ]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "variant_task" in payload:
+            return _initial_variant(payload, initial_scripts)
+        if "current_rewrites" in payload:
+            return {
+                "reviews": [
+                    {
+                        "index": index,
+                        "audited_script": script,
+                        "removed_unsupported_claims": [],
+                        "unsupported_spans": [],
+                        "unsupported_remaining": False,
+                        "used_source_fact_ids": payload["source_fact_ledger"][
+                            "fact_ids"
+                        ],
+                    }
+                    for index, script in enumerate(initial_scripts)
+                ]
+            }
+        if "current_script" in payload:
+            index = payload["variant"]["index"]
+            return {
+                "repaired_script": initial_scripts[index],
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+                "replacements": [],
+                "unsupported_spans": [],
+                "unsupported_remaining": False,
+            }
+        index = payload["current_version"]["index"]
+        return {
+            "reconstructed_script": _sized(
+                ("用户应逐项核对来源信号", "内容表达要区分事实条件和风险")[
+                    index - 1
+                ],
+                ("乙", "丙")[index - 1],
+                (710, 720)[index - 1],
+            ),
+            "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+            "unsupported_spans": [],
+            "unsupported_remaining": False,
+        }
+
+    result = _run(monkeypatch, fake_generate)
+
+    repair_calls = [call for call in calls if "current_script" in call]
+    final_calls = [call for call in calls if "current_version" in call]
+    assert [call["variant"]["index"] for call in repair_calls] == [1, 2]
+    assert [call["current_version"]["index"] for call in final_calls] == [1, 2]
+    assert all("corrected_transcript" in call for call in final_calls)
+    assert all("source_fact_ledger" in call for call in final_calls)
+    assert result["diagnostic"]["actual_chars"] == [747, 710, 720]
+    assert result["diagnostic"]["llm_call_count"] == 8
+    assert result["diagnostic"]["maximum_llm_calls"] == 9
+    repairs = result["diagnostic"]["fact_fidelity"][
+        "source_constrained_repairs"
+    ]
+    assert [item["outcome"] for item in repairs] == ["no_progress", "no_progress"]
+    assert [
+        item["index"]
+        for item in result["diagnostic"]["fact_fidelity"][
+            "final_source_reconstruction"
+        ]
+    ] == [1, 2]
+
+
+def test_model_claimed_fact_ids_are_not_treated_as_direct_text_evidence():
+    ledger = build_source_fact_ledger(FINANCE_FIXTURE)
+    mapping = map_source_fact_coverage(
+        ledger,
+        "这是一段没有复述来源事实的普通口播。",
+        claimed_fact_ids=ledger["fact_ids"],
+    )
+    assert mapping["directly_supported_fact_ids"] == []
+    assert mapping["uncertain_fact_ids"] == ledger["fact_ids"]
+
+
+def test_source_scaffold_is_bounded_source_backed_and_distinct():
+    ledger = build_source_fact_ledger(FINANCE_FIXTURE)
+    scaffolds = [
+        viral_analyzer._source_backed_scaffold(
+            source_fact_ledger=ledger,
+            index=index,
+            minimum_chars=674,
+            target_center_chars=749,
+            maximum_chars=824,
+        )
+        for index in range(3)
+    ]
+    assert all(674 <= viral_analyzer._cjk_len(item) <= 824 for item in scaffolds)
+    assert all(unsupported_hard_facts(FINANCE_FIXTURE, item) == [] for item in scaffolds)
+    assert all(viral_analyzer._repeated_sentence_spans(item) == [] for item in scaffolds)
+    assert max(
+        viral_analyzer.rewrite_similarity(scaffolds[left], scaffolds[right])
+        for left in range(3)
+        for right in range(left + 1, 3)
+    ) < 0.75
 
 
 def test_parallel_initial_generation_exception_is_controlled(monkeypatch):
@@ -651,14 +767,17 @@ def test_second_empty_content_exhaustion_fails_without_third_generation(monkeypa
     assert b_state["compact_regenerations"] == 1
     assert [item["mode"] for item in b_state["attempts"]] == ["initial", "compact_regeneration"]
     assert detail["llm_call_count"] == 4
-    assert detail["maximum_llm_calls"] == 7
+    assert detail["maximum_llm_calls"] == 9
 
 
 def test_request_level_llm_call_budget_is_strict(monkeypatch):
     calls = [0, 0, 0]
+    provider_calls = 0
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
 
     async def fake_generate(_self, *, payload, **_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
         if "variant_task" in payload:
             index = payload["variant_task"]["index"]
             calls[index] += 1
@@ -674,13 +793,27 @@ def test_request_level_llm_call_budget_is_strict(monkeypatch):
             for item in review["reviews"]:
                 item["audited_script"] = _sized("不足", "丁", 650)
             return review
+        if "current_script" in payload:
+            index = payload["variant"]["index"]
+            return {
+                "repaired_script": _sized("不足", "丁", 650),
+                "used_source_fact_ids": [],
+                "replacements": [],
+                "unsupported_spans": [],
+                "unsupported_remaining": False,
+            }
         raise AssertionError("provider must not be called after budget exhaustion")
 
     monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_BASE_DELAY_SECONDS", 0)
     monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_JITTER_SECONDS", 0)
-    with pytest.raises(HTTPException) as raised:
-        _run(monkeypatch, fake_generate)
-    detail = raised.value.detail
+    result = _run(monkeypatch, fake_generate)
     assert calls == [2, 2, 2]
-    assert detail["llm_call_count"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
-    assert detail["maximum_llm_calls"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
+    assert provider_calls == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
+    assert result["diagnostic"]["llm_call_count"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
+    assert result["diagnostic"]["maximum_llm_calls"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
+    assert all(
+        item["outcome"] == "source_scaffold"
+        for item in result["diagnostic"]["fact_fidelity"][
+            "final_source_reconstruction"
+        ]
+    )

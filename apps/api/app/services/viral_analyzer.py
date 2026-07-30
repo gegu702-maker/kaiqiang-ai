@@ -19,6 +19,7 @@ from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.services.viral_diagnostics import current_request_id
 from app.services.viral_fact_fidelity import (
     build_source_fact_ledger,
+    map_source_fact_coverage,
     unsupported_hard_facts,
 )
 from app.services.viral_length import (
@@ -101,7 +102,7 @@ REWRITE_MAX_PLANNING_YIELD = 0.50
 REWRITE_SECOND_ROUND_MULTIPLIER = 1.25
 MAX_REQUESTED_ADDITIONAL_CJK_CHARS = 1800
 MAX_SUPPLEMENT_RESPONSE_TOKENS = 8000
-MAX_SOURCE_CONSTRAINED_LLM_CALLS = 7
+MAX_SOURCE_CONSTRAINED_LLM_CALLS = 9
 MIN_SOURCE_FACT_COVERAGE_RATE = 0.35
 SOURCE_INITIAL_CONCURRENCY = 2
 SOURCE_INITIAL_MAX_NETWORK_RETRIES = 1
@@ -313,6 +314,86 @@ def _repeated_sentence_spans(value: str) -> list[str]:
             repeated.append(normalized)
         seen.add(normalized)
     return repeated
+
+
+def _source_backed_scaffold(
+    *,
+    source_fact_ledger: dict[str, Any],
+    index: int,
+    minimum_chars: int,
+    target_center_chars: int,
+    maximum_chars: int,
+) -> str:
+    """Build a bounded fallback from unique source sentences plus neutral framing."""
+    facts = [
+        {**fact, "_source_order": order}
+        for order, fact in enumerate(source_fact_ledger.get("facts") or [])
+        if isinstance(fact, dict) and str(fact.get("evidence") or "").strip()
+    ]
+    category_orders = (
+        (),
+        ("风险边界", "自购与ETF", "回购及限定条件", "机构及表态", "中报和产业链", "外资观点", "其他来源事实"),
+        ("中报和产业链", "机构及表态", "自购与ETF", "回购及限定条件", "外资观点", "风险边界", "其他来源事实"),
+    )
+    if index:
+        priority = {
+            category: order
+            for order, category in enumerate(category_orders[index % len(category_orders)])
+        }
+        facts.sort(
+            key=lambda item: (
+                priority.get(str(item.get("category") or ""), len(priority)),
+                item["_source_order"],
+            )
+        )
+
+    framing = (
+        (
+            "先别急着把这些信号直接当成结论。下面只按来源信息逐项核对。",
+            "所以，先核对证据和限定条件，再形成判断。",
+        ),
+        (
+            "对普通用户来说，最重要的是别跟着单一信号下结论，而要逐项核对来源。",
+            "把事实、条件和风险放在一起看，才能避免被短期情绪带着走。",
+        ),
+        (
+            "从信息分析与内容表达角度，可以把来源中的不同信号拆开，再重新组织。",
+            "表达时把事实、条件和风险分开，结论就不会跑在证据前面。",
+        ),
+    )[index % 3]
+    prefix, suffix = (_with_sentence_end(item) for item in framing)
+    selected: list[str] = []
+    seen: set[str] = set()
+    suffix_chars = _cjk_len(suffix)
+    current_chars = _cjk_len(prefix)
+    for fact in facts:
+        evidence = _with_sentence_end(str(fact.get("evidence") or ""))
+        normalized = _normalize_for_similarity(evidence)
+        if not normalized or normalized in seen:
+            continue
+        candidate_chars = current_chars + _cjk_len(evidence) + suffix_chars
+        if candidate_chars > maximum_chars:
+            continue
+        seen.add(normalized)
+        selected.append(evidence)
+        current_chars += _cjk_len(evidence)
+        if current_chars + suffix_chars >= target_center_chars:
+            break
+
+    if current_chars + suffix_chars < minimum_chars:
+        for fact in facts:
+            evidence = _with_sentence_end(str(fact.get("evidence") or ""))
+            normalized = _normalize_for_similarity(evidence)
+            if not normalized or normalized in seen:
+                continue
+            if current_chars + _cjk_len(evidence) + suffix_chars > maximum_chars:
+                continue
+            seen.add(normalized)
+            selected.append(evidence)
+            current_chars += _cjk_len(evidence)
+            if current_chars + suffix_chars >= minimum_chars:
+                break
+    return f"{prefix}{''.join(selected)}{suffix}".strip()
 
 
 def sanitize_rewrite_script(script: str) -> str:
@@ -1829,6 +1910,14 @@ async def analyze_viral_script(
             unsupported_hard_facts(raw_script, rewrite["script"])
             for rewrite in result["rewrites"]
         ]
+        verified_fact_coverage = [
+            map_source_fact_coverage(
+                source_fact_ledger,
+                rewrite["script"],
+                claimed_fact_ids=list(rewrite.get("used_source_fact_ids") or []),
+            )
+            for rewrite in result["rewrites"]
+        ]
         fact_fidelity_diagnostic.update(
             {
                 "reviewed": True,
@@ -1836,6 +1925,7 @@ async def analyze_viral_script(
                 "removed_claims": removed_claims,
                 "unsupported_spans": unsupported_spans,
                 "used_source_fact_ids": used_source_fact_ids,
+                "verified_fact_coverage": verified_fact_coverage,
                 "unsupported_remaining": unsupported_remaining,
             }
         )
@@ -1866,18 +1956,19 @@ async def analyze_viral_script(
                 or bool(hard_violations_after[index])
                 or index in unsupported_remaining
                 or bool(unsupported_spans[index])
-                or len(result["rewrites"][index].get("used_source_fact_ids") or [])
-                < minimum_fact_coverage_count
             )
         ]
         repair_diagnostics: list[dict[str, Any]] = []
         repair_failed_indexes: list[int] = []
+        repair_no_progress_indexes: list[int] = []
         if repair_indexes:
             async def repair_variant(index: int) -> tuple[int, dict[str, Any], int]:
                 nonlocal active_initial_calls, maximum_initial_concurrency
                 repair_started = time.perf_counter()
                 rewrite = result["rewrites"][index]
-                used_ids = list(rewrite.get("used_source_fact_ids") or [])
+                used_ids = list(
+                    verified_fact_coverage[index]["directly_supported_fact_ids"]
+                )
                 unused_ids = [fact_id for fact_id in source_fact_ledger["fact_ids"] if fact_id not in used_ids]
                 async with initial_semaphore:
                     call_number = await llm_budget.reserve()
@@ -1988,8 +2079,15 @@ async def analyze_viral_script(
                     else [{"span": "", "reason": "missing_unsupported_spans"}]
                 )
                 unsupported_flag = response.get("unsupported_remaining") is not False or bool(remaining_spans)
+                no_progress = bool(
+                    repaired_script
+                    and _normalize_for_similarity(repaired_script)
+                    == _normalize_for_similarity(repaired_rewrites[index]["script"])
+                )
                 if not repaired_script or unsupported_flag:
                     repair_failed_indexes.append(index)
+                elif no_progress:
+                    repair_no_progress_indexes.append(index)
                 repaired_rewrites[index] = {
                     **repaired_rewrites[index],
                     "script": repaired_script or repaired_rewrites[index]["script"],
@@ -1998,7 +2096,13 @@ async def analyze_viral_script(
                 repair_diagnostics.append(
                     {
                         "index": index,
-                        "outcome": "repaired" if index not in repair_failed_indexes else "invalid_repair",
+                        "outcome": (
+                            "invalid_repair"
+                            if index in repair_failed_indexes
+                            else "no_progress"
+                            if no_progress
+                            else "repaired"
+                        ),
                         "before_chars": normalized_lengths[index],
                         "after_chars": _cjk_len(repaired_rewrites[index]["script"]),
                         "unused_source_fact_ids": [
@@ -2016,6 +2120,14 @@ async def analyze_viral_script(
             normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
             hard_violations_after = [
                 unsupported_hard_facts(raw_script, rewrite["script"])
+                for rewrite in result["rewrites"]
+            ]
+            verified_fact_coverage = [
+                map_source_fact_coverage(
+                    source_fact_ledger,
+                    rewrite["script"],
+                    claimed_fact_ids=list(rewrite.get("used_source_fact_ids") or []),
+                )
                 for rewrite in result["rewrites"]
             ]
             stage_timings.append(
@@ -2040,6 +2152,7 @@ async def analyze_viral_script(
                     "hard_violations_after": hard_violations_after,
                     "source_constrained_repairs": repair_diagnostics,
                     "repair_failed_indexes": repair_failed_indexes,
+                    "repair_no_progress_indexes": repair_no_progress_indexes,
                     "unsupported_remaining": [
                         index
                         for index in unsupported_remaining
@@ -2053,7 +2166,284 @@ async def analyze_viral_script(
                         list(rewrite.get("used_source_fact_ids") or [])
                         for rewrite in result["rewrites"]
                     ],
+                    "verified_fact_coverage": verified_fact_coverage,
                 }
+            )
+
+        final_reconstruction_indexes = [
+            index
+            for index, length in enumerate(normalized_lengths)
+            if (
+                length < minimum_rewrite_chars
+                or length > maximum_chars
+                or index in repair_no_progress_indexes
+            )
+        ]
+        final_reconstruction_diagnostics: list[dict[str, Any]] = []
+        if final_reconstruction_indexes:
+            async def reconstruct_variant(index: int) -> tuple[int, dict[str, Any], int]:
+                nonlocal active_initial_calls, maximum_initial_concurrency
+                reconstruction_started = time.perf_counter()
+                rewrite = result["rewrites"][index]
+                async with initial_semaphore:
+                    call_number = await llm_budget.reserve()
+                    async with concurrency_lock:
+                        active_initial_calls += 1
+                        maximum_initial_concurrency = max(
+                            maximum_initial_concurrency,
+                            active_initial_calls,
+                        )
+                    try:
+                        response = await LLMProvider().generate_json(
+                            system=(
+                                "你是来源约束的完整口播重构编辑。只输出合法 JSON。"
+                                "原始转写和来源事实账本是唯一事实来源；这是完整替换稿，不是自由扩写或追加段落。"
+                            ),
+                            payload={
+                                "corrected_transcript": raw_script,
+                                "source_fact_ledger": source_fact_ledger,
+                                "current_version": {
+                                    "index": index,
+                                    "title": rewrite["title"],
+                                    "script": rewrite["script"],
+                                    "current_chars": normalized_lengths[index],
+                                    "angle": variant_requirements[index],
+                                },
+                                "length_target": {
+                                    "minimum_chars": minimum_rewrite_chars,
+                                    "center_chars": target_center_chars,
+                                    "maximum_chars": maximum_chars,
+                                    "unit": "cjk_chars",
+                                },
+                                "requirements": [
+                                    "重新组织为一篇完整替换稿，不得返回补充段落，不得沿用长度不足的原稿",
+                                    "只能重组、解释和连接 corrected_transcript 与 source_fact_ledger 中已有的来源事实",
+                                    "禁止新增数字、百分比、日期、周期、数量、机构、公司、人物、案例、指标或确定性因果",
+                                    f"完整正文严格保持在 {minimum_rewrite_chars}–{maximum_chars} CJK，瞄准约 {target_center_chars}",
+                                    "保持 current_version.angle；B保持用户痛点，C保持信息分析与内容表达角度",
+                                    "句尾完整，不机械重复来源句，不重复 CTA",
+                                    "used_source_fact_ids 仅作诊断提示，不要求列满；不得为了列满ID虚构正文",
+                                    "unsupported_spans 必须如实列出仍无来源支持的片段，没有则为空数组",
+                                ],
+                                "schema": {
+                                    "reconstructed_script": "基于来源事实重新组织的完整替换口播稿",
+                                    "used_source_fact_ids": ["正文实际使用的来源事实ID，仅作提示"],
+                                    "unsupported_spans": [],
+                                    "unsupported_remaining": False,
+                                },
+                            },
+                            max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                            attempt_label=f"final_source_reconstruction_{index}_call_{call_number}",
+                            max_transport_attempts=1,
+                            allow_format_repair=False,
+                            thinking_mode="disabled",
+                        )
+                    finally:
+                        async with concurrency_lock:
+                            active_initial_calls -= 1
+                return (
+                    index,
+                    response,
+                    round((time.perf_counter() - reconstruction_started) * 1000),
+                )
+
+            reconstruction_started = time.perf_counter()
+            reconstruction_results = await asyncio.gather(
+                *(reconstruct_variant(index) for index in final_reconstruction_indexes),
+                return_exceptions=True,
+            )
+            reconstructed_rewrites = list(result["rewrites"])
+            reconstruction_failed_indexes: list[int] = []
+            variant_elapsed_ms: list[int | None] = []
+            for expected_index, value in zip(
+                final_reconstruction_indexes,
+                reconstruction_results,
+                strict=True,
+            ):
+                response: dict[str, Any] = {}
+                elapsed_ms: int | None = None
+                provider_error = isinstance(value, BaseException)
+                if provider_error:
+                    index = expected_index
+                else:
+                    index, response, elapsed_ms = value
+                variant_elapsed_ms.append(elapsed_ms)
+                claimed_ids = [
+                    str(item)
+                    for item in (response.get("used_source_fact_ids") or [])
+                    if str(item) in source_fact_ids
+                ]
+                reconstructed_script = smooth_spoken_script(
+                    str(response.get("reconstructed_script") or "")
+                )
+                reconstructed_script = _trim_to_sentence_boundary(
+                    reconstructed_script,
+                    minimum_chars=minimum_rewrite_chars,
+                    maximum_chars=maximum_chars,
+                )
+                response_spans = response.get("unsupported_spans")
+                response_spans = (
+                    [
+                        item
+                        for item in response_spans
+                        if isinstance(item, dict) and str(item.get("span") or "").strip()
+                    ]
+                    if isinstance(response_spans, list)
+                    else [{"span": "", "reason": "missing_unsupported_spans"}]
+                )
+                reconstructed_mapping = map_source_fact_coverage(
+                    source_fact_ledger,
+                    reconstructed_script,
+                    claimed_fact_ids=claimed_ids,
+                )
+                reconstructed_length = _cjk_len(reconstructed_script)
+                reconstruction_valid = (
+                    not provider_error
+                    and minimum_rewrite_chars <= reconstructed_length <= maximum_chars
+                    and response.get("unsupported_remaining") is False
+                    and not response_spans
+                    and not reconstructed_mapping["unsupported_spans"]
+                    and not _repeated_sentence_spans(reconstructed_script)
+                    and reconstructed_script.rstrip().endswith(tuple("。！？!?"))
+                )
+                outcome = "reconstructed"
+                applied_script = reconstructed_script
+                applied_mapping = reconstructed_mapping
+                if not reconstruction_valid:
+                    scaffold = _source_backed_scaffold(
+                        source_fact_ledger=source_fact_ledger,
+                        index=index,
+                        minimum_chars=minimum_rewrite_chars,
+                        target_center_chars=target_center_chars,
+                        maximum_chars=maximum_chars,
+                    )
+                    scaffold_mapping = map_source_fact_coverage(
+                        source_fact_ledger,
+                        scaffold,
+                        claimed_fact_ids=[],
+                    )
+                    scaffold_valid = (
+                        minimum_rewrite_chars <= _cjk_len(scaffold) <= maximum_chars
+                        and not scaffold_mapping["unsupported_spans"]
+                        and not _repeated_sentence_spans(scaffold)
+                        and scaffold.rstrip().endswith(tuple("。！？!?"))
+                    )
+                    if scaffold_valid:
+                        outcome = "source_scaffold"
+                        applied_script = scaffold
+                        applied_mapping = scaffold_mapping
+                    else:
+                        outcome = "failed"
+                        reconstruction_failed_indexes.append(index)
+                        applied_script = reconstructed_rewrites[index]["script"]
+                        applied_mapping = map_source_fact_coverage(
+                            source_fact_ledger,
+                            applied_script,
+                            claimed_fact_ids=list(
+                                reconstructed_rewrites[index].get(
+                                    "used_source_fact_ids"
+                                )
+                                or []
+                            ),
+                        )
+
+                reconstructed_rewrites[index] = {
+                    **reconstructed_rewrites[index],
+                    "script": applied_script,
+                    "used_source_fact_ids": list(
+                        applied_mapping["directly_supported_fact_ids"]
+                    ),
+                }
+                final_reconstruction_diagnostics.append(
+                    {
+                        "index": index,
+                        "outcome": outcome,
+                        "before_chars": normalized_lengths[index],
+                        "after_chars": _cjk_len(applied_script),
+                        "model_claimed_fact_ids": list(dict.fromkeys(claimed_ids)),
+                        "directly_supported_fact_ids": applied_mapping[
+                            "directly_supported_fact_ids"
+                        ],
+                        "uncertain_fact_ids": applied_mapping["uncertain_fact_ids"],
+                        "unsupported_spans": applied_mapping["unsupported_spans"],
+                        "provider_error": (
+                            type(value).__name__ if provider_error else ""
+                        ),
+                        "elapsed_ms": elapsed_ms,
+                    }
+                )
+
+            result = {**result, "rewrites": reconstructed_rewrites}
+            normalized_lengths = [
+                _cjk_len(item.get("script", "")) for item in result["rewrites"]
+            ]
+            hard_violations_after = [
+                unsupported_hard_facts(raw_script, rewrite["script"])
+                for rewrite in result["rewrites"]
+            ]
+            verified_fact_coverage = [
+                map_source_fact_coverage(
+                    source_fact_ledger,
+                    rewrite["script"],
+                    claimed_fact_ids=list(rewrite.get("used_source_fact_ids") or []),
+                )
+                for rewrite in result["rewrites"]
+            ]
+            repair_failed_indexes = [
+                index
+                for index in repair_failed_indexes
+                if index not in final_reconstruction_indexes
+                or index in reconstruction_failed_indexes
+            ]
+            stage_timings.append(
+                {
+                    "stage": "final_source_reconstruction",
+                    "elapsed_ms": round(
+                        (time.perf_counter() - reconstruction_started) * 1000
+                    ),
+                    "variant_elapsed_ms": variant_elapsed_ms,
+                    "parallel": True,
+                    "requested_indexes": final_reconstruction_indexes,
+                }
+            )
+            fact_fidelity_diagnostic.update(
+                {
+                    "hard_violations_after": hard_violations_after,
+                    "verified_fact_coverage": verified_fact_coverage,
+                    "final_source_reconstruction": final_reconstruction_diagnostics,
+                    "repair_failed_indexes": repair_failed_indexes,
+                    "unsupported_remaining": [
+                        index
+                        for index in fact_fidelity_diagnostic.get(
+                            "unsupported_remaining",
+                            [],
+                        )
+                        if index in reconstruction_failed_indexes
+                    ],
+                    "unsupported_spans": [
+                        spans if index in reconstruction_failed_indexes else []
+                        for index, spans in enumerate(
+                            fact_fidelity_diagnostic.get(
+                                "unsupported_spans",
+                                [[], [], []],
+                            )
+                        )
+                    ],
+                    "final_reconstruction_failed_indexes": list(
+                        dict.fromkeys(reconstruction_failed_indexes)
+                    ),
+                }
+            )
+            llm_call_count = llm_budget.used_calls
+            logger.warning(
+                "viral_final_source_reconstruction request_id=%s requested_indexes=%s "
+                "outcomes=%s actual_chars=%s llm_call_count=%s maximum_llm_calls=%s",
+                current_request_id(),
+                final_reconstruction_indexes,
+                [item["outcome"] for item in final_reconstruction_diagnostics],
+                normalized_lengths,
+                llm_call_count,
+                MAX_SOURCE_CONSTRAINED_LLM_CALLS,
             )
 
         final_invalid_indexes = [
@@ -2063,12 +2453,12 @@ async def analyze_viral_script(
         ]
         final_insufficient_coverage_indexes = [
             index
-            for index, rewrite in enumerate(result["rewrites"])
-            if len(rewrite.get("used_source_fact_ids") or []) < minimum_fact_coverage_count
+            for index, mapping in enumerate(verified_fact_coverage)
+            if len(mapping["directly_supported_fact_ids"])
+            < minimum_fact_coverage_count
         ]
         if (
             final_invalid_indexes
-            or final_insufficient_coverage_indexes
             or any(hard_violations_after)
             or repair_failed_indexes
             or llm_call_count > MAX_SOURCE_CONSTRAINED_LLM_CALLS
@@ -2077,9 +2467,19 @@ async def analyze_viral_script(
                 status_code=502,
                 detail={
                     "code": "analysis_fact_fidelity_failed",
-                    "stage": "source_constrained_repair" if repair_indexes else "fact_review",
+                    "stage": (
+                        "final_source_reconstruction"
+                        if final_reconstruction_indexes
+                        else "source_constrained_repair"
+                        if repair_indexes
+                        else "fact_review"
+                    ),
                     "message": "来源约束修复后仍存在无来源事实或长度不合格。",
-                    "retryable": not bool(repair_failed_indexes),
+                    "retryable": (
+                        False
+                        if final_reconstruction_indexes
+                        else not bool(repair_failed_indexes)
+                    ),
                     "actual_chars": normalized_lengths,
                     "target_chars": minimum_rewrite_chars,
                     "target_min_chars": minimum_rewrite_chars,
@@ -2098,18 +2498,36 @@ async def analyze_viral_script(
     source_fact_coverage: list[dict[str, Any]] = []
     if source_scope == "full_content":
         for index, rewrite in enumerate(result["rewrites"]):
-            used_ids = list(dict.fromkeys(rewrite.get("used_source_fact_ids") or []))
+            claimed_ids = list(
+                dict.fromkeys(rewrite.get("used_source_fact_ids") or [])
+            )
+            mapping = map_source_fact_coverage(
+                source_fact_ledger,
+                rewrite["script"],
+                claimed_fact_ids=claimed_ids,
+            )
+            directly_supported_ids = mapping["directly_supported_fact_ids"]
             source_fact_coverage.append(
                 {
                     "index": index,
-                    "used_source_fact_ids": used_ids,
+                    "model_claimed_fact_ids": claimed_ids,
+                    "directly_supported_fact_ids": directly_supported_ids,
+                    "used_source_fact_ids": directly_supported_ids,
+                    "uncertain_fact_ids": mapping["uncertain_fact_ids"],
+                    "unsupported_spans": mapping["unsupported_spans"],
                     "unused_source_fact_ids": [
-                        fact_id for fact_id in source_fact_ledger["fact_ids"] if fact_id not in used_ids
+                        fact_id
+                        for fact_id in source_fact_ledger["fact_ids"]
+                        if fact_id not in directly_supported_ids
                     ],
-                    "used_count": len(used_ids),
+                    "used_count": len(directly_supported_ids),
                     "total_count": source_fact_ledger["fact_count"],
                     "coverage_rate": (
-                        round(len(used_ids) / source_fact_ledger["fact_count"], 4)
+                        round(
+                            len(directly_supported_ids)
+                            / source_fact_ledger["fact_count"],
+                            4,
+                        )
                         if source_fact_ledger["fact_count"]
                         else 0.0
                     ),
