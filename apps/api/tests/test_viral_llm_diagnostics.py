@@ -11,20 +11,43 @@ from app.services import llm_provider
 class _Response:
     status_code = 200
 
-    def __init__(self, content: str, *, finish_reason: str = "stop") -> None:
+    def __init__(
+        self,
+        content: str | None,
+        *,
+        finish_reason: str = "stop",
+        reasoning_content: str | None = None,
+        completion_tokens: int = 202,
+        reasoning_tokens: int | None = None,
+    ) -> None:
         self._content = content
         self._finish_reason = finish_reason
+        self._reasoning_content = reasoning_content
+        self._completion_tokens = completion_tokens
+        self._reasoning_tokens = reasoning_tokens
         self.content = json.dumps(self.json(), ensure_ascii=False).encode()
 
     def json(self):
+        usage = {
+            "prompt_tokens": 101,
+            "completion_tokens": self._completion_tokens,
+            "total_tokens": 101 + self._completion_tokens,
+        }
+        if self._reasoning_tokens is not None:
+            usage["completion_tokens_details"] = {
+                "reasoning_tokens": self._reasoning_tokens,
+            }
         return {
             "choices": [
                 {
                     "finish_reason": self._finish_reason,
-                    "message": {"content": self._content},
+                    "message": {
+                        "content": self._content,
+                        "reasoning_content": self._reasoning_content,
+                    },
                 }
             ],
-            "usage": {"prompt_tokens": 101, "completion_tokens": 202, "total_tokens": 303},
+            "usage": usage,
         }
 
 
@@ -101,6 +124,25 @@ def test_deepseek_request_contract_uses_supported_model(monkeypatch):
     assert request["max_tokens"] == 8000
     assert "temperature" not in request
     assert "stream" not in request
+
+
+def test_deepseek_structured_request_can_disable_thinking(monkeypatch):
+    _Client.calls = []
+    _Client.responses = [_Response('{"ok":true}')]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    result = asyncio.run(
+        llm_provider.LLMProvider().generate_json(
+            system="Return JSON only.",
+            payload={"input": "x"},
+            thinking_mode="disabled",
+        )
+    )
+
+    assert result == {"ok": True}
+    assert _Client.calls[0][1]["json"]["thinking"] == {"type": "disabled"}
 
 
 def test_real_deepseek_deprecated_model_400_keeps_safe_error_fields(monkeypatch):
@@ -262,6 +304,42 @@ def test_finish_reason_length_is_never_accepted_as_complete(monkeypatch, caplog)
     assert "prompt_tokens=101" in caplog.text
     assert "completion_tokens=202" in caplog.text
     assert "total_tokens=303" in caplog.text
+
+
+def test_empty_content_exhaustion_records_reasoning_usage_separately(monkeypatch, caplog):
+    _Client.calls = []
+    _Client.responses = [
+        _Response(
+            None,
+            finish_reason="length",
+            reasoning_content="内部推理" * 100,
+            completion_tokens=8000,
+            reasoning_tokens=7990,
+        )
+    ]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    with pytest.raises(llm_provider.LLMProviderError) as raised:
+        asyncio.run(
+            llm_provider.LLMProvider().generate_json(
+                system="json",
+                payload={"input": "x"},
+                thinking_mode="disabled",
+            )
+        )
+
+    error = raised.value
+    assert error.code == "llm_empty_content_exhausted"
+    assert error.content_length == 0
+    assert error.reasoning_content_length == len("内部推理" * 100)
+    assert error.completion_tokens == 8000
+    assert error.reasoning_tokens == 7990
+    assert error.schema_error == "finish_reason=length;content=empty"
+    assert "reasoning_tokens=7990" in caplog.text
+    assert f"reasoning_content_length={len('内部推理' * 100)}" in caplog.text
+    assert "thinking_mode=disabled" in caplog.text
 
 
 def test_pipeline_failure_contract_contains_request_fields():

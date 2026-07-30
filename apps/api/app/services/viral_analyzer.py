@@ -104,7 +104,8 @@ MAX_SUPPLEMENT_RESPONSE_TOKENS = 8000
 MAX_SOURCE_CONSTRAINED_LLM_CALLS = 7
 MIN_SOURCE_FACT_COVERAGE_RATE = 0.35
 SOURCE_INITIAL_CONCURRENCY = 2
-SOURCE_INITIAL_MAX_ATTEMPTS = 2
+SOURCE_INITIAL_MAX_NETWORK_RETRIES = 1
+SOURCE_INITIAL_MAX_EXHAUSTION_REGENERATIONS = 1
 SOURCE_RETRY_BASE_DELAY_SECONDS = 0.4
 SOURCE_RETRY_JITTER_SECONDS = 0.2
 
@@ -748,6 +749,7 @@ async def _build_hierarchical_input(raw_script: str, output_language: str) -> tu
             system=f"你是长视频分段信息抽取专家。使用{output_language}，只输出 JSON。",
             payload=payload,
             max_tokens=8000,
+            thinking_mode="disabled",
         )
         summaries.append(f"[第{index + 1}/{len(chunks)}段]\n{str(data.get('summary') or chunk).strip()}")
     return "\n\n".join(summaries), prompt_chars, len(chunks)
@@ -984,20 +986,53 @@ async def analyze_viral_script(
                 ],
                 "schema": variant_schema,
             }
+            compact_variant_payload = {
+                "content_input": analysis_input,
+                "source_fact_ledger": source_fact_ledger,
+                "variant_task": {
+                    "index": index,
+                    "title": REWRITE_STRATEGIES[index]["title"],
+                    "angle": variant_requirements[index],
+                },
+                "length_target": {
+                    "minimum_chars": minimum_chars,
+                    "target_center_chars": target_center_chars,
+                    "maximum_chars": maximum_chars,
+                },
+                "requirements": [
+                    "只输出一个合法 JSON 对象，不输出分析过程、思考、解释、规则复述或 markdown",
+                    "JSON 只能包含 rewrite；rewrite 只能包含 title、script、used_source_fact_ids",
+                    "script 只写可以直接口播的最终正文，不写提纲、分析、标签或生成说明",
+                    "只使用 source_fact_ledger 支持的事实，不新增数字、机构、时间、指标、案例或因果结论",
+                    f"script 严格保持在 {minimum_chars}–{maximum_chars} 个中文字符，瞄准约 {target_center_chars} 字",
+                    "保持本版本指定角度，句尾完整，不重复 CTA",
+                ],
+                "schema": {
+                    "rewrite": {
+                        "title": REWRITE_STRATEGIES[index]["title"],
+                        "script": "最终口播正文",
+                        "used_source_fact_ids": ["正文实际使用的 source fact ID"],
+                    }
+                },
+            }
             state = version_states[index]
-            for attempt in range(1, SOURCE_INITIAL_MAX_ATTEMPTS + 1):
-                if attempt > 1:
+            attempt = 0
+            network_retries_used = 0
+            exhaustion_regenerations_used = 0
+            use_compact_regeneration = False
+            pending_retry_delay: float | None = None
+            while True:
+                attempt += 1
+                if pending_retry_delay is not None:
                     state["state"] = "retrying"
-                    delay_seconds = (
-                        SOURCE_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 2))
-                        + random.uniform(0.0, SOURCE_RETRY_JITTER_SECONDS)
-                    )
-                    state["retry_delay_ms"] = round(delay_seconds * 1000)
-                    await asyncio.sleep(delay_seconds)
+                    state["retry_delay_ms"] = round(pending_retry_delay * 1000)
+                    await asyncio.sleep(pending_retry_delay)
+                    pending_retry_delay = None
 
                 attempt_started = time.perf_counter()
                 attempt_record: dict[str, Any] = {
                     "attempt": attempt,
+                    "mode": "compact_regeneration" if use_compact_regeneration else "initial",
                     "state": "running",
                     "started_at": datetime.now(UTC).isoformat(),
                 }
@@ -1016,27 +1051,56 @@ async def analyze_viral_script(
                         try:
                             response = await LLMProvider().generate_json(
                                 system=(
-                                    "你是来源约束的短视频口播编导。原始转写和来源事实账本是唯一事实来源。"
-                                    f"独立完成一个{output_language}版本；不得生成其他版本。只输出合法 JSON。"
+                                    "只输出最终 JSON 和可直接朗读的口播正文；禁止输出分析、思考、规则复述或 markdown。"
+                                    if use_compact_regeneration
+                                    else (
+                                        "你是来源约束的短视频口播编导。原始转写和来源事实账本是唯一事实来源。"
+                                        f"独立完成一个{output_language}版本；不得生成其他版本。只输出合法 JSON。"
+                                    )
                                 ),
-                                payload=variant_payload,
+                                payload=(
+                                    compact_variant_payload
+                                    if use_compact_regeneration
+                                    else variant_payload
+                                ),
                                 max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
-                                attempt_label=f"variant_{index}_attempt_{attempt}",
+                                attempt_label=(
+                                    f"variant_{index}_compact_regeneration"
+                                    if use_compact_regeneration
+                                    else f"variant_{index}_attempt_{attempt}"
+                                ),
                                 max_transport_attempts=1,
                                 allow_format_repair=False,
+                                thinking_mode="disabled",
                             )
                         finally:
                             async with concurrency_lock:
                                 active_initial_calls -= 1
                 except LLMProviderError as error:
-                    retryable = _retryable_initial_provider_error(error)
+                    network_retryable = _retryable_initial_provider_error(error)
+                    empty_content_exhausted = error.code == "llm_empty_content_exhausted"
+                    can_compact_regenerate = (
+                        empty_content_exhausted
+                        and not use_compact_regeneration
+                        and exhaustion_regenerations_used
+                        < SOURCE_INITIAL_MAX_EXHAUSTION_REGENERATIONS
+                    )
+                    can_network_retry = (
+                        network_retryable
+                        and not use_compact_regeneration
+                        and network_retries_used < SOURCE_INITIAL_MAX_NETWORK_RETRIES
+                    )
                     attempt_record.update(
                         {
                             "state": "failed",
                             "error_code": error.code,
                             "error_type": type(error).__name__,
-                            "retryable": retryable,
+                            "retryable": can_compact_regenerate or can_network_retry,
                             "http_status": error.http_status,
+                            "content_length": error.content_length,
+                            "reasoning_content_length": error.reasoning_content_length,
+                            "completion_tokens": error.completion_tokens,
+                            "reasoning_tokens": error.reasoning_tokens,
                             "elapsed_ms": round((time.perf_counter() - attempt_started) * 1000),
                         }
                     )
@@ -1047,12 +1111,26 @@ async def analyze_viral_script(
                         index,
                         attempt,
                         error.code,
-                        retryable,
+                        attempt_record["retryable"],
                         error.http_status,
                         attempt_record["elapsed_ms"],
                     )
-                    if retryable and attempt < SOURCE_INITIAL_MAX_ATTEMPTS:
+                    if can_compact_regenerate:
+                        exhaustion_regenerations_used += 1
+                        state["compact_regenerations"] = exhaustion_regenerations_used
+                        state["retry_reason"] = "empty_content_exhausted"
                         state["state"] = "retrying"
+                        use_compact_regeneration = True
+                        continue
+                    if can_network_retry:
+                        network_retries_used += 1
+                        state["network_retries"] = network_retries_used
+                        state["retry_reason"] = error.code
+                        state["state"] = "retrying"
+                        pending_retry_delay = (
+                            SOURCE_RETRY_BASE_DELAY_SECONDS * (2 ** (network_retries_used - 1))
+                            + random.uniform(0.0, SOURCE_RETRY_JITTER_SECONDS)
+                        )
                         continue
                     state["state"] = "failed"
                     state["error_code"] = error.code
@@ -1103,7 +1181,6 @@ async def analyze_viral_script(
                     attempt_record["elapsed_ms"],
                 )
                 return response, state["elapsed_ms"]
-            raise RuntimeError("unreachable variant retry state")
 
         initial_started = time.perf_counter()
         generated = await asyncio.gather(
@@ -1227,6 +1304,7 @@ async def analyze_viral_script(
             ),
             payload=prompt_payload,
             max_tokens=8000,
+            thinking_mode="disabled",
         )
         llm_call_count += 1
         stage_timings.append(
@@ -1317,6 +1395,7 @@ async def analyze_viral_script(
                     },
                 },
                 max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                thinking_mode="disabled",
             )
             compression_values = compression.get("compressions")
             compression_values = compression_values if isinstance(compression_values, list) else []
@@ -1418,6 +1497,7 @@ async def analyze_viral_script(
                     },
                 },
                 max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                thinking_mode="disabled",
             )
             requested_indexes = {item["index"] for item in supplements_requested}
             supplements_value = expansion.get("supplements")
@@ -1661,6 +1741,7 @@ async def analyze_viral_script(
             attempt_label=f"fact_review_call_{fact_review_call_number}",
             max_transport_attempts=1,
             allow_format_repair=False,
+            thinking_mode="disabled",
         )
         llm_call_count = llm_budget.used_calls
         stage_timings.append(
@@ -1860,6 +1941,7 @@ async def analyze_viral_script(
                             attempt_label=f"source_repair_{index}_call_{call_number}",
                             max_transport_attempts=1,
                             allow_format_repair=False,
+                            thinking_mode="disabled",
                         )
                     finally:
                         async with concurrency_lock:

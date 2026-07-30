@@ -59,6 +59,10 @@ class LLMProviderError(Exception):
         http_status: int | None = None,
         response_length: int = 0,
         schema_error: str = "",
+        content_length: int = 0,
+        reasoning_content_length: int = 0,
+        completion_tokens: int | None = None,
+        reasoning_tokens: int | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -67,6 +71,10 @@ class LLMProviderError(Exception):
         self.http_status = http_status
         self.response_length = response_length
         self.schema_error = schema_error
+        self.content_length = content_length
+        self.reasoning_content_length = reasoning_content_length
+        self.completion_tokens = completion_tokens
+        self.reasoning_tokens = reasoning_tokens
 
 
 def _strip_code_fence(value: str) -> str:
@@ -152,6 +160,7 @@ class LLMProvider:
         attempt_label: str = "initial",
         max_transport_attempts: int = 2,
         allow_format_repair: bool = True,
+        thinking_mode: str | None = None,
     ) -> dict[str, Any]:
         provider = settings.llm_provider.lower()
         if provider == "deepseek":
@@ -166,6 +175,7 @@ class LLMProvider:
                 attempt_label=attempt_label,
                 max_transport_attempts=max_transport_attempts,
                 allow_format_repair=allow_format_repair,
+                thinking_mode=thinking_mode,
             )
         if provider == "openai":
             return await self._chat_json(
@@ -179,6 +189,7 @@ class LLMProvider:
                 attempt_label=attempt_label,
                 max_transport_attempts=max_transport_attempts,
                 allow_format_repair=allow_format_repair,
+                thinking_mode=None,
             )
         if provider == "mock":
             return self._mock(payload)
@@ -197,6 +208,7 @@ class LLMProvider:
         attempt_label: str,
         max_transport_attempts: int,
         allow_format_repair: bool,
+        thinking_mode: str | None,
     ) -> dict[str, Any]:
         request_id = current_request_id()
         if not api_key:
@@ -219,15 +231,20 @@ class LLMProvider:
                 attempt_started = time.perf_counter()
                 try:
                     async with httpx.AsyncClient(timeout=httpx.Timeout(90, connect=15)) as client:
+                        request_json: dict[str, Any] = {
+                            "model": model,
+                            "max_tokens": max_tokens,
+                            "response_format": {"type": "json_object"},
+                            "messages": messages,
+                        }
+                        if provider_name == "DeepSeek" and thinking_mode is not None:
+                            if thinking_mode not in {"enabled", "disabled"}:
+                                raise ValueError(f"Unsupported DeepSeek thinking mode: {thinking_mode}")
+                            request_json["thinking"] = {"type": thinking_mode}
                         response = await client.post(
                             f"{base_url}/v1/chat/completions",
                             headers={"Authorization": f"Bearer {api_key}"},
-                            json={
-                                "model": model,
-                                "max_tokens": max_tokens,
-                                "response_format": {"type": "json_object"},
-                                "messages": messages,
-                            },
+                            json=request_json,
                         )
                 except httpx.TimeoutException as error:
                     logger.warning(
@@ -328,7 +345,11 @@ class LLMProvider:
                 usage = body.get("usage") if isinstance(body, dict) else {}
                 usage = usage if isinstance(usage, dict) else {}
                 choice = body["choices"][0]
-                raw = choice["message"]["content"]
+                message = choice["message"]
+                raw_value = message.get("content")
+                reasoning_value = message.get("reasoning_content")
+                raw = "" if raw_value is None else raw_value
+                reasoning_content = reasoning_value if isinstance(reasoning_value, str) else ""
                 finish_reason = str(choice.get("finish_reason") or "")
                 if not isinstance(raw, str):
                     raise TypeError("message.content is not a string")
@@ -355,10 +376,17 @@ class LLMProvider:
                     response_length=response_length,
                     schema_error=diagnostic,
                 ) from error
+            completion_details = usage.get("completion_tokens_details")
+            completion_details = completion_details if isinstance(completion_details, dict) else {}
+            completion_tokens = usage.get("completion_tokens")
+            completion_tokens = completion_tokens if isinstance(completion_tokens, int) else None
+            reasoning_tokens = completion_details.get("reasoning_tokens")
+            reasoning_tokens = reasoning_tokens if isinstance(reasoning_tokens, int) else None
             logger.warning(
                 "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=received http_status=%s "
                 "response_length=%s finish_reason=%s truncated=%s max_tokens=%s prompt_tokens=%s "
-                "completion_tokens=%s total_tokens=%s request_body_chars=%s content_length=%s elapsed_ms=%s",
+                "completion_tokens=%s reasoning_tokens=%s total_tokens=%s request_body_chars=%s "
+                "content_length=%s reasoning_content_length=%s thinking_mode=%s elapsed_ms=%s",
                 request_id,
                 provider_name,
                 model,
@@ -370,19 +398,35 @@ class LLMProvider:
                 max_tokens,
                 usage.get("prompt_tokens", "none"),
                 usage.get("completion_tokens", "none"),
+                reasoning_tokens if reasoning_tokens is not None else "none",
                 usage.get("total_tokens", "none"),
                 request_body_chars,
                 len(raw),
+                len(reasoning_content),
+                thinking_mode or "provider_default",
                 round((time.perf_counter() - attempt_started) * 1000),
             )
             if finish_reason == "length":
+                empty_content = not raw.strip()
                 raise LLMProviderError(
-                    code="llm_response_truncated",
-                    message="AI 响应达到输出上限，结果已截断。",
+                    code="llm_empty_content_exhausted" if empty_content else "llm_response_truncated",
+                    message=(
+                        "AI 响应输出预算已耗尽，未产生最终正文。"
+                        if empty_content
+                        else "AI 响应达到输出上限，结果已截断。"
+                    ),
                     retryable=True,
                     http_status=response.status_code,
                     response_length=response_length,
-                    schema_error="finish_reason=length",
+                    schema_error=(
+                        "finish_reason=length;content=empty"
+                        if empty_content
+                        else "finish_reason=length"
+                    ),
+                    content_length=len(raw),
+                    reasoning_content_length=len(reasoning_content),
+                    completion_tokens=completion_tokens,
+                    reasoning_tokens=reasoning_tokens,
                 )
             return raw, response.status_code, finish_reason
 

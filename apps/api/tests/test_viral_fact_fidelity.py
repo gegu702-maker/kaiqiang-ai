@@ -579,6 +579,81 @@ def test_truncated_or_contract_failure_does_not_retry_and_preserves_other_succes
     assert detail["failed_versions"][0]["error_code"] == "llm_response_truncated"
 
 
+def test_empty_content_exhaustion_compactly_regenerates_only_failed_b(monkeypatch):
+    calls = [0, 0, 0]
+    observed = []
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_generate(_self, *, payload, system, **kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        observed.append((index, calls[index], payload, system, kwargs))
+        if index == 1 and calls[index] == 1:
+            raise LLMProviderError(
+                code="llm_empty_content_exhausted",
+                message="finish_reason=length;content=empty",
+                retryable=True,
+                http_status=200,
+                content_length=0,
+                reasoning_content_length=32000,
+                completion_tokens=8000,
+            )
+        return _initial_variant(payload, scripts)
+
+    result = _run(monkeypatch, fake_generate)
+
+    assert calls == [1, 2, 1]
+    b_calls = [item for item in observed if item[0] == 1]
+    assert [item[1] for item in b_calls] == [1, 2]
+    compact_payload, compact_system, compact_kwargs = b_calls[1][2], b_calls[1][3], b_calls[1][4]
+    assert set(compact_payload["schema"]) == {"rewrite"}
+    assert "analysis" not in compact_payload["schema"]
+    assert "只输出最终 JSON" in compact_system
+    assert all("不输出分析" in item or "JSON" in item or "script" in item or "事实" in item or "字符" in item or "角度" in item for item in compact_payload["requirements"])
+    assert compact_kwargs["attempt_label"] == "variant_1_compact_regeneration"
+    assert compact_kwargs["thinking_mode"] == "disabled"
+    b_state = result["diagnostic"]["version_states"][1]
+    assert b_state["compact_regenerations"] == 1
+    assert [item["mode"] for item in b_state["attempts"]] == ["initial", "compact_regeneration"]
+    assert result["diagnostic"]["llm_call_count"] == 5
+
+
+def test_second_empty_content_exhaustion_fails_without_third_generation(monkeypatch):
+    calls = [0, 0, 0]
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        if index == 1:
+            raise LLMProviderError(
+                code="llm_empty_content_exhausted",
+                message="finish_reason=length;content=empty",
+                retryable=True,
+                http_status=200,
+                content_length=0,
+                reasoning_content_length=32000,
+                completion_tokens=8000,
+            )
+        return _initial_variant(payload, scripts)
+
+    with pytest.raises(HTTPException) as raised:
+        _run(monkeypatch, fake_generate)
+
+    detail = raised.value.detail
+    assert calls == [1, 2, 1]
+    assert detail["retryable"] is False
+    assert detail["succeeded_versions"] == [0, 2]
+    assert detail["failed_versions"][0]["error_code"] == "llm_empty_content_exhausted"
+    b_state = detail["version_states"][1]
+    assert b_state["compact_regenerations"] == 1
+    assert [item["mode"] for item in b_state["attempts"]] == ["initial", "compact_regeneration"]
+    assert detail["llm_call_count"] == 4
+    assert detail["maximum_llm_calls"] == 7
+
+
 def test_request_level_llm_call_budget_is_strict(monkeypatch):
     calls = [0, 0, 0]
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
