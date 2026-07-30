@@ -9,6 +9,7 @@ from app.services.viral_length import (
     calculate_public_metadata_target,
     calculate_rewrite_length_target,
 )
+from scripts.p2_37_text_acceptance import EMOTIONAL_FIXTURE, FINANCE_FIXTURE
 
 
 class _Table:
@@ -73,6 +74,7 @@ def _run(*, raw_script="源" * 749, rewrite_length="match_source", seconds=167.6
 
 
 def test_match_source_targets_real_749_cjk_fixture():
+    assert viral_analyzer._cjk_len(FINANCE_FIXTURE) == 749
     target = calculate_rewrite_length_target(
         source_cjk=749,
         effective_speech_seconds=167.6,
@@ -93,6 +95,7 @@ def test_match_source_targets_120_seconds_at_same_density():
 
 
 def test_low_density_emotional_video_is_not_raised_to_finance_density():
+    assert viral_analyzer._cjk_len(EMOTIONAL_FIXTURE) == 321
     target = calculate_rewrite_length_target(
         source_cjk=240,
         effective_speech_seconds=120,
