@@ -14,6 +14,11 @@ from supabase import Client
 from app.services.billing import current_period_start, ensure_profile
 from app.services.llm_provider import LLMProvider
 from app.services.viral_diagnostics import current_request_id
+from app.services.viral_fact_fidelity import (
+    build_source_fact_ledger,
+    is_financial_source,
+    unsupported_hard_facts,
+)
 from app.services.viral_length import (
     calculate_public_metadata_target,
     calculate_rewrite_length_target,
@@ -796,6 +801,9 @@ async def analyze_viral_script(
             "不要重复使用“这类内容好用的地方”“既能承接热点流量，也能展示你的专业判断”“想看我继续拆这个方向”等句式骨架",
             "版本A面向泛用户，用热点反差和观点讨论收尾；版本B面向内容创作者，用痛点和应用建议收尾；版本C面向老板/行业观察者，用产业链机会和后续观察收尾",
             "若原文是财经内容，不得新增原文没有的具体数据，不得使用确定性买入或收益承诺，必须使用中性风险表达",
+            "禁止用“举个例子”“比如某公司”虚构公司行为、完成进度、持续周期、涨跌结果或因果结果",
+            "禁止新增原文没有的完成比例、持续周数/月数/季度数、ROE、股东名单、ETF份额、连续超预期或目标价调整",
+            "一般性解释必须明确写成判断方法、可能性或待核对条件，不能伪装成原视频已经发生的事实",
             "若原文是情感、关系或故事内容，保留慢节奏、短句、停顿和情绪递进，不得强行添加商业结论、投资表达或营销式CTA",
             "rewrite.title 只写版本名称；rewrite.script 只能写最终口播成稿，必须是可以直接朗读给观众听的正文",
             "rewrite.script 禁止出现模板说明、分析说明、结构说明、可复用模板、版本解释、括号结构、字段名、JSON 残留",
@@ -1006,6 +1014,8 @@ async def analyze_viral_script(
                         "优先覆盖转写稿中的主要观点、论据、案例、数据和行动建议，不要求五类内容机械平均分配",
                         "保留转写稿中的主要事实、数据、案例、论证顺序和限定条件",
                         "不得复述已有句子，不得用空话、同义改写或机械重复凑字数，不得新增转写稿中不存在的信息",
+                        "禁止虚构公司案例及结果；禁止新增完成比例、持续周期、涨跌结果、ROE、股东名单、ETF份额、连续超预期或目标价调整",
+                        "如果原转写没有足够事实可补，只能展开原有事实的限定条件和判断方法，不得用新证据补足长度",
                         "扩写段必须自然承接对应现有正文，保持该版本原有角度和口播风格",
                         "不得重复已有行动号召，不得在扩写段增加第二个CTA",
                         "扩写段使用完整口播句子并以句末标点收束，便于在上限内按完整句边界合并",
@@ -1165,6 +1175,169 @@ async def analyze_viral_script(
             },
         )
 
+    fact_fidelity_diagnostic: dict[str, Any] = {
+        "required": False,
+        "reviewed": False,
+        "hard_violations_before": [],
+        "hard_violations_after": [],
+        "removed_claims": [],
+        "unsupported_remaining": [],
+    }
+    hard_violations_before = [
+        unsupported_hard_facts(raw_script, rewrite["script"])
+        for rewrite in result["rewrites"]
+    ]
+    requires_fact_review = source_scope == "full_content" and (
+        is_financial_source(raw_script) or any(hard_violations_before)
+    )
+    fact_fidelity_diagnostic["required"] = requires_fact_review
+    fact_fidelity_diagnostic["hard_violations_before"] = hard_violations_before
+
+    if requires_fact_review:
+        fact_review = await LLMProvider().generate_json(
+            system=(
+                "你是严格的来源事实审校编辑。原始转写是唯一事实来源。"
+                "你的任务是删除或改写无来源事实，不是创作新内容。只输出合法 JSON。"
+            ),
+            payload={
+                "corrected_transcript": raw_script,
+                "source_fact_ledger": build_source_fact_ledger(raw_script),
+                "current_rewrites": [
+                    {**rewrite, "index": index}
+                    for index, rewrite in enumerate(result["rewrites"])
+                ],
+                "hard_violations": [
+                    {"index": index, "items": items}
+                    for index, items in enumerate(hard_violations_before)
+                    if items
+                ],
+                "length_target": {
+                    "minimum_chars": minimum_rewrite_chars,
+                    "center_chars": target_center_chars,
+                    "maximum_chars": maximum_chars,
+                    "unit": "cjk_chars",
+                },
+                "requirements": [
+                    "逐条核对机构、公司、人物、案例、指标、数字、百分比、日期、时间范围、具体数量和确定性因果",
+                    "只允许使用原始转写明确出现的事实；不得把拆解字段或现有改写中的内容反向当作来源证据",
+                    "删除或改回一般性表述时，必须保持原版本角度和口播风格，并尽量只做必要修改",
+                    "一般性解释必须明确写成判断方法、可能性或待核对条件，不能声称某公司或机构已经发生了原文未提及的行为或结果",
+                    "禁止“举个例子”后虚构公司、完成比例、持续周期、涨跌结果或因果结果",
+                    "禁止新增原文没有的ROE、股东名单、ETF份额、连续增长、连续超预期、目标价调整等证据",
+                    "财经内容必须保留“不是确定性买入信号”等中性风险边界，不得给出确定性买入、卖出或收益承诺",
+                    f"每条 audited_script 必须保持在 {minimum_rewrite_chars}–{maximum_chars} 个中文字符，并以完整句结束",
+                    "removed_unsupported_claims 必须逐项列出从 current_rewrites 删除或改写的原始片段及原因",
+                    "审校后的文本不得为了补足长度创造任何新事实；若只能用空话或新证据补足，unsupported_remaining 必须为 true",
+                ],
+                "schema": {
+                    "reviews": [
+                        {
+                            "index": "与 current_rewrites.index 一致的整数",
+                            "audited_script": "完成事实审校后的完整口播正文",
+                            "removed_unsupported_claims": [
+                                {
+                                    "span": "从 current_rewrites 原样摘录的无来源片段",
+                                    "category": "数字/时间/机构/案例/指标/因果",
+                                    "reason": "原始转写不支持该内容",
+                                }
+                            ],
+                            "unsupported_remaining": False,
+                        }
+                    ]
+                },
+            },
+            max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+        )
+        reviews_value = fact_review.get("reviews")
+        reviews_value = reviews_value if isinstance(reviews_value, list) else []
+        reviews_by_index = {
+            item.get("index"): item
+            for item in reviews_value
+            if isinstance(item, dict)
+            and isinstance(item.get("index"), int)
+            and 0 <= item["index"] < len(result["rewrites"])
+        }
+        if set(reviews_by_index) != set(range(len(result["rewrites"]))):
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "analysis_fact_fidelity_failed",
+                    "stage": "fact_review",
+                    "message": "事实保真审查返回字段不完整。",
+                    "retryable": True,
+                    "actual_chars": normalized_lengths,
+                    "target_chars": minimum_rewrite_chars,
+                    "target_center_chars": target_center_chars,
+                    "maximum_chars": maximum_chars,
+                },
+            )
+
+        audited_rewrites = []
+        removed_claims: list[list[dict[str, str]]] = []
+        unsupported_remaining: list[int] = []
+        for index, rewrite in enumerate(result["rewrites"]):
+            review = reviews_by_index[index]
+            audited_script = smooth_spoken_script(str(review.get("audited_script") or ""))
+            audited_rewrites.append({**rewrite, "script": audited_script})
+            claims = review.get("removed_unsupported_claims")
+            removed_claims.append(
+                [
+                    {
+                        "span": str(claim.get("span") or "")[:240],
+                        "category": str(claim.get("category") or "")[:80],
+                        "reason": str(claim.get("reason") or "")[:240],
+                    }
+                    for claim in (claims if isinstance(claims, list) else [])
+                    if isinstance(claim, dict)
+                ]
+            )
+            if review.get("unsupported_remaining") is not False:
+                unsupported_remaining.append(index)
+
+        result = {**result, "rewrites": audited_rewrites}
+        normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
+        hard_violations_after = [
+            unsupported_hard_facts(raw_script, rewrite["script"])
+            for rewrite in result["rewrites"]
+        ]
+        fact_fidelity_diagnostic.update(
+            {
+                "reviewed": True,
+                "hard_violations_after": hard_violations_after,
+                "removed_claims": removed_claims,
+                "unsupported_remaining": unsupported_remaining,
+            }
+        )
+        logger.warning(
+            "viral_fact_fidelity request_id=%s reviewed=true removed_counts=%s hard_before_counts=%s "
+            "hard_after_counts=%s unsupported_remaining=%s normalized_chars=%s",
+            current_request_id(),
+            [len(items) for items in removed_claims],
+            [len(items) for items in hard_violations_before],
+            [len(items) for items in hard_violations_after],
+            unsupported_remaining,
+            normalized_lengths,
+        )
+        invalid_after_fact_review = [
+            length for length in normalized_lengths
+            if length < minimum_rewrite_chars or length > maximum_chars
+        ]
+        if invalid_after_fact_review or any(hard_violations_after) or unsupported_remaining:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "analysis_fact_fidelity_failed",
+                    "stage": "fact_review",
+                    "message": "事实保真审查后仍存在无来源事实或长度不合格。",
+                    "retryable": True,
+                    "actual_chars": normalized_lengths,
+                    "target_chars": minimum_rewrite_chars,
+                    "target_center_chars": target_center_chars,
+                    "maximum_chars": maximum_chars,
+                    "fact_fidelity": fact_fidelity_diagnostic,
+                },
+            )
+
     try:
         supabase.table("viral_analyses").insert(
             {
@@ -1206,6 +1379,7 @@ async def analyze_viral_script(
             "maximum_chars": maximum_chars,
             "length_unit": "cjk_chars",
             "length_repair_rounds": length_repair_rounds,
+            "fact_fidelity": fact_fidelity_diagnostic,
             **length_target.diagnostics(),
         },
         "diagnostics": {
@@ -1219,6 +1393,7 @@ async def analyze_viral_script(
             "rewrite_maximum_chars": maximum_chars,
             "rewrite_actual_chars": normalized_lengths,
             "length_repair_rounds": length_repair_rounds,
+            "fact_fidelity": fact_fidelity_diagnostic,
             **length_target.diagnostics(),
         },
     }
