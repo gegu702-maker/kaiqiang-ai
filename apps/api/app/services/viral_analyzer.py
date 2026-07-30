@@ -1146,8 +1146,15 @@ async def analyze_viral_script(
             maximum_chars,
             normalized_lengths,
         )
+    hard_violations_before = [
+        unsupported_hard_facts(raw_script, rewrite["script"])
+        for rewrite in result["rewrites"]
+    ]
+    requires_fact_review = source_scope == "full_content" and (
+        is_financial_source(raw_script) or any(hard_violations_before)
+    )
     invalid_lengths = [length for length in normalized_lengths if length < minimum_rewrite_chars or length > maximum_chars]
-    if invalid_lengths:
+    if invalid_lengths and not requires_fact_review:
         actual_chars_text = " / ".join(str(length) for length in normalized_lengths)
         raise HTTPException(
             status_code=502,
@@ -1183,13 +1190,6 @@ async def analyze_viral_script(
         "removed_claims": [],
         "unsupported_remaining": [],
     }
-    hard_violations_before = [
-        unsupported_hard_facts(raw_script, rewrite["script"])
-        for rewrite in result["rewrites"]
-    ]
-    requires_fact_review = source_scope == "full_content" and (
-        is_financial_source(raw_script) or any(hard_violations_before)
-    )
     fact_fidelity_diagnostic["required"] = requires_fact_review
     fact_fidelity_diagnostic["hard_violations_before"] = hard_violations_before
 

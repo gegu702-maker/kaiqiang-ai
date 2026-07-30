@@ -179,3 +179,38 @@ def test_fact_review_cannot_hide_a_fabricated_case_by_only_removing_its_number(m
         ("indicator_or_specific_fact", "股价慢慢修复"),
         ("unsourced_entity", "某公司"),
     }
+
+
+def test_financial_fact_review_can_restore_range_after_controlled_length_repair_is_still_short(monkeypatch):
+    calls = []
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if len(calls) == 1:
+            return _analysis(["市场" * 350 + "。", "用户" * 350 + "。", "机会" * 335 + "。"])
+        if "supplements_requested" in payload:
+            return {"supplements": []}
+        assert "source_fact_ledger" in payload
+        return {
+            "reviews": [
+                {
+                    "index": index,
+                    "audited_script": prefix + body * repeat,
+                    "removed_unsupported_claims": [],
+                    "unsupported_remaining": False,
+                }
+                for index, (prefix, body, repeat) in enumerate(
+                    (
+                        ("反差在于信号不是结论。", "核对公告经营数据资金流向并保留风险边界。", 36),
+                        ("普通用户需要避免追随短期情绪。", "判断回购仍要核对资金来源公司基本面和执行节奏。", 30),
+                        ("观察机会必须分别验证现有信号。", "这些信号仍然不是确定性买入信号。", 44),
+                    )
+                )
+            ]
+        }
+
+    result = _run(monkeypatch, fake_generate)
+    assert [call["supplement_round"] for call in calls[1:3]] == [1, 2]
+    assert "source_fact_ledger" in calls[3]
+    assert all(674 <= length <= 824 for length in result["diagnostic"]["actual_chars"])
+    assert result["diagnostic"]["fact_fidelity"]["reviewed"] is True
