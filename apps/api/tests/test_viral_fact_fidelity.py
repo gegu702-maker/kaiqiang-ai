@@ -46,6 +46,27 @@ def _analysis(scripts):
     }
 
 
+def _sized(prefix, filler, length):
+    prefix_chars = viral_analyzer._cjk_len(prefix)
+    return prefix + filler * max(0, length - prefix_chars) + "。"
+
+
+def _initial_variant(payload, scripts):
+    index = payload["variant_task"]["index"]
+    response = {
+        "rewrite": {
+            "title": f"版本{index + 1}",
+            "script": scripts[index],
+            "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+        }
+    }
+    if index == 0:
+        response["analysis"] = {
+            key: value for key, value in _analysis(scripts).items() if key != "rewrites"
+        }
+    return response
+
+
 def _run(monkeypatch, fake_generate):
     monkeypatch.setattr(
         viral_analyzer,
@@ -88,7 +109,18 @@ def test_source_numbers_institutions_and_indicators_remain_allowed():
         "ETF申购可以观察，花旗集团和摩根士丹利的假设未必相同。"
     )
     assert unsupported_hard_facts(FINANCE_FIXTURE, supported) == []
+    assert unsupported_hard_facts(FINANCE_FIXTURE, "科创50的公司结构不同。") == []
     ledger = build_source_fact_ledger(FINANCE_FIXTURE)
+    assert ledger["fact_count"] == 21
+    assert {
+        "机构及表态",
+        "回购及限定条件",
+        "自购与ETF",
+        "中报和产业链",
+        "外资观点",
+        "风险边界",
+    } <= {item["category"] for item in ledger["facts"]}
+    assert all(item["evidence"] in FINANCE_FIXTURE for item in ledger["facts"])
     assert "一天" in ledger["hard_fact_tokens"]
     assert "ETF" in ledger["hard_fact_tokens"]
     assert any("花旗集团" in item for item in ledger["organizations"])
@@ -103,15 +135,17 @@ def test_financial_fact_review_repairs_all_versions_and_preserves_dynamic_range(
         "机会" * 170 + "进入前十大流通股东名单，ETF份额连续四周增长。" + "边界" * 158 + "。",
     ]
     clean_scripts = [
-        "反差在于机构表达信心不等于短期涨跌承诺。" + "核对公告经营数据资金流向并保留风险边界。" * 36,
-        "普通用户的痛点是容易把机构动作当成自己的投资结论。" + "判断回购仍要核对资金来源公司基本面和执行节奏。" * 30,
-        "观察机会时要把保险回购机构自购中报和外资观点分别验证。" + "这些信号仍然不是确定性买入信号。" * 44,
+        _sized("反差在于机构表达信心不等于短期涨跌承诺", "甲", 700),
+        _sized("普通用户的痛点是容易把机构动作当成自己的投资结论", "乙", 720),
+        _sized("观察角度要把保险回购机构自购中报和外资观点分别验证", "丙", 740),
     ]
 
     async def fake_generate(_self, *, payload, **_kwargs):
         calls.append(payload)
-        if "source_fact_ledger" not in payload:
-            return _analysis(bad_scripts)
+        if "variant_task" in payload:
+            return _initial_variant(payload, bad_scripts)
+        if "current_script" in payload:
+            raise AssertionError("审查结果已合格，不应修复")
         requirements = " ".join(payload["requirements"])
         for prohibited in ("虚构公司", "完成比例", "ROE", "股东名单", "ETF份额", "目标价调整"):
             assert prohibited in requirements
@@ -127,14 +161,16 @@ def test_financial_fact_review_repairs_all_versions_and_preserves_dynamic_range(
                             "reason": "原始转写不支持该内容",
                         }
                     ],
+                    "unsupported_spans": [],
                     "unsupported_remaining": False,
+                    "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
                 }
                 for index, script in enumerate(clean_scripts)
             ]
         }
 
     result = _run(monkeypatch, fake_generate)
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert len({item["script"][:12] for item in result["rewrites"]}) == 3
     assert all(674 <= length <= 824 for length in result["diagnostic"]["actual_chars"])
     fidelity = result["diagnostic"]["fact_fidelity"]
@@ -149,8 +185,16 @@ def test_fact_review_cannot_hide_a_fabricated_case_by_only_removing_its_number(m
     scripts = ["市场" * 350 + "。" for _ in range(3)]
 
     async def fake_generate(_self, *, payload, **_kwargs):
-        if "source_fact_ledger" not in payload:
-            return _analysis(scripts)
+        if "variant_task" in payload:
+            return _initial_variant(payload, scripts)
+        if "current_script" in payload:
+            return {
+                "repaired_script": _sized("某公司回购后股价慢慢修复", "甲", 700),
+                "used_source_fact_ids": payload["used_source_fact_ids"],
+                "replacements": [],
+                "unsupported_spans": [],
+                "unsupported_remaining": False,
+            }
         return {
             "reviews": [
                 {
@@ -161,7 +205,9 @@ def test_fact_review_cannot_hide_a_fabricated_case_by_only_removing_its_number(m
                         else "市场" * 350 + "。"
                     ),
                     "removed_unsupported_claims": [],
+                    "unsupported_spans": [],
                     "unsupported_remaining": False,
+                    "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
                 }
                 for index in range(3)
             ]
@@ -171,7 +217,7 @@ def test_fact_review_cannot_hide_a_fabricated_case_by_only_removing_its_number(m
         _run(monkeypatch, fake_generate)
     detail = raised.value.detail
     assert detail["code"] == "analysis_fact_fidelity_failed"
-    assert detail["stage"] == "fact_review"
+    assert detail["stage"] == "source_constrained_repair"
     assert {
         (item["category"], item["value"])
         for item in detail["fact_fidelity"]["hard_violations_after"][0]
@@ -181,36 +227,198 @@ def test_fact_review_cannot_hide_a_fabricated_case_by_only_removing_its_number(m
     }
 
 
-def test_financial_fact_review_can_restore_range_after_controlled_length_repair_is_still_short(monkeypatch):
+def test_source_constrained_repair_restores_range_after_fact_review_is_short(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
         calls.append(payload)
-        if len(calls) == 1:
-            return _analysis(["市场" * 350 + "。", "用户" * 350 + "。", "机会" * 335 + "。"])
-        if "supplements_requested" in payload:
-            return {"supplements": []}
-        assert "source_fact_ledger" in payload
+        initial_scripts = ["市场" * 300 + "。", "用户" * 350 + "。", "机会" * 335 + "。"]
+        if "variant_task" in payload:
+            return _initial_variant(payload, initial_scripts)
+        if "current_script" in payload:
+            index = payload["variant"]["index"]
+            return {
+                "repaired_script": _sized(("反差", "痛点", "表达")[index], ("甲", "乙", "丙")[index], 700),
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+                "replacements": [],
+                "unsupported_spans": [],
+                "unsupported_remaining": False,
+            }
         return {
             "reviews": [
                 {
                     "index": index,
-                    "audited_script": prefix + body * repeat,
+                    "audited_script": script,
                     "removed_unsupported_claims": [],
+                    "unsupported_spans": [],
                     "unsupported_remaining": False,
+                        "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
                 }
-                for index, (prefix, body, repeat) in enumerate(
-                    (
-                        ("反差在于信号不是结论。", "核对公告经营数据资金流向并保留风险边界。", 36),
-                        ("普通用户需要避免追随短期情绪。", "判断回购仍要核对资金来源公司基本面和执行节奏。", 30),
-                        ("观察机会必须分别验证现有信号。", "这些信号仍然不是确定性买入信号。", 44),
-                    )
-                )
+                for index, script in enumerate(initial_scripts)
             ]
         }
 
     result = _run(monkeypatch, fake_generate)
-    assert [call["supplement_round"] for call in calls[1:3]] == [1, 2]
-    assert "source_fact_ledger" in calls[3]
+    repairs = [call for call in calls if "current_script" in call]
+    assert sorted(call["variant"]["index"] for call in repairs) == [0, 2]
+    assert all("unused_source_fact_ids" in call for call in repairs)
     assert all(674 <= length <= 824 for length in result["diagnostic"]["actual_chars"])
     assert result["diagnostic"]["fact_fidelity"]["reviewed"] is True
+
+
+def test_independent_generation_repairs_b_and_c_when_they_return_only_120_chars(monkeypatch):
+    calls = []
+    initial_scripts = [
+        _sized("热点反差", "甲", 720),
+        _sized("用户痛点", "乙", 120),
+        _sized("表达角度", "丙", 122),
+    ]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "variant_task" in payload:
+            return _initial_variant(payload, initial_scripts)
+        if "current_rewrites" in payload:
+            return {
+                "reviews": [
+                    {
+                        "index": index,
+                        "audited_script": script,
+                        "removed_unsupported_claims": [],
+                        "unsupported_spans": [],
+                        "unsupported_remaining": False,
+                        "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+                    }
+                    for index, script in enumerate(initial_scripts)
+                ]
+            }
+        index = payload["variant"]["index"]
+        return {
+            "repaired_script": _sized(("用户痛点", "表达角度")[index - 1], ("乙", "丙")[index - 1], 710),
+            "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+            "replacements": [],
+            "unsupported_spans": [],
+            "unsupported_remaining": False,
+        }
+
+    result = _run(monkeypatch, fake_generate)
+    assert len([call for call in calls if "variant_task" in call]) == 3
+    assert sorted(call["variant"]["index"] for call in calls if "current_script" in call) == [1, 2]
+    assert result["diagnostic"]["actual_chars"] == [720, 710, 710]
+
+
+def test_b_unsourced_yoy_and_consecutive_quarters_are_replaced_with_source_fact(monkeypatch):
+    calls = []
+    initial_scripts = [
+        _sized("热点反差", "甲", 700),
+        _sized("普通用户看到连续两个季度同比增长就下结论", "乙", 700),
+        _sized("表达角度", "丙", 700),
+    ]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "variant_task" in payload:
+            return _initial_variant(payload, initial_scripts)
+        if "current_rewrites" in payload:
+            return {
+                "reviews": [
+                    {
+                        "index": index,
+                        "audited_script": script,
+                        "removed_unsupported_claims": [],
+                        "unsupported_spans": (
+                            [{"span": "连续两个季度同比增长", "reason": "来源未出现"}]
+                            if index == 1
+                            else []
+                        ),
+                        "unsupported_remaining": index == 1,
+                        "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+                    }
+                    for index, script in enumerate(initial_scripts)
+                ]
+            }
+        assert payload["variant"]["index"] == 1
+        assert {item["value"] for item in payload["hard_violations"]} >= {"连续两个季度", "同比"}
+        return {
+            "repaired_script": _sized("普通用户应核对资金用途时间边界和自身风险偏好", "乙", 710),
+            "used_source_fact_ids": [*payload["used_source_fact_ids"], "ETF-03"],
+            "replacements": [
+                {
+                    "unsupported_span": "连续两个季度同比增长",
+                    "replacement_source_fact_id": "ETF-03",
+                }
+            ],
+            "unsupported_spans": [],
+            "unsupported_remaining": False,
+        }
+
+    result = _run(monkeypatch, fake_generate)
+    repair = result["diagnostic"]["fact_fidelity"]["source_constrained_repairs"][0]
+    assert repair["index"] == 1
+    assert repair["replacements"][0]["replacement_source_fact_id"] == "ETF-03"
+    assert result["diagnostic"]["fact_fidelity"]["hard_violations_after"] == [[], [], []]
+
+
+def test_all_source_facts_used_but_short_allows_only_nonfactual_connective_repair(monkeypatch):
+    calls = []
+    initial_scripts = [_sized(("反差", "痛点", "表达")[index], ("甲", "乙", "丙")[index], 650) for index in range(3)]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        calls.append(payload)
+        if "variant_task" in payload:
+            return _initial_variant(payload, initial_scripts)
+        if "current_rewrites" in payload:
+            return {
+                "reviews": [
+                    {
+                        "index": index,
+                        "audited_script": script,
+                        "removed_unsupported_claims": [],
+                        "unsupported_spans": [],
+                        "unsupported_remaining": False,
+                        "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+                    }
+                    for index, script in enumerate(initial_scripts)
+                ]
+            }
+        assert payload["unused_source_fact_ids"] == []
+        index = payload["variant"]["index"]
+        return {
+            "repaired_script": _sized(("反差", "痛点", "表达")[index], ("甲", "乙", "丙")[index], 690),
+            "used_source_fact_ids": payload["used_source_fact_ids"],
+            "replacements": [],
+            "unsupported_spans": [],
+            "unsupported_remaining": False,
+        }
+
+    result = _run(monkeypatch, fake_generate)
+    assert result["diagnostic"]["actual_chars"] == [690, 690, 690]
+    assert all(item["coverage_rate"] == 1.0 for item in result["diagnostic"]["source_fact_coverage"])
+
+
+def test_parallel_initial_generation_exception_is_controlled(monkeypatch):
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if payload["variant_task"]["index"] == 1:
+            raise RuntimeError("provider limit")
+        return _initial_variant(payload, [_sized("甲", "甲", 700)] * 3)
+
+    with pytest.raises(HTTPException) as raised:
+        _run(monkeypatch, fake_generate)
+    detail = raised.value.detail
+    assert detail["code"] == "analysis_independent_generation_failed"
+    assert detail["stage"] == "independent_initial"
+    assert detail["failed_versions"] == [{"index": 1, "error_type": "RuntimeError"}]
+
+
+def test_missing_independent_rewrite_json_field_is_controlled(monkeypatch):
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if payload["variant_task"]["index"] == 2:
+            return {"rewrite": {"title": "版本C"}}
+        scripts = [_sized("甲", "甲", 700), _sized("乙", "乙", 700), _sized("丙", "丙", 700)]
+        return _initial_variant(payload, scripts)
+
+    with pytest.raises(HTTPException) as raised:
+        _run(monkeypatch, fake_generate)
+    detail = raised.value.detail
+    assert detail["code"] == "analysis_independent_generation_failed"
+    assert detail["failed_versions"] == [{"index": 2, "error_type": "missing_rewrite_script"}]

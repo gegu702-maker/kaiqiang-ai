@@ -43,6 +43,59 @@ def _analysis_with_lengths(lengths):
     }
 
 
+def _source_flow_response(
+    payload,
+    *,
+    initial_lengths,
+    reviewed_lengths=None,
+    repaired_lengths=None,
+    repair_response=None,
+):
+    if "variant_task" in payload:
+        index = payload["variant_task"]["index"]
+        response = {
+            "rewrite": {
+                "title": f"版本{index + 1}",
+                "script": chr(ord("甲") + index) * initial_lengths[index] + "。",
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+            }
+        }
+        if index == 0:
+            response["analysis"] = {
+                key: value
+                for key, value in _analysis_with_lengths(initial_lengths).items()
+                if key != "rewrites"
+            }
+        return response
+    if "current_rewrites" in payload and "source_fact_ledger" in payload:
+        lengths = reviewed_lengths or initial_lengths
+        return {
+            "reviews": [
+                {
+                    "index": index,
+                    "audited_script": chr(ord("甲") + index) * lengths[index] + "。",
+                    "removed_unsupported_claims": [],
+                    "unsupported_spans": [],
+                    "unsupported_remaining": False,
+                    "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+                }
+                for index in range(3)
+            ]
+        }
+    if "current_script" in payload:
+        if repair_response is not None:
+            return repair_response
+        index = payload["variant"]["index"]
+        return {
+            "repaired_script": chr(ord("甲") + index) * repaired_lengths[index] + "。",
+            "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
+            "replacements": [],
+            "unsupported_spans": [],
+            "unsupported_remaining": False,
+        }
+    return _analysis_with_lengths(initial_lengths)
+
+
 def _preserve(payload, *, language):
     assert language == "zh"
     return payload
@@ -132,19 +185,21 @@ def test_in_range_initial_rewrites_do_not_trigger_repair(monkeypatch):
 
     async def fake_generate(_self, *, payload, **_kwargs):
         calls.append(payload)
-        return _analysis_with_lengths([700, 749, 800])
+        return _source_flow_response(payload, initial_lengths=[700, 749, 800])
 
     _prepare(monkeypatch, fake_generate)
     result = _run()
-    assert len(calls) == 1
+    assert len(calls) == 4
+    assert len([call for call in calls if "variant_task" in call]) == 3
+    assert not [call for call in calls if "current_script" in call]
     assert result["diagnostic"]["actual_chars"] == [700, 749, 800]
     assert result["diagnostic"]["target_min_chars"] == 674
     assert result["diagnostic"]["target_max_chars"] == 824
 
 
 def test_pasted_text_matches_source_length_without_claiming_speech_density(monkeypatch):
-    async def fake_generate(_self, **_kwargs):
-        return _analysis_with_lengths([700, 749, 800])
+    async def fake_generate(_self, *, payload, **_kwargs):
+        return _source_flow_response(payload, initial_lengths=[700, 749, 800])
 
     _prepare(monkeypatch, fake_generate)
     result = _run(seconds=None)
@@ -159,94 +214,80 @@ def test_only_deficient_versions_receive_missing_source_information(monkeypatch)
 
     async def fake_generate(_self, *, payload, **_kwargs):
         calls.append(payload)
-        if "supplements_requested" not in payload:
-            return _analysis_with_lengths([700, 500, 600])
-        return {
-            "supplements": [
-                {
-                    "index": item["index"],
-                    "title": item["title"],
-                    "additional_script": ("乙" * 240 if item["index"] == 1 else "丙" * 100) + "。",
-                }
-                for item in payload["supplements_requested"]
-            ]
-        }
+        return _source_flow_response(
+            payload,
+            initial_lengths=[700, 500, 600],
+            repaired_lengths=[700, 740, 700],
+        )
 
     _prepare(monkeypatch, fake_generate)
     result = _run()
-    assert [item["index"] for item in calls[1]["supplements_requested"]] == [1, 2]
-    assert "只补原转写中已有" in " ".join(calls[1]["requirements"])
+    repairs = [call for call in calls if "current_script" in call]
+    assert sorted(call["variant"]["index"] for call in repairs) == [1, 2]
+    assert all("unused_source_fact_ids" in call for call in repairs)
+    assert all("禁止自由扩写" not in " ".join(call["requirements"]) for call in repairs)
     assert result["diagnostic"]["actual_chars"] == [700, 740, 700]
 
 
-def test_second_round_uses_observed_yield_and_reaches_dynamic_range(monkeypatch):
+def test_source_constrained_repair_replaces_low_yield_rounds(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
         calls.append(payload)
-        if "supplements_requested" not in payload:
-            return _analysis_with_lengths([500, 500, 500])
-        addition = 50 if payload["supplement_round"] == 1 else 150
-        return {
-            "supplements": [
-                {
-                    "index": item["index"],
-                    "title": item["title"],
-                    "additional_script": chr(ord("丁") + item["index"]) * addition + "。",
-                }
-                for item in payload["supplements_requested"]
-            ]
-        }
+        return _source_flow_response(
+            payload,
+            initial_lengths=[500, 500, 500],
+            repaired_lengths=[700, 700, 700],
+        )
 
     _prepare(monkeypatch, fake_generate)
     result = _run()
-    assert calls[2]["supplement_round"] == 2
-    assert all(item["planning_yield_rate"] == 0.1 for item in calls[2]["supplements_requested"])
+    assert len([call for call in calls if "current_script" in call]) == 3
+    assert not [call for call in calls if "supplements_requested" in call]
     assert result["diagnostic"]["actual_chars"] == [700, 700, 700]
 
 
-def test_overlong_initial_rewrites_are_deduplicated_and_compressed(monkeypatch):
+def test_overlong_initial_rewrites_are_fact_reviewed_and_compressed(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
         calls.append(payload)
-        if "current_rewrites" not in payload:
-            return _analysis_with_lengths([900, 910, 920])
-        assert "compressions" in payload["schema"]
-        return {
-            "compressions": [
-                {
-                    "index": item["index"],
-                    "compressed_script": chr(ord("丁") + item["index"]) * 760 + "。",
-                }
-                for item in payload["current_rewrites"]
-            ]
-        }
+        return _source_flow_response(
+            payload,
+            initial_lengths=[900, 910, 920],
+            reviewed_lengths=[760, 760, 760],
+        )
 
     _prepare(monkeypatch, fake_generate)
     result = _run()
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert result["diagnostic"]["actual_chars"] == [760, 760, 760]
-    assert result["diagnostic"]["length_repair_rounds"][1]["stage"] == "compressing"
+    assert result["diagnostic"]["stage_timings"][1]["stage"] == "fact_review"
     assert all(item["script"].endswith("。") for item in result["rewrites"])
 
 
-@pytest.mark.parametrize("repair_response", [{}, {"supplements": []}, {"supplements": [{"title": "缺index"}]}])
+@pytest.mark.parametrize(
+    "repair_response",
+    [{}, {"repaired_script": ""}, {"repaired_script": "太短。", "unsupported_remaining": True}],
+)
 def test_empty_or_missing_repair_fields_end_in_structured_failure(monkeypatch, repair_response):
     async def fake_generate(_self, *, payload, **_kwargs):
-        if "supplements_requested" not in payload:
-            return _analysis_with_lengths([500, 500, 500])
-        return repair_response
+        return _source_flow_response(
+            payload,
+            initial_lengths=[500, 500, 500],
+            repaired_lengths=[700, 700, 700],
+            repair_response=repair_response,
+        )
 
     _prepare(monkeypatch, fake_generate)
     with pytest.raises(HTTPException) as raised:
         _run()
     detail = raised.value.detail
-    assert detail["code"] == "analysis_output_out_of_range"
+    assert detail["code"] == "analysis_fact_fidelity_failed"
     assert detail["target_min_chars"] == 674
     assert detail["target_center_chars"] == 749
     assert detail["target_max_chars"] == 824
-    assert len(detail["length_repair_rounds"]) == 3
+    assert detail["stage"] == "source_constrained_repair"
 
 
 def test_public_metadata_never_claims_exact_duration_match():

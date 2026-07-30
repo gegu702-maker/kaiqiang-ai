@@ -65,10 +65,90 @@ ORGANIZATION_RE = re.compile(
     r"(?:集团|公司|银行|证券|基金|保险|私募|公募|机构|交易所)"
 )
 UNSOURCED_GENERIC_ENTITY_RE = re.compile(r"某(?:集团|公司|银行|证券|基金|保险|私募|公募|机构|交易所)")
+SOURCE_SENTENCE_RE = re.compile(r"[^。！？!?；;]+[。！？!?；;]?")
+
+FACT_CATEGORY_RULES = (
+    (
+        "机构及表态",
+        ("资本市场", "指数波动", "板块轮动", "参与者", "长期信心", "保险机构", "市场预期", "实体经济", "新兴产业", "机构表态"),
+    ),
+    (
+        "回购及限定条件",
+        ("上市公司", "增持", "回购", "总股本", "每股收益", "股东权益", "资金来源", "回购价格", "公司基本面", "现金流", "盈利能力"),
+    ),
+    (
+        "自购与ETF",
+        ("自购", "ETF申购", "私募", "公募", "长期资金", "指数产品", "风险偏好", "短期情绪"),
+    ),
+    (
+        "中报和产业链",
+        ("中报", "产业链", "半导体", "订单", "价格变化", "库存周期", "一次性收益", "沪深三百", "中证五百", "科创五十", "成分权重"),
+    ),
+    (
+        "外资观点",
+        ("外资", "花旗集团", "摩根士丹利", "估值框架", "客户期限"),
+    ),
+    (
+        "风险边界",
+        ("不能", "不是确定性", "更稳妥", "风险边界", "核对", "持续证据", "修正判断"),
+    ),
+)
+
+FACT_CATEGORY_PREFIX = {
+    "机构及表态": "INST",
+    "回购及限定条件": "BUYBACK",
+    "自购与ETF": "ETF",
+    "中报和产业链": "CHAIN",
+    "外资观点": "FOREIGN",
+    "风险边界": "RISK",
+    "其他来源事实": "SOURCE",
+}
 
 
 def _normalized_token(value: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or ""))).lower()
+
+
+def _arabic_to_chinese(value: str) -> str | None:
+    if not value.isdigit():
+        return None
+    number = int(value)
+    if number < 0 or number > 9999:
+        return None
+    digits = "零一二三四五六七八九"
+    if number < 10:
+        return digits[number]
+    units = ((1000, "千"), (100, "百"), (10, "十"))
+    result = ""
+    remainder = number
+    pending_zero = False
+    for unit_value, unit_name in units:
+        digit, remainder = divmod(remainder, unit_value)
+        if digit:
+            if pending_zero and result:
+                result += "零"
+            if not (unit_value == 10 and digit == 1 and not result):
+                result += digits[digit]
+            result += unit_name
+            pending_zero = False
+        elif result and remainder:
+            pending_zero = True
+    if remainder:
+        if pending_zero and result:
+            result += "零"
+        result += digits[remainder]
+    return result or "零"
+
+
+def _token_supported(source_normalized: str, token: str) -> bool:
+    normalized = _normalized_token(token)
+    if normalized and normalized in source_normalized:
+        return True
+    numeric = re.fullmatch(r"\d+", normalized)
+    if numeric:
+        chinese = _arabic_to_chinese(numeric.group(0))
+        return bool(chinese and chinese in source_normalized)
+    return False
 
 
 def _unique_matches(pattern: re.Pattern[str], value: str) -> list[str]:
@@ -104,7 +184,7 @@ def unsupported_hard_facts(source: str, output: str) -> list[dict[str, str]]:
 
     for token in extract_hard_fact_tokens(output):
         normalized = _normalized_token(token)
-        if normalized and normalized not in source_normalized:
+        if normalized and not _token_supported(source_normalized, token):
             key = ("number_or_time", normalized)
             if key not in seen:
                 seen.add(key)
@@ -135,7 +215,35 @@ def is_financial_source(source: str) -> bool:
 
 def build_source_fact_ledger(source: str) -> dict[str, Any]:
     source_text = str(source or "")
+    facts: list[dict[str, Any]] = []
+    category_counts: dict[str, int] = {}
+    for match in SOURCE_SENTENCE_RE.finditer(source_text):
+        evidence = match.group(0).strip()
+        if not evidence:
+            continue
+        category = "其他来源事实"
+        best_score = 0
+        for candidate, markers in FACT_CATEGORY_RULES:
+            score = sum(1 for marker in markers if marker in evidence)
+            if score > best_score:
+                category = candidate
+                best_score = score
+        category_counts[category] = category_counts.get(category, 0) + 1
+        fact_id = f"{FACT_CATEGORY_PREFIX[category]}-{category_counts[category]:02d}"
+        facts.append(
+            {
+                "id": fact_id,
+                "category": category,
+                "claim": evidence.rstrip("。！？!?；;"),
+                "evidence": evidence,
+                "hard_fact_tokens": extract_hard_fact_tokens(evidence),
+                "organizations": _unique_matches(ORGANIZATION_RE, evidence),
+            }
+        )
     return {
+        "facts": facts,
+        "fact_ids": [item["id"] for item in facts],
+        "fact_count": len(facts),
         "hard_fact_tokens": extract_hard_fact_tokens(source_text),
         "organizations": _unique_matches(ORGANIZATION_RE, source_text),
         "financial_indicators": [term for term in HIGH_RISK_FACT_TERMS if term in source_text],
