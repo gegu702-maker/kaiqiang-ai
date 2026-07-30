@@ -237,6 +237,7 @@ export type VoiceClone = {
 };
 
 export type ViralIndustry = "ecommerce" | "knowledge" | "training" | "local" | "personal_brand" | "global";
+export type ViralLengthMode = "match_source" | "concise" | "moderate_expand";
 
 export type ViralRewrite = {
   title: string;
@@ -245,7 +246,7 @@ export type ViralRewrite = {
 
 export type ViralLengthRepairRound = {
   round: number;
-  stage: "initial" | "expanding" | "sentence_boundary_trim";
+  stage: "initial" | "expanding" | "compressing" | "sentence_boundary_trim";
   actual_chars: number[];
   before_chars?: number[];
   items?: Array<{
@@ -282,7 +283,15 @@ export type ViralAnalyzeResult = {
   diagnostic?: {
     actual_chars: number[];
     target_chars: number;
+    target_center_chars?: number;
     maximum_chars: number;
+    source_cjk?: number;
+    effective_speech_seconds?: number | null;
+    source_density?: number | null;
+    target_min_chars?: number;
+    target_max_chars?: number;
+    length_mode?: ViralLengthMode | "public_metadata_fallback";
+    exact_duration_match?: boolean;
     length_unit: "cjk_chars";
     length_repair_rounds?: ViralLengthRepairRound[];
   };
@@ -290,9 +299,10 @@ export type ViralAnalyzeResult = {
     prompt_input_chars?: number;
     hierarchical_chunk_count?: number;
     output_chars?: number;
-    rewrite_length_requested?: "short" | "medium" | "full";
-    rewrite_length_effective?: "short" | "medium" | "full";
+    rewrite_length_requested?: ViralLengthMode | "short" | "medium" | "full";
+    rewrite_length_effective?: ViralLengthMode | "public_metadata_fallback";
     rewrite_target_chars?: number;
+    rewrite_target_center_chars?: number;
     rewrite_maximum_chars?: number;
     rewrite_actual_chars?: number[];
     length_repair_rounds?: ViralLengthRepairRound[];
@@ -387,8 +397,8 @@ export type ViralPipelineResult = {
   warning?: string;
   summary_label?: string;
   full_rewrite_available?: boolean;
-  rewrite_length_requested?: "short" | "medium" | "full";
-  rewrite_length_effective?: "short" | "medium" | "full";
+  rewrite_length_requested?: ViralLengthMode | "short" | "medium" | "full";
+  rewrite_length_effective?: ViralLengthMode | "public_metadata_fallback";
   degraded?: boolean;
   asr_provider?: string;
   diagnostics?: {
@@ -409,8 +419,17 @@ export type ViralPipelineResult = {
     prompt_input_chars: number;
     output_chars: number;
     rewrite_target_chars?: number;
+    rewrite_target_center_chars?: number;
     rewrite_maximum_chars?: number;
     rewrite_actual_chars?: number[];
+    source_cjk?: number;
+    effective_speech_seconds?: number | null;
+    source_density?: number | null;
+    target_min_chars?: number;
+    target_center_chars?: number;
+    target_max_chars?: number;
+    length_mode?: ViralLengthMode | "public_metadata_fallback";
+    exact_duration_match?: boolean;
     length_unit?: "cjk_chars";
     length_repair_rounds?: ViralLengthRepairRound[];
   };
@@ -425,8 +444,15 @@ export type ViralPipelineResult = {
     actual_duration_seconds?: number;
     allowed_duration_seconds?: number;
     target_chars?: number;
+    target_center_chars?: number;
     maximum_chars?: number;
     actual_chars?: number[];
+    source_cjk?: number;
+    effective_speech_seconds?: number | null;
+    source_density?: number | null;
+    target_min_chars?: number;
+    target_max_chars?: number;
+    length_mode?: ViralLengthMode | "public_metadata_fallback";
     length_repair_rounds?: ViralLengthRepairRound[];
     resource_limits?: {
       maximum_supplement_rounds: number;

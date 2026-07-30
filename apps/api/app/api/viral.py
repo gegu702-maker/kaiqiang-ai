@@ -24,6 +24,7 @@ from app.services.viral_idempotency import (
 router = APIRouter(prefix="/viral", tags=["viral"])
 logger = logging.getLogger(__name__)
 _viral_upload_lock = asyncio.Lock()
+LengthMode = Literal["match_source", "concise", "moderate_expand", "short", "medium", "full"]
 
 
 class ViralAnalyzeRequest(BaseModel):
@@ -31,7 +32,7 @@ class ViralAnalyzeRequest(BaseModel):
     raw_script: str = Field(default="", max_length=120000)
     industry: str
     language: str = "zh"
-    rewrite_length: Literal["short", "medium", "full"] = "short"
+    rewrite_length: LengthMode = "match_source"
     client_submission_id: str = Field(default="", max_length=96, pattern=r"^(|viral_submission_[0-9a-f]{32})$")
 
 
@@ -44,7 +45,7 @@ class ViralPipelineRequest(BaseModel):
     raw_input: str = Field(default="", max_length=6000)
     industry: str = "personal_brand"
     language: str = "zh"
-    rewrite_length: Literal["short", "medium", "full"] = "short"
+    rewrite_length: LengthMode = "match_source"
 
 
 def _is_pipeline_tester(email: str | None) -> bool:
@@ -312,7 +313,7 @@ async def run_uploaded_viral_agent_pipeline(
     source_url: str = Form(default=""),
     industry: str = Form(default="personal_brand"),
     language: str = Form(default="zh"),
-    rewrite_length: Literal["short", "medium", "full"] = Form(default="short"),
+    rewrite_length: LengthMode = Form(default="match_source"),
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> dict:

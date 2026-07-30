@@ -194,7 +194,7 @@ export async function analyzeViralScript(
     raw_script?: string;
     industry: string;
     language: Locale;
-    rewrite_length?: "short" | "medium" | "full";
+    rewrite_length?: import("./types").ViralLengthMode;
     client_submission_id: string;
   },
   accessToken?: string,
@@ -240,7 +240,7 @@ export async function runViralPipeline(
     raw_input?: string;
     industry?: string;
     language?: Locale;
-    rewrite_length?: "short" | "medium" | "full";
+    rewrite_length?: import("./types").ViralLengthMode;
   },
   accessToken?: string,
 ): Promise<ViralPipelineResult> {

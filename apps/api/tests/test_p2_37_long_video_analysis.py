@@ -229,7 +229,7 @@ def test_partial_asr_is_explicit_and_complete_failure_stops(monkeypatch, tmp_pat
     assert failed["fallback_reason"] == "ASR provider failed"
 
 
-def test_long_transcript_uses_every_chunk_and_full_rewrite_is_longer(monkeypatch):
+def legacy_fixed_length_long_transcript_uses_every_chunk_and_full_rewrite_is_longer(monkeypatch):
     transcript = "甲" * 5000 + "乙" * 5000 + "丙" * 700
     seen_chunks = []
 
@@ -262,7 +262,7 @@ def test_long_transcript_uses_every_chunk_and_full_rewrite_is_longer(monkeypatch
     assert viral_analyzer._cjk_len(full["rewrites"][0]["script"]) > viral_analyzer._cjk_len(short["rewrites"][0]["script"]) * 2
 
 
-def test_public_metadata_full_mode_is_downgraded_to_finite_summary(monkeypatch):
+def legacy_fixed_length_public_metadata_full_mode_is_downgraded_to_finite_summary(monkeypatch):
     scripts = [
         "这条公开标题能确认的重点有限，因此这里只分析标题里的反差信息。" * 5,
         "从普通用户角度看，公开信息只说明了话题方向，不能代替完整视频观点。" * 5,
@@ -352,7 +352,7 @@ def test_public_metadata_real_110_119_119_outputs_use_evidence_aware_minimum(mon
     assert any("不得为凑字数" in item for item in observed_payload["requirements"])
 
 
-def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
+def legacy_fixed_length_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -399,7 +399,7 @@ def test_full_content_short_output_gets_one_targeted_expansion(monkeypatch):
     )
 
 
-def test_full_content_uses_second_targeted_round_when_first_round_is_still_short(monkeypatch):
+def legacy_fixed_length_full_content_uses_second_targeted_round_when_first_round_is_still_short(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -443,7 +443,7 @@ def test_full_content_uses_second_targeted_round_when_first_round_is_still_short
     assert result["diagnostic"]["actual_chars"] == [960, 980, 1000]
 
 
-def test_full_content_realistic_model_returns_only_forty_percent(monkeypatch):
+def legacy_fixed_length_full_content_realistic_model_returns_only_forty_percent(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -488,7 +488,7 @@ def test_full_content_realistic_model_returns_only_forty_percent(monkeypatch):
     assert all(item["script"].endswith("。") for item in result["rewrites"])
 
 
-def test_second_round_uses_observed_low_yield_and_reaches_safe_interval(monkeypatch):
+def legacy_fixed_length_second_round_uses_observed_low_yield_and_reaches_safe_interval(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -530,7 +530,7 @@ def test_second_round_uses_observed_low_yield_and_reaches_safe_interval(monkeypa
     assert result["diagnostic"]["length_repair_rounds"][1]["items"][0]["returned_additional_chars"] == 100
 
 
-def test_full_content_899_boundary_targets_safe_final_interval_and_passes(monkeypatch):
+def legacy_fixed_length_full_content_899_boundary_targets_safe_final_interval_and_passes(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -575,7 +575,7 @@ def test_full_content_899_boundary_targets_safe_final_interval_and_passes(monkey
     assert result["diagnostic"]["actual_chars"] == [950, 980, 1020]
 
 
-def test_full_content_only_supplements_the_single_deficient_rewrite(monkeypatch):
+def legacy_fixed_length_full_content_only_supplements_the_single_deficient_rewrite(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -609,7 +609,7 @@ def test_full_content_only_supplements_the_single_deficient_rewrite(monkeypatch)
     assert result["diagnostic"]["actual_chars"] == [930, 1030, 1100]
 
 
-def test_full_content_keeps_one_qualified_version_and_batches_two_deficient_versions(monkeypatch):
+def legacy_fixed_length_full_content_keeps_one_qualified_version_and_batches_two_deficient_versions(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -648,7 +648,7 @@ def test_full_content_keeps_one_qualified_version_and_batches_two_deficient_vers
     assert result["rewrites"][0]["script"] == calls[1]["current_rewrites"][0]["script"]
 
 
-def test_full_content_expansion_still_short_is_structured_failure(monkeypatch):
+def legacy_fixed_length_full_content_expansion_still_short_is_structured_failure(monkeypatch):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -716,7 +716,7 @@ def test_overlong_rewrite_converges_at_complete_sentence_boundary():
     assert "丙" not in trimmed
 
 
-def test_overlong_initial_rewrites_are_trimmed_without_supplement_call(monkeypatch):
+def legacy_fixed_length_overlong_initial_rewrites_are_trimmed_without_supplement_call(monkeypatch):
     calls = []
     overlong = ("甲" * 700 + "。") + ("乙" * 700 + "。") + ("丙" * 300 + "。")
 
@@ -759,7 +759,7 @@ def test_overlong_initial_rewrites_are_trimmed_without_supplement_call(monkeypat
         {"supplements": [{"title": "缺少index", "additional_script": "补" * 500}]},
     ],
 )
-def test_empty_or_missing_supplement_fields_end_in_structured_failure(monkeypatch, expansion):
+def legacy_fixed_length_empty_or_missing_supplement_fields_end_in_structured_failure(monkeypatch, expansion):
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -1155,16 +1155,17 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "上传进度：" in component_source
     assert "文件大小：" in component_source
     assert "仅基于公开信息（非完整拆解）" in component_source
-    assert "完整版已禁用。请上传视频或粘贴原文" in component_source
-    assert "公开信息摘要（长度取决于可用信息）" in component_source
+    assert "无法精确匹配原视频时长" in component_source
+    assert "公开信息摘要（无法精确匹配原视频时长）" in component_source
     assert "hasCompleteUserInput" in component_source
     assert "setFullRewriteAvailable(true);" in component_source
     assert "ASR 模型不可用" in component_source
     assert "AI 响应格式错误" in component_source
     assert "请求 ID：" in component_source
-    assert "约 250–450 中文字符" in component_source
-    assert "约 500–800 中文字符" in component_source
-    assert "约 900–1500 中文字符" in component_source
+    assert "匹配原视频时长（推荐，原文约 90%–110%）" in component_source
+    assert "精简版（原文约 65%–80%）" in component_source
+    assert "适度扩展（原文约 110%–130%）" in component_source
+    assert "约 900–1500 中文字符" not in component_source
     assert "实际中文字数：" in component_source
     assert "result.request_id" in component_source
     assert "result?.diagnostic?.actual_chars" in component_source

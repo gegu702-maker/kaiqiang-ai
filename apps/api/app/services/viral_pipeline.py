@@ -19,6 +19,7 @@ from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.core.config import settings
 from app.services.viral_diagnostics import current_request_id
 from app.services.viral_review import verify_review_token
+from app.services.viral_length import calculate_rewrite_length_target
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio, probe_audio_stream, probe_media_duration
 from app.services.video_link_resolver import resolve_video_link
 from app.services.viral_analyzer import FINAL_REWRITE_LIMIT, analyze_viral_script, dedupe_and_diversify_rewrites, is_script_polluted, smooth_spoken_script
@@ -55,8 +56,8 @@ LANGUAGE_LABELS = {
 
 
 FALLBACK_OPTIONS = ["upload_video", "paste_text"]
-METADATA_FALLBACK_WARNING = "仅基于公开信息（非完整拆解）：平台视频未成功下载，ASR=0。完整版已禁用；请上传视频或粘贴原文以获得完整拆解。"
-SHARE_TEXT_FALLBACK_WARNING = "仅基于公开信息（非完整拆解）：未读取视频音轨，ASR=0。完整版已禁用；请上传视频或粘贴原文以获得完整拆解。"
+METADATA_FALLBACK_WARNING = "仅基于公开信息（非完整拆解）：平台视频未成功下载，ASR=0，无法精确匹配原视频时长。请上传视频或粘贴原文。"
+SHARE_TEXT_FALLBACK_WARNING = "仅基于公开信息（非完整拆解）：未读取视频音轨，ASR=0，无法精确匹配原视频时长。请上传视频或粘贴原文。"
 INSUFFICIENT_METADATA_MESSAGE = "链接可识别，但可读取内容不足。请粘贴原文案以获得完整拆解。"
 URL_RE = re.compile(r"https?://[^\s\"'<>，。；、]+", re.IGNORECASE)
 DOUYIN_COMMAND_RE = re.compile(
@@ -126,8 +127,16 @@ def _analysis_error_result(
                     key: detail[key]
                     for key in (
                         "target_chars",
+                        "target_center_chars",
                         "maximum_chars",
                         "actual_chars",
+                        "source_cjk",
+                        "effective_speech_seconds",
+                        "source_density",
+                        "target_min_chars",
+                        "target_max_chars",
+                        "length_mode",
+                        "exact_duration_match",
                         "length_repair_rounds",
                         "resource_limits",
                     )
@@ -383,11 +392,14 @@ def _normalize_rewrites(value: Any, analysis: dict[str, Any], transcript: str) -
 
 
 async def _generate_nine_rewrites(*, transcript: str, analysis: dict[str, Any], language: str, rewrite_length: str = "short") -> list[dict[str, str]]:
-    length_guidance = {
-        "short": "短版，实际中文字符约 250–450，聚焦一个核心判断与行动建议",
-        "medium": "中版，实际中文字符约 500–800，展开主要观点和关键论据",
-        "full": "完整版，实际中文字符约 900–1500，覆盖主要观点、论据、案例、数据和行动建议",
-    }.get(rewrite_length, "短版，实际中文字符约 250–450，聚焦一个核心判断与行动建议")
+    target = calculate_rewrite_length_target(
+        source_cjk=_cjk_len(transcript),
+        length_mode=rewrite_length,
+    )
+    length_guidance = (
+        f"实际中文字符 {target.target_min_chars}–{target.target_max_chars}，"
+        f"瞄准约 {target.target_center_chars}，保持原文节奏和信息密度"
+    )
     payload = {
         "language": LANGUAGE_LABELS.get(language, "中文"),
         "transcript": transcript,
@@ -667,6 +679,7 @@ async def _process_video_path(
             industry=industry,
             language=language,
             rewrite_length=rewrite_length,
+            effective_speech_seconds=asr.coverage_seconds,
         )
     except Exception as error:
         return _analysis_error_result(error, metadata=metadata, source_type=source_type)
@@ -693,9 +706,20 @@ async def _process_video_path(
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
         "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
+        "rewrite_target_center_chars": analysis.get("diagnostics", {}).get("rewrite_target_center_chars"),
         "rewrite_maximum_chars": analysis.get("diagnostics", {}).get("rewrite_maximum_chars"),
         "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
         "length_repair_rounds": analysis.get("diagnostics", {}).get("length_repair_rounds", []),
+        "source_cjk": analysis.get("diagnostics", {}).get("source_cjk", _cjk_len(corrected_transcript)),
+        "effective_speech_seconds": analysis.get("diagnostics", {}).get(
+            "effective_speech_seconds", round(asr.coverage_seconds, 3)
+        ),
+        "source_density": analysis.get("diagnostics", {}).get("source_density"),
+        "target_min_chars": analysis.get("diagnostics", {}).get("target_min_chars"),
+        "target_center_chars": analysis.get("diagnostics", {}).get("target_center_chars"),
+        "target_max_chars": analysis.get("diagnostics", {}).get("target_max_chars"),
+        "length_mode": analysis.get("diagnostics", {}).get("length_mode"),
+        "exact_duration_match": analysis.get("diagnostics", {}).get("exact_duration_match", True),
         "length_unit": "cjk_chars",
     }
     _log_diagnostics(diagnostics)
@@ -735,7 +759,7 @@ async def _metadata_fallback_analysis(
     metadata: dict[str, Any],
     industry: str,
     language: str,
-    rewrite_length: str = "short",
+    rewrite_length: str = "match_source",
 ) -> dict[str, Any]:
     transcript = _metadata_text(metadata)
     if not _has_enough_metadata_text(transcript):
@@ -765,7 +789,7 @@ async def _metadata_fallback_analysis(
         )
     except Exception as error:
         return _analysis_error_result(error, metadata=metadata, source_type="link_metadata_fallback")
-    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=transcript, analysis=analysis, language=language, rewrite_length="short")
+    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=transcript, analysis=analysis, language=language, rewrite_length=rewrite_length)
     project_id = str(analysis.get("project_id") or uuid4())
     _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
     diagnostics = {
@@ -778,9 +802,23 @@ async def _metadata_fallback_analysis(
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
         "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
+        "rewrite_target_center_chars": analysis.get("diagnostics", {}).get("rewrite_target_center_chars"),
         "rewrite_maximum_chars": analysis.get("diagnostics", {}).get("rewrite_maximum_chars"),
         "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
         "length_repair_rounds": analysis.get("diagnostics", {}).get("length_repair_rounds", []),
+        **{
+            key: analysis.get("diagnostics", {}).get(key)
+            for key in (
+                "source_cjk",
+                "effective_speech_seconds",
+                "source_density",
+                "target_min_chars",
+                "target_center_chars",
+                "target_max_chars",
+                "length_mode",
+                "exact_duration_match",
+            )
+        },
         "length_unit": "cjk_chars",
     }
     _log_diagnostics(diagnostics)
@@ -806,7 +844,7 @@ async def _metadata_fallback_analysis(
         "summary_label": "仅基于公开信息（非完整拆解）",
         "full_rewrite_available": False,
         "rewrite_length_requested": rewrite_length,
-        "rewrite_length_effective": "short",
+        "rewrite_length_effective": "public_metadata_fallback",
         "diagnostics": diagnostics,
     }
 
@@ -821,7 +859,7 @@ async def _share_text_fallback_analysis(
     metadata: dict[str, Any] | None,
     industry: str,
     language: str,
-    rewrite_length: str = "short",
+    rewrite_length: str = "match_source",
 ) -> dict[str, Any]:
     if not _has_enough_metadata_text(share_text):
         return _failed(
@@ -845,12 +883,12 @@ async def _share_text_fallback_analysis(
             raw_script=share_text,
             industry=industry,
             language=language,
-            rewrite_length="short",
+            rewrite_length=rewrite_length,
             source_scope="public_metadata",
         )
     except Exception as error:
         return _analysis_error_result(error, metadata=metadata or {}, source_type="share_text_fallback")
-    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=share_text, analysis=analysis, language=language, rewrite_length="short")
+    rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(transcript=share_text, analysis=analysis, language=language, rewrite_length=rewrite_length)
     project_id = str(analysis.get("project_id") or uuid4())
     _update_project_rewrites(supabase, project_id=project_id, rewrites=rewrites)
     diagnostics = {
@@ -863,9 +901,23 @@ async def _share_text_fallback_analysis(
         "prompt_input_chars": analysis.get("diagnostics", {}).get("prompt_input_chars", 0),
         "output_chars": sum(len(item.get("script", "")) for item in rewrites),
         "rewrite_target_chars": analysis.get("diagnostics", {}).get("rewrite_target_chars"),
+        "rewrite_target_center_chars": analysis.get("diagnostics", {}).get("rewrite_target_center_chars"),
         "rewrite_maximum_chars": analysis.get("diagnostics", {}).get("rewrite_maximum_chars"),
         "rewrite_actual_chars": analysis.get("diagnostics", {}).get("rewrite_actual_chars", []),
         "length_repair_rounds": analysis.get("diagnostics", {}).get("length_repair_rounds", []),
+        **{
+            key: analysis.get("diagnostics", {}).get(key)
+            for key in (
+                "source_cjk",
+                "effective_speech_seconds",
+                "source_density",
+                "target_min_chars",
+                "target_center_chars",
+                "target_max_chars",
+                "length_mode",
+                "exact_duration_match",
+            )
+        },
         "length_unit": "cjk_chars",
     }
     _log_diagnostics(diagnostics)
@@ -891,7 +943,7 @@ async def _share_text_fallback_analysis(
         "summary_label": "仅基于公开信息（非完整拆解）",
         "full_rewrite_available": False,
         "rewrite_length_requested": rewrite_length,
-        "rewrite_length_effective": "short",
+        "rewrite_length_effective": "public_metadata_fallback",
         "diagnostics": diagnostics,
         "code": "",
         "stage": ViralPipelineStatus.READY,
@@ -1147,7 +1199,7 @@ async def run_viral_pipeline(
     industry: str,
     language: str,
     raw_input: str = "",
-    rewrite_length: str = "short",
+    rewrite_length: str = "match_source",
 ) -> dict[str, Any]:
     work_dir = Path(tempfile.mkdtemp(prefix="viral-agent-"))
     try:

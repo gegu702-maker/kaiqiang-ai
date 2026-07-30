@@ -14,6 +14,11 @@ from supabase import Client
 from app.services.billing import current_period_start, ensure_profile
 from app.services.llm_provider import LLMProvider
 from app.services.viral_diagnostics import current_request_id
+from app.services.viral_length import (
+    calculate_public_metadata_target,
+    calculate_rewrite_length_target,
+    normalize_length_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +49,6 @@ PLAN_LIMITS: dict[str, int | None] = {
 }
 
 MIN_REWRITE_CJK_CHARS = 80
-REWRITE_LENGTH_RANGES = {
-    "short": (250, 450),
-    "medium": (500, 800),
-    "full": (900, 1500),
-}
 MIN_REWRITE_COUNT = 3
 MIN_SELLING_POINTS = 4
 MIN_STRUCTURE_ITEMS = 5
@@ -85,9 +85,6 @@ SCRIPT_PUNCT_RE = re.compile(r"[\s，。！？、；：,.!?;:\"'“”‘’（�
 
 FINAL_REWRITE_LIMIT = 3
 MAX_REWRITE_SUPPLEMENT_ROUNDS = 2
-FULL_REWRITE_GENERATION_MIN_CHARS = 1100
-FULL_REWRITE_GENERATION_MAX_CHARS = 1300
-FULL_REWRITE_REPAIR_TARGET_CHARS = 1175
 # Real Preview requests returned roughly 22%–40% of the requested Chinese
 # characters in low-yield rounds. Use the conservative end of that evidence
 # instead of assuming that the model will follow an exact character count.
@@ -224,11 +221,12 @@ def _cjk_len(value: str) -> int:
 def _planned_supplement_chars(
     *,
     current_chars: int,
+    desired_final_chars: int,
     supplement_round: int,
     previous_requested_chars: int | None = None,
     previous_returned_chars: int | None = None,
 ) -> tuple[int, float]:
-    desired_additional_chars = max(1, FULL_REWRITE_REPAIR_TARGET_CHARS - current_chars)
+    desired_additional_chars = max(1, desired_final_chars - current_chars)
     planning_yield = REWRITE_HISTORICAL_YIELD_FLOOR
     multiplier = 1.0
     if supplement_round > 1 and previous_requested_chars:
@@ -704,8 +702,9 @@ async def analyze_viral_script(
     raw_script: str = "",
     industry: str,
     language: str,
-    rewrite_length: str = "short",
+    rewrite_length: str = "match_source",
     source_scope: str = "full_content",
+    effective_speech_seconds: float | None = None,
 ) -> dict[str, Any]:
     source_url = source_url.strip()
     raw_script = raw_script.strip()
@@ -719,7 +718,9 @@ async def analyze_viral_script(
         raise HTTPException(status_code=422, detail="暂时无法自动解析该链接，请粘贴视频文案或上传视频后补充文案。")
     if len(raw_script) > 120000:
         raise HTTPException(status_code=400, detail="原始文案超过 120000 字，请分批处理。")
-    if rewrite_length not in {"short", "medium", "full"}:
+    try:
+        requested_length_mode = normalize_length_mode(rewrite_length)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid rewrite length.")
     if source_scope not in {"full_content", "public_metadata"}:
         raise HTTPException(status_code=400, detail="Invalid source scope.")
@@ -727,26 +728,27 @@ async def analyze_viral_script(
     quota = _assert_viral_quota(supabase, user_id=user_id, email=email)
     output_language = LANGUAGE_LABELS[language]
     analysis_input, prompt_input_chars, summary_chunk_count = await _build_hierarchical_input(raw_script, output_language)
-    requested_rewrite_length = rewrite_length
-    public_evidence_chars = len("".join(raw_script.split()))
-    public_minimum_rewrite_chars = max(60, min(100, round(public_evidence_chars * 0.75)))
-    public_maximum_rewrite_chars = min(240, max(public_minimum_rewrite_chars + 40, public_minimum_rewrite_chars * 2))
+    source_cjk = _cjk_len(raw_script)
     if source_scope == "public_metadata":
-        rewrite_length = "short"
-    minimum_chars, maximum_chars = REWRITE_LENGTH_RANGES[rewrite_length]
-    length_guidance = {
-        "short": "短版，约 250–450 个中文字符，聚焦一个核心判断与行动建议",
-        "medium": "中版，约 500–800 个中文字符，展开主要观点和关键论据",
-        "full": (
-            f"完整版，内部生成目标为 {FULL_REWRITE_GENERATION_MIN_CHARS}–"
-            f"{FULL_REWRITE_GENERATION_MAX_CHARS} 个中文字符（后端最终验收仍为 900–1500），"
-            "覆盖主要观点、论据、案例、数据、适用条件、风险和行动建议"
-        ),
-    }[rewrite_length]
+        length_target = calculate_public_metadata_target(evidence_cjk=source_cjk)
+    else:
+        length_target = calculate_rewrite_length_target(
+            source_cjk=source_cjk,
+            length_mode=requested_length_mode,
+            effective_speech_seconds=effective_speech_seconds,
+        )
+    minimum_chars = length_target.target_min_chars
+    target_center_chars = length_target.target_center_chars
+    maximum_chars = length_target.target_max_chars
+    length_guidance = (
+        f"动态长度模式为 {length_target.length_mode}；每条严格控制在 "
+        f"{minimum_chars}–{maximum_chars} 个中文字符，初稿瞄准区间中部约 "
+        f"{target_center_chars} 字。保持原文的信息密度、口播节奏和停顿，不为凑字数重复或虚构"
+    )
     if source_scope == "public_metadata":
         length_guidance = (
             f"仅基于公开信息的短版；按当前可验证信息量每条约 "
-            f"{public_minimum_rewrite_chars}–{public_maximum_rewrite_chars} 字，不得为凑字数补写无来源事实"
+            f"{minimum_chars}–{maximum_chars} 字，不得声称匹配原视频时长，不得为凑字数补写无来源事实"
         )
     fallback_text = {
         "topic": "短视频内容拆解" if language == "zh" else "Short video content analysis",
@@ -765,6 +767,13 @@ async def analyze_viral_script(
         "source_url": source_url,
         "content_input": analysis_input,
         "original_transcript_chars": len(raw_script),
+        "source_cjk": source_cjk,
+        "effective_speech_seconds": length_target.effective_speech_seconds,
+        "source_density": length_target.source_density,
+        "length_mode": length_target.length_mode,
+        "target_min_chars": minimum_chars,
+        "target_center_chars": target_center_chars,
+        "target_max_chars": maximum_chars,
         "hierarchical_chunk_count": summary_chunk_count,
         "industry": INDUSTRY_LABELS[industry],
         "language": output_language,
@@ -775,6 +784,7 @@ async def analyze_viral_script(
             "生成适合数字人口播的原创口播稿",
             "必须完整输出 topic、hook、selling_points、structure、template、core_points、arguments、cases、data_points、rewrites",
             "观点、论据、案例和数据必须能在输入内容中找到依据，不得只重复标题",
+            "保持原转写真实信息密度和口播节奏；大量停顿、短句和情绪递进属于内容风格，不得按其他行业语速强行扩写",
             "selling_points 至少 4 条，structure 至少 5 条",
             f"rewrites 必须至少 3 条；当前长度要求：{length_guidance}",
             "中文长度按实际汉字字符数计算，不按 token、空格或标点凑数",
@@ -785,6 +795,8 @@ async def analyze_viral_script(
             "不要每条都用“关注我”结尾，不要连续多条使用相同 CTA，不要重复“普通人看结果，懂内容的人会先问”这类固定句式",
             "不要重复使用“这类内容好用的地方”“既能承接热点流量，也能展示你的专业判断”“想看我继续拆这个方向”等句式骨架",
             "版本A面向泛用户，用热点反差和观点讨论收尾；版本B面向内容创作者，用痛点和应用建议收尾；版本C面向老板/行业观察者，用产业链机会和后续观察收尾",
+            "若原文是财经内容，不得新增原文没有的具体数据，不得使用确定性买入或收益承诺，必须使用中性风险表达",
+            "若原文是情感、关系或故事内容，保留慢节奏、短句、停顿和情绪递进，不得强行添加商业结论、投资表达或营销式CTA",
             "rewrite.title 只写版本名称；rewrite.script 只能写最终口播成稿，必须是可以直接朗读给观众听的正文",
             "rewrite.script 禁止出现模板说明、分析说明、结构说明、可复用模板、版本解释、括号结构、字段名、JSON 残留",
             "rewrite.script 禁止出现“可复用模板是”“这个版本适合”“建议用户”“（疑问/反常识开头）+”等生成策略说明",
@@ -817,8 +829,8 @@ async def analyze_viral_script(
             [
                 "输入仅来自链接公开元数据，不得声称已读取完整视频或执行 ASR",
                 "必须明确这是非完整拆解，只覆盖公开标题或描述中可验证的信息",
-                f"每条生成约 {public_minimum_rewrite_chars}–{public_maximum_rewrite_chars} 字的"
-                "“仅基于公开信息（非完整拆解）”；即使用户请求完整版也不得扩写成长稿",
+                f"每条生成约 {minimum_chars}–{maximum_chars} 字的"
+                "“仅基于公开信息（非完整拆解）”；不得声称匹配原视频时长",
                 "先列出公开标题/描述中可以确认的事实，再说明无法确认的视频观点、论据、案例和数据",
                 "给出可执行的内容角度或待验证问题时，必须明确写成建议或可能性，不得包装成原视频事实",
                 "结尾明确引导用户上传视频或粘贴原稿以获得完整拆解",
@@ -861,7 +873,7 @@ async def analyze_viral_script(
         return [_cjk_len(str(item.get("script") or "")) for item in value[:FINAL_REWRITE_LIMIT] if isinstance(item, dict)]
 
     result = normalize_analysis(data)
-    minimum_rewrite_chars = public_minimum_rewrite_chars if source_scope == "public_metadata" else minimum_chars
+    minimum_rewrite_chars = minimum_chars
     normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
     length_repair_rounds: list[dict[str, Any]] = [
         {"round": 0, "stage": "initial", "actual_chars": list(normalized_lengths)}
@@ -870,13 +882,73 @@ async def analyze_viral_script(
         "viral_rewrite_lengths request_id=%s attempt=initial source_scope=%s requested_length=%s effective_length=%s target_chars=%s raw_chars=%s normalized_chars=%s",
         current_request_id(),
         source_scope,
-        requested_rewrite_length,
         rewrite_length,
+        length_target.length_mode,
         minimum_rewrite_chars,
         rewrite_lengths(data),
         normalized_lengths,
     )
     if source_scope == "full_content":
+        overlong_indexes = [
+            index for index, actual_chars in enumerate(normalized_lengths) if actual_chars > maximum_chars
+        ]
+        if overlong_indexes:
+            compression = await LLMProvider().generate_json(
+                system=(
+                    "你是口播稿去重压缩编辑。只输出合法 JSON。"
+                    "只能删除重复、空话和冗余表达，不得新增、篡改事实或硬截断句子。"
+                ),
+                payload={
+                    "corrected_transcript": raw_script,
+                    "length_target": length_target.diagnostics(),
+                    "current_rewrites": [
+                        {**result["rewrites"][index], "index": index}
+                        for index in overlong_indexes
+                    ],
+                    "requirements": [
+                        f"只处理列出的版本，将每条压缩到 {minimum_chars}–{maximum_chars} 个中文字符，瞄准约 {target_center_chars} 字",
+                        "优先合并同义句，删除重复观点、重复CTA和没有信息量的过渡语",
+                        "保留原转写中的事实、数字、案例、因果关系、限定条件和各版本原有角度",
+                        "文案必须以完整句结束；禁止按字符硬截断",
+                        "财经内容保持中性风险表达；情感内容保留短句、停顿和情绪递进",
+                    ],
+                    "schema": {
+                        "compressions": [
+                            {
+                                "index": "与 current_rewrites.index 一致的整数",
+                                "compressed_script": "压缩后的完整口播正文",
+                            }
+                        ]
+                    },
+                },
+                max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+            )
+            compression_values = compression.get("compressions")
+            compression_values = compression_values if isinstance(compression_values, list) else []
+            compressed_by_index = {
+                item.get("index"): sanitize_rewrite_script(str(item.get("compressed_script") or ""))
+                for item in compression_values
+                if isinstance(item, dict) and item.get("index") in overlong_indexes
+            }
+            before_compression_lengths = list(normalized_lengths)
+            compressed_rewrites = []
+            for index, rewrite in enumerate(result["rewrites"]):
+                compressed = compressed_by_index.get(index, "")
+                compressed_rewrites.append(
+                    {**rewrite, "script": smooth_spoken_script(compressed) if compressed else rewrite["script"]}
+                )
+            result = {**result, "rewrites": compressed_rewrites}
+            normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
+            length_repair_rounds.append(
+                {
+                    "round": 1,
+                    "stage": "compressing",
+                    "requested_indexes": overlong_indexes,
+                    "before_chars": before_compression_lengths,
+                    "actual_chars": list(normalized_lengths),
+                }
+            )
+
         previous_round_by_index: dict[int, dict[str, int]] = {}
         for supplement_round in range(1, MAX_REWRITE_SUPPLEMENT_ROUNDS + 1):
             supplements_requested = []
@@ -887,6 +959,7 @@ async def analyze_viral_script(
                 previous = previous_round_by_index.get(index, {})
                 target_additional_chars, planning_yield = _planned_supplement_chars(
                     current_chars=actual_chars,
+                    desired_final_chars=target_center_chars,
                     supplement_round=supplement_round,
                     previous_requested_chars=previous.get("requested_chars"),
                     previous_returned_chars=previous.get("returned_chars"),
@@ -897,7 +970,7 @@ async def analyze_viral_script(
                         "title": rewrite["title"],
                         "current_chars": actual_chars,
                         "gap_chars": gap_chars,
-                        "desired_final_chars": FULL_REWRITE_REPAIR_TARGET_CHARS,
+                        "desired_final_chars": target_center_chars,
                         "planning_yield_rate": round(planning_yield, 4),
                         "target_additional_chars": target_additional_chars,
                         "maximum_additional_chars": MAX_REQUESTED_ADDITIONAL_CJK_CHARS,
@@ -926,10 +999,10 @@ async def analyze_viral_script(
                     "supplements_requested": supplements_requested,
                     "requirements": [
                         "只为 supplements_requested 中列出的版本生成接在现有正文末尾的扩写段落，不得重写、缩短或返回完整原稿",
-                        "每个版本独立扩写；additional_script 以 target_additional_chars 为生成目标，不要在合并后刚到900字时提前结束",
-                        f"扩写指向合并后约 1100–1250 个中文字符；后端会在完整句边界控制最终不超过 {maximum_chars} 字",
+                        "每个版本独立扩写；additional_script 以 target_additional_chars 为生成目标，不要在合并后刚到下限时提前结束",
+                        f"扩写指向合并后约 {target_center_chars} 个中文字符；后端会在完整句边界控制最终不超过 {maximum_chars} 字",
                         f"任何单条 additional_script 不得超过 {MAX_REQUESTED_ADDITIONAL_CJK_CHARS} 个中文字符",
-                        "按现有版本尚未充分展开的内容，补充有信息价值的因果解释、适用条件、具体例子、风险与误区、可执行建议",
+                        "只补原转写中已有、但当前版本尚未表达的信息；可展开其因果解释、适用条件、已有例子、风险与误区、可执行建议",
                         "优先覆盖转写稿中的主要观点、论据、案例、数据和行动建议，不要求五类内容机械平均分配",
                         "保留转写稿中的主要事实、数据、案例、论证顺序和限定条件",
                         "不得复述已有句子，不得用空话、同义改写或机械重复凑字数，不得新增转写稿中不存在的信息",
@@ -1018,10 +1091,10 @@ async def analyze_viral_script(
                 current_request_id(),
                 supplement_round,
                 source_scope,
-                requested_rewrite_length,
                 rewrite_length,
+                length_target.length_mode,
                 minimum_rewrite_chars,
-                FULL_REWRITE_REPAIR_TARGET_CHARS,
+                target_center_chars,
                 [item["index"] for item in supplements_requested],
                 [item["gap_chars"] for item in supplements_requested],
                 [item["planning_yield_rate"] for item in supplements_requested],
@@ -1069,7 +1142,7 @@ async def analyze_viral_script(
         raise HTTPException(
             status_code=502,
             detail={
-                "code": "analysis_output_too_short",
+                "code": "analysis_output_out_of_range",
                 "stage": "rewriting",
                 "message": (
                     f"AI 改写长度未达到 {minimum_rewrite_chars}–{maximum_chars} 个中文字符；"
@@ -1077,10 +1150,11 @@ async def analyze_viral_script(
                 ),
                 "retryable": False,
                 "target_chars": minimum_rewrite_chars,
+                "target_center_chars": target_center_chars,
                 "maximum_chars": maximum_chars,
                 "actual_chars": normalized_lengths,
                 "length_unit": "cjk_chars",
-                "rewrite_length": rewrite_length,
+                **length_target.diagnostics(),
                 "length_repair_rounds": length_repair_rounds,
                 "resource_limits": {
                     "maximum_supplement_rounds": MAX_REWRITE_SUPPLEMENT_ROUNDS,
@@ -1128,19 +1202,23 @@ async def analyze_viral_script(
         "diagnostic": {
             "actual_chars": normalized_lengths,
             "target_chars": minimum_rewrite_chars,
+            "target_center_chars": target_center_chars,
             "maximum_chars": maximum_chars,
             "length_unit": "cjk_chars",
             "length_repair_rounds": length_repair_rounds,
+            **length_target.diagnostics(),
         },
         "diagnostics": {
             "prompt_input_chars": prompt_input_chars + len(analysis_input),
             "hierarchical_chunk_count": summary_chunk_count,
             "output_chars": sum(len(str(value)) for value in result.values()),
-            "rewrite_length_requested": requested_rewrite_length,
-            "rewrite_length_effective": rewrite_length,
+            "rewrite_length_requested": rewrite_length,
+            "rewrite_length_effective": length_target.length_mode,
             "rewrite_target_chars": minimum_rewrite_chars,
+            "rewrite_target_center_chars": target_center_chars,
             "rewrite_maximum_chars": maximum_chars,
             "rewrite_actual_chars": normalized_lengths,
             "length_repair_rounds": length_repair_rounds,
+            **length_target.diagnostics(),
         },
     }

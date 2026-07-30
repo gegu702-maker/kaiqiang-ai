@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { analyzeViralScript, checkVideoLink, runUploadedViralPipeline, runViralPipeline, type ViralUploadProgress } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
-import type { ViralAnalyzeResult, ViralIndustry, ViralLinkErrorCode, ViralPipelineResult, VideoLinkResolveResult } from "@/lib/types";
+import type { ViralAnalyzeResult, ViralIndustry, ViralLengthMode, ViralLinkErrorCode, ViralPipelineResult, VideoLinkResolveResult } from "@/lib/types";
 
 type Locale = "zh" | "en";
 
@@ -146,7 +146,7 @@ async function manualSubmissionFingerprint(input: {
   rawScript: string;
   industry: ViralIndustry;
   language: Locale;
-  rewriteLength: "short" | "medium" | "full";
+  rewriteLength: ViralLengthMode;
 }) {
   const bytes = new TextEncoder().encode(
     JSON.stringify({
@@ -184,7 +184,15 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
       ? {
           actual_chars: payload.diagnostics.rewrite_actual_chars,
           target_chars: payload.diagnostics.rewrite_target_chars ?? 0,
+          target_center_chars: payload.diagnostics.rewrite_target_center_chars,
           maximum_chars: payload.diagnostics.rewrite_maximum_chars ?? 0,
+          source_cjk: payload.diagnostics.source_cjk,
+          effective_speech_seconds: payload.diagnostics.effective_speech_seconds,
+          source_density: payload.diagnostics.source_density,
+          target_min_chars: payload.diagnostics.target_min_chars,
+          target_max_chars: payload.diagnostics.target_max_chars,
+          length_mode: payload.diagnostics.length_mode,
+          exact_duration_match: payload.diagnostics.exact_duration_match,
           length_unit: "cjk_chars",
           length_repair_rounds: payload.diagnostics.length_repair_rounds,
         }
@@ -214,7 +222,7 @@ export function ViralAnalyzerClient({
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [uploadProgress, setUploadProgress] = useState<ViralUploadProgress | null>(null);
-  const [rewriteLength, setRewriteLength] = useState<"short" | "medium" | "full">("short");
+  const [rewriteLength, setRewriteLength] = useState<ViralLengthMode>("match_source");
   const [result, setResult] = useState<ViralAnalyzeResult | null>(null);
   const [linkCheck, setLinkCheck] = useState<VideoLinkResolveResult | null>(null);
   const [pipelineMetadata, setPipelineMetadata] = useState<ViralPipelineResult["metadata"] | null>(null);
@@ -277,7 +285,6 @@ export function ViralAnalyzerClient({
     setPipelineSourceType(payload.source_type || "");
     setPipelineWarning(payload.warning || "");
     setFullRewriteAvailable(payload.full_rewrite_available !== false);
-    if (payload.full_rewrite_available === false) setRewriteLength("short");
     setPipelineDiagnostics(payload.diagnostics);
   }
 
@@ -339,13 +346,14 @@ export function ViralAnalyzerClient({
       llm_response_schema_error: "AI 响应结构错误",
       llm_response_parse_failed: "AI 响应格式错误",
       analysis_output_too_short: "AI 改写长度不足",
+      analysis_output_out_of_range: "AI 改写长度未进入动态目标范围",
       pipeline_timeout: "处理超时",
     };
     const title = codeLabels[code] || stageLabels[stage] || "拆解失败";
     const detail = payload.message || payload.fallback_reason || "服务端未返回具体原因。";
     const actualChars =
-      payload.error_code === "analysis_output_too_short" && payload.diagnostic?.actual_chars?.length
-        ? `实际中文字数：${payload.diagnostic.actual_chars.join(" / ")}；目标：${payload.diagnostic.target_chars ?? 900}–${payload.diagnostic.maximum_chars ?? 1500}`
+      ["analysis_output_too_short", "analysis_output_out_of_range"].includes(payload.error_code || "") && payload.diagnostic?.actual_chars?.length
+        ? `实际中文字数：${payload.diagnostic.actual_chars.join(" / ")}；目标：${payload.diagnostic.target_chars ?? "—"}–${payload.diagnostic.maximum_chars ?? "—"}`
         : "";
     const repairRounds = payload.diagnostic?.length_repair_rounds?.length
       ? `长度修复轨迹：${payload.diagnostic.length_repair_rounds
@@ -694,19 +702,19 @@ export function ViralAnalyzerClient({
                 <select
                   className="h-11 w-full rounded-md border border-white/10 bg-ink/70 px-3 text-sm text-slate-100 outline-none focus:border-cyan/60"
                   value={rewriteLength}
-                  onChange={(event) => setRewriteLength(event.target.value as "short" | "medium" | "full")}
+                  onChange={(event) => setRewriteLength(event.target.value as ViralLengthMode)}
                 >
                   {isPublicMetadataFallback ? (
-                    <option value="short">公开信息摘要（长度取决于可用信息）</option>
+                    <option value={rewriteLength}>公开信息摘要（无法精确匹配原视频时长）</option>
                   ) : (
                     <>
-                      <option value="short">短版（约 250–450 中文字符）</option>
-                      <option value="medium">中版（约 500–800 中文字符）</option>
-                      <option value="full">完整版（约 900–1500 中文字符）</option>
+                      <option value="match_source">匹配原视频时长（推荐，原文约 90%–110%）</option>
+                      <option value="concise">精简版（原文约 65%–80%）</option>
+                      <option value="moderate_expand">适度扩展（原文约 110%–130%）</option>
                     </>
                   )}
                 </select>
-                {isPublicMetadataFallback && !fullRewriteAvailable ? <span className="mt-2 block text-xs leading-5 text-amber-100">当前仅能生成“仅基于公开信息（非完整拆解）”，完整版已禁用。请上传视频或粘贴原文。</span> : null}
+                {isPublicMetadataFallback && !fullRewriteAvailable ? <span className="mt-2 block text-xs leading-5 text-amber-100">当前仅能生成“基于公开信息的初步拆解”，无法精确匹配原视频时长。请上传视频或粘贴原文。</span> : null}
               </label>
 
               <div className={isWorkspace ? "grid gap-3" : "grid gap-3 sm:grid-cols-2"}>
@@ -826,7 +834,14 @@ export function ViralAnalyzerClient({
                       <p>分析来源：{pipelineSourceType === "uploaded_video_asr" ? "上传视频完整音轨" : pipelineSourceType === "link_video_asr" ? "链接视频音轨" : "仅基于公开信息（非完整拆解）"}</p>
                       <p>视频读取：{pipelineMetadata.downloadable ? "可用" : "受限，当前使用链接公开信息分析"}</p>
                       {pipelineDiagnostics ? <p>视频时长：{pipelineDiagnostics.video_duration_seconds.toFixed(1)} 秒；音频解析已完成；fallback：{pipelineDiagnostics.fallback ? "是" : "否"}</p> : null}
-                      {pipelineDiagnostics?.rewrite_actual_chars?.length ? <p>实际中文字数：{pipelineDiagnostics.rewrite_actual_chars.join(" / ")}；目标下限：{pipelineDiagnostics.rewrite_target_chars ?? "—"}</p> : null}
+                      {pipelineDiagnostics?.exact_duration_match ? (
+                        <>
+                          <p>有效语音时长：{pipelineDiagnostics.effective_speech_seconds?.toFixed(1) ?? "—"} 秒；原始转写：{pipelineDiagnostics.source_cjk ?? "—"} CJK</p>
+                          <p>原始语速/密度：{pipelineDiagnostics.source_density?.toFixed(2) ?? "—"} CJK/秒</p>
+                          <p>本次动态目标：{pipelineDiagnostics.target_min_chars ?? "—"}–{pipelineDiagnostics.target_max_chars ?? "—"} CJK</p>
+                        </>
+                      ) : pipelineDiagnostics ? <p>当前仅基于公开信息初步拆解，无法精确匹配原视频时长。</p> : null}
+                      {pipelineDiagnostics?.rewrite_actual_chars?.length ? <p>三条最终实际字数：{pipelineDiagnostics.rewrite_actual_chars.join(" / ")} CJK</p> : null}
                     </div>
                   </div>
                 </div>
