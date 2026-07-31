@@ -1099,7 +1099,7 @@ async def analyze_viral_script(
             state = version_states[index]
             attempt = 0
             network_retries_used = 0
-            exhaustion_regenerations_used = 0
+            contract_regenerations_used = 0
             use_compact_regeneration = False
             pending_retry_delay: float | None = None
             while True:
@@ -1154,17 +1154,38 @@ async def analyze_viral_script(
                                 allow_format_repair=False,
                                 thinking_mode="disabled",
                             )
+                            rewrite = response.get("rewrite") if isinstance(response, dict) else None
+                            script = rewrite.get("script") if isinstance(rewrite, dict) else None
+                            if not isinstance(script, str) or not script.strip():
+                                raise LLMProviderError(
+                                    code="llm_json_missing_fields",
+                                    message="AI 响应缺少必须字段 rewrite.script。",
+                                    retryable=False,
+                                    schema_error="missing_or_empty:rewrite.script",
+                                    content_type="parsed_json",
+                                )
                         finally:
                             async with concurrency_lock:
                                 active_initial_calls -= 1
                 except LLMProviderError as error:
                     network_retryable = _retryable_initial_provider_error(error)
-                    empty_content_exhausted = error.code == "llm_empty_content_exhausted"
+                    application_contract_failure = error.code in {
+                        "llm_empty_content",
+                        "llm_empty_content_exhausted",
+                        "llm_json_contract_error",
+                        "llm_json_parse_error",
+                        "llm_json_missing_fields",
+                    }
                     can_compact_regenerate = (
-                        empty_content_exhausted
+                        application_contract_failure
                         and not use_compact_regeneration
-                        and exhaustion_regenerations_used
+                        and contract_regenerations_used
                         < SOURCE_INITIAL_MAX_EXHAUSTION_REGENERATIONS
+                    )
+                    effective_error_code = (
+                        "llm_empty_content_exhausted"
+                        if use_compact_regeneration and error.code == "llm_empty_content"
+                        else error.code
                     )
                     can_network_retry = (
                         network_retryable
@@ -1174,7 +1195,7 @@ async def analyze_viral_script(
                     attempt_record.update(
                         {
                             "state": "failed",
-                            "error_code": error.code,
+                            "error_code": effective_error_code,
                             "error_type": type(error).__name__,
                             "retryable": can_compact_regenerate or can_network_retry,
                             "http_status": error.http_status,
@@ -1182,24 +1203,34 @@ async def analyze_viral_script(
                             "reasoning_content_length": error.reasoning_content_length,
                             "completion_tokens": error.completion_tokens,
                             "reasoning_tokens": error.reasoning_tokens,
+                            "finish_reason": error.finish_reason,
+                            "content_type": error.content_type,
+                            "parser_repair_applied": error.parser_repair_applied,
+                            "compact_regeneration_attempt": 1 if use_compact_regeneration else 0,
                             "elapsed_ms": round((time.perf_counter() - attempt_started) * 1000),
                         }
                     )
                     logger.warning(
                         "viral_variant request_id=%s index=%s attempt=%s state=failed "
-                        "category=%s retryable=%s http_status=%s elapsed_ms=%s",
+                        "category=%s retryable=%s http_status=%s finish_reason=%s content_type=%s "
+                        "content_length=%s parser_repair_applied=%s compact_regeneration_attempt=%s elapsed_ms=%s",
                         current_request_id(),
                         index,
                         attempt,
                         error.code,
                         attempt_record["retryable"],
                         error.http_status,
+                        error.finish_reason or "none",
+                        error.content_type,
+                        error.content_length,
+                        error.parser_repair_applied,
+                        attempt_record["compact_regeneration_attempt"],
                         attempt_record["elapsed_ms"],
                     )
                     if can_compact_regenerate:
-                        exhaustion_regenerations_used += 1
-                        state["compact_regenerations"] = exhaustion_regenerations_used
-                        state["retry_reason"] = "empty_content_exhausted"
+                        contract_regenerations_used += 1
+                        state["compact_regenerations"] = contract_regenerations_used
+                        state["retry_reason"] = error.code
                         state["state"] = "retrying"
                         use_compact_regeneration = True
                         continue
@@ -1214,7 +1245,9 @@ async def analyze_viral_script(
                         )
                         continue
                     state["state"] = "failed"
-                    state["error_code"] = error.code
+                    state["error_code"] = effective_error_code
+                    if effective_error_code != error.code:
+                        error.code = effective_error_code
                     raise
                 except _LLMCallBudgetExceeded:
                     attempt_record.update(

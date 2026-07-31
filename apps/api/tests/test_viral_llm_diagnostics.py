@@ -72,6 +72,13 @@ class _Client:
         return response
 
 
+class _MissingContentResponse(_Response):
+    def json(self):
+        body = super().json()
+        body["choices"][0]["message"].pop("content", None)
+        return body
+
+
 class _ErrorResponse:
     status_code = 400
 
@@ -306,7 +313,7 @@ def test_finish_reason_length_is_never_accepted_as_complete(monkeypatch, caplog)
     assert "total_tokens=303" in caplog.text
 
 
-def test_empty_content_exhaustion_records_reasoning_usage_separately(monkeypatch, caplog):
+def test_empty_content_records_reasoning_usage_separately(monkeypatch, caplog):
     _Client.calls = []
     _Client.responses = [
         _Response(
@@ -331,7 +338,7 @@ def test_empty_content_exhaustion_records_reasoning_usage_separately(monkeypatch
         )
 
     error = raised.value
-    assert error.code == "llm_empty_content_exhausted"
+    assert error.code == "llm_empty_content"
     assert error.content_length == 0
     assert error.reasoning_content_length == len("内部推理" * 100)
     assert error.completion_tokens == 8000
@@ -340,6 +347,92 @@ def test_empty_content_exhaustion_records_reasoning_usage_separately(monkeypatch
     assert "reasoning_tokens=7990" in caplog.text
     assert f"reasoning_content_length={len('内部推理' * 100)}" in caplog.text
     assert "thinking_mode=disabled" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_type"),
+    [
+        (_Response(None), "null"),
+        (_Response(""), "str"),
+        (_MissingContentResponse(None), "missing"),
+    ],
+)
+def test_http_200_empty_content_is_classified_without_json_parse(monkeypatch, response, expected_type):
+    _Client.calls = []
+    _Client.responses = [response]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    with pytest.raises(llm_provider.LLMProviderError) as raised:
+        asyncio.run(
+            llm_provider.LLMProvider().generate_json(
+                system="json",
+                payload={"input": "x"},
+                allow_format_repair=False,
+                thinking_mode="disabled",
+            )
+        )
+
+    assert raised.value.code == "llm_empty_content"
+    assert raised.value.content_type == expected_type
+    assert raised.value.content_length == 0
+    assert len(_Client.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '```json\n{"ok": true}\n```',
+        '以下是结果：\n{"ok": true}\n以上。',
+    ],
+)
+def test_safe_parser_repairs_wrapping_without_model_call(monkeypatch, caplog, content):
+    _Client.calls = []
+    _Client.responses = [_Response(content)]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    result = asyncio.run(
+        llm_provider.LLMProvider().generate_json(
+            system="json",
+            payload={"input": "x"},
+            allow_format_repair=False,
+            thinking_mode="disabled",
+        )
+    )
+
+    assert result == {"ok": True}
+    assert len(_Client.calls) == 1
+    assert "parser_repair_applied=True" in caplog.text
+
+
+def test_nonempty_malformed_json_reports_safe_metadata(monkeypatch):
+    _Client.calls = []
+    malformed = '{"rewrite":{"script":"正文"},"rank":01}'
+    _Client.responses = [_Response(malformed)]
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(llm_provider.settings, "deepseek_api_key", "sk-preview-test")
+
+    with pytest.raises(llm_provider.LLMProviderError) as raised:
+        asyncio.run(
+            llm_provider.LLMProvider().generate_json(
+                system="json",
+                payload={"input": "x"},
+                allow_format_repair=False,
+                thinking_mode="disabled",
+            )
+        )
+
+    error = raised.value
+    assert error.code == "llm_json_parse_error"
+    assert error.content_type == "str"
+    assert error.content_length == len(malformed)
+    assert error.finish_reason == "stop"
+    assert error.parser_repair_applied is True
+    assert len(_Client.calls) == 1
 
 
 def test_pipeline_failure_contract_contains_request_fields():

@@ -535,8 +535,12 @@ def test_parallel_initial_generation_exception_is_controlled(monkeypatch):
 
 
 def test_missing_independent_rewrite_json_field_is_controlled(monkeypatch):
+    calls = [0, 0, 0]
+
     async def fake_generate(_self, *, payload, **_kwargs):
-        if payload["variant_task"]["index"] == 2:
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        if index == 2:
             return {"rewrite": {"title": "版本C"}}
         scripts = [_sized("甲", "甲", 700), _sized("乙", "乙", 700), _sized("丙", "丙", 700)]
         return _initial_variant(payload, scripts)
@@ -545,7 +549,10 @@ def test_missing_independent_rewrite_json_field_is_controlled(monkeypatch):
         _run(monkeypatch, fake_generate)
     detail = raised.value.detail
     assert detail["code"] == "analysis_independent_generation_failed"
-    assert detail["failed_versions"] == [{"index": 2, "error_type": "missing_rewrite_script"}]
+    assert calls == [1, 1, 2]
+    assert detail["failed_versions"][0]["index"] == 2
+    assert detail["failed_versions"][0]["error_code"] == "llm_json_missing_fields"
+    assert detail["llm_call_count"] == 4
 
 
 def _successful_review(payload):
@@ -736,7 +743,97 @@ def test_empty_content_exhaustion_compactly_regenerates_only_failed_b(monkeypatc
     assert result["diagnostic"]["llm_call_count"] == 5
 
 
-def test_second_empty_content_exhaustion_fails_without_third_generation(monkeypatch):
+@pytest.mark.parametrize("failure_code", ["llm_empty_content", "llm_json_parse_error"])
+def test_output_contract_failure_compactly_regenerates_only_failed_a(monkeypatch, failure_code):
+    calls = [0, 0, 0]
+    observed = []
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_generate(_self, *, payload, system, **kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        observed.append((index, payload, system, kwargs))
+        if index == 0 and calls[index] == 1:
+            raise LLMProviderError(
+                code=failure_code,
+                message="invalid output",
+                retryable=False,
+                http_status=200,
+                content_length=0 if failure_code == "llm_empty_content" else 2774,
+                finish_reason="stop",
+                content_type="null" if failure_code == "llm_empty_content" else "str",
+                parser_repair_applied=failure_code == "llm_json_parse_error",
+            )
+        return _initial_variant(payload, scripts)
+
+    result = _run(monkeypatch, fake_generate)
+
+    assert calls == [2, 1, 1]
+    compact = [item for item in observed if item[0] == 0][1]
+    assert set(compact[1]) >= {"content_input", "source_fact_ledger", "variant_task", "length_target", "schema"}
+    assert set(compact[1]["schema"]) == {"rewrite"}
+    assert "只输出最终 JSON" in compact[2]
+    assert compact[3]["attempt_label"] == "variant_0_compact_regeneration"
+    assert compact[3]["thinking_mode"] == "disabled"
+    assert result["diagnostic"]["version_states"][0]["compact_regenerations"] == 1
+    assert result["diagnostic"]["llm_call_count"] <= 9
+
+
+def test_missing_script_compactly_regenerates_only_failed_b(monkeypatch):
+    calls = [0, 0, 0]
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        if index == 1 and calls[index] == 1:
+            return {"rewrite": {"title": "版本B"}}
+        return _initial_variant(payload, scripts)
+
+    result = _run(monkeypatch, fake_generate)
+
+    assert calls == [1, 2, 1]
+    b_state = result["diagnostic"]["version_states"][1]
+    assert b_state["retry_reason"] == "llm_json_missing_fields"
+    assert b_state["attempts"][0]["error_code"] == "llm_json_missing_fields"
+
+
+def test_second_json_parse_failure_stops_without_third_generation(monkeypatch):
+    calls = [0, 0, 0]
+    scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        index = payload["variant_task"]["index"]
+        calls[index] += 1
+        if index == 0:
+            raise LLMProviderError(
+                code="llm_json_parse_error",
+                message="invalid json",
+                retryable=False,
+                http_status=200,
+                content_length=2774,
+                finish_reason="stop",
+                content_type="str",
+                parser_repair_applied=True,
+            )
+        return _initial_variant(payload, scripts)
+
+    with pytest.raises(HTTPException) as raised:
+        _run(monkeypatch, fake_generate)
+
+    detail = raised.value.detail
+    assert calls == [2, 1, 1]
+    assert detail["failed_versions"][0]["error_code"] == "llm_json_parse_error"
+    assert detail["succeeded_versions"] == [1, 2]
+    assert detail["llm_call_count"] == 4
+    assert detail["maximum_llm_calls"] == 9
+
+
+def test_second_empty_content_is_marked_exhausted_without_third_generation(monkeypatch):
     calls = [0, 0, 0]
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
 
@@ -745,8 +842,8 @@ def test_second_empty_content_exhaustion_fails_without_third_generation(monkeypa
         calls[index] += 1
         if index == 1:
             raise LLMProviderError(
-                code="llm_empty_content_exhausted",
-                message="finish_reason=length;content=empty",
+                code="llm_empty_content",
+                message="content=empty",
                 retryable=True,
                 http_status=200,
                 content_length=0,

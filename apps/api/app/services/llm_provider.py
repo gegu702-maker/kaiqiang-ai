@@ -63,6 +63,9 @@ class LLMProviderError(Exception):
         reasoning_content_length: int = 0,
         completion_tokens: int | None = None,
         reasoning_tokens: int | None = None,
+        finish_reason: str = "",
+        content_type: str = "unknown",
+        parser_repair_applied: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -75,6 +78,9 @@ class LLMProviderError(Exception):
         self.reasoning_content_length = reasoning_content_length
         self.completion_tokens = completion_tokens
         self.reasoning_tokens = reasoning_tokens
+        self.finish_reason = finish_reason
+        self.content_type = content_type
+        self.parser_repair_applied = parser_repair_applied
 
 
 def _strip_code_fence(value: str) -> str:
@@ -118,7 +124,7 @@ def _remove_trailing_commas(value: str) -> str:
     return re.sub(r",\s*([}\]])", r"\1", value)
 
 
-def safe_parse_json_response(raw: str) -> dict[str, Any]:
+def _parse_json_response_with_metadata(raw: str) -> tuple[dict[str, Any], bool]:
     """Parse model JSON with tolerance for common chat-model formatting noise."""
     candidates: list[str] = []
     extracted = _extract_json_object(raw)
@@ -128,14 +134,14 @@ def safe_parse_json_response(raw: str) -> dict[str, Any]:
             candidates.append(candidate)
 
     last_error: Exception | None = None
-    for candidate in candidates:
+    for index, candidate in enumerate(candidates):
         try:
             data = json.loads(candidate)
         except json.JSONDecodeError as error:
             last_error = error
         else:
             if isinstance(data, dict):
-                return data
+                return data, index > 0
 
     python_literal = _remove_trailing_commas(extracted).strip()
     try:
@@ -144,10 +150,15 @@ def safe_parse_json_response(raw: str) -> dict[str, Any]:
         last_error = error
     else:
         if isinstance(data, dict):
-            return data
+            return data, True
 
     detail = str(last_error or "unknown JSON error")
     raise ValueError(f"Model response did not contain a usable JSON object: {detail}") from last_error
+
+
+def safe_parse_json_response(raw: str) -> dict[str, Any]:
+    data, _repair_applied = _parse_json_response_with_metadata(raw)
+    return data
 
 
 class LLMProvider:
@@ -218,7 +229,9 @@ class LLMProvider:
                 retryable=False,
             )
 
-        async def request_completion(messages: list[dict[str, str]], *, attempt: str) -> tuple[str, int, str]:
+        async def request_completion(
+            messages: list[dict[str, str]], *, attempt: str
+        ) -> tuple[str, int, str, dict[str, Any]]:
             request_body_chars = len(json.dumps(messages, ensure_ascii=False))
             response: httpx.Response | None = None
             transport_limit = max(1, max_transport_attempts)
@@ -346,8 +359,16 @@ class LLMProvider:
                 usage = usage if isinstance(usage, dict) else {}
                 choice = body["choices"][0]
                 message = choice["message"]
+                content_present = "content" in message
                 raw_value = message.get("content")
                 reasoning_value = message.get("reasoning_content")
+                content_type = (
+                    "missing"
+                    if not content_present
+                    else "null"
+                    if raw_value is None
+                    else type(raw_value).__name__
+                )
                 raw = "" if raw_value is None else raw_value
                 reasoning_content = reasoning_value if isinstance(reasoning_value, str) else ""
                 finish_reason = str(choice.get("finish_reason") or "")
@@ -386,7 +407,7 @@ class LLMProvider:
                 "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=received http_status=%s "
                 "response_length=%s finish_reason=%s truncated=%s max_tokens=%s prompt_tokens=%s "
                 "completion_tokens=%s reasoning_tokens=%s total_tokens=%s request_body_chars=%s "
-                "content_length=%s reasoning_content_length=%s thinking_mode=%s elapsed_ms=%s",
+                "content_type=%s content_length=%s reasoning_content_length=%s thinking_mode=%s elapsed_ms=%s",
                 request_id,
                 provider_name,
                 model,
@@ -401,36 +422,54 @@ class LLMProvider:
                 reasoning_tokens if reasoning_tokens is not None else "none",
                 usage.get("total_tokens", "none"),
                 request_body_chars,
+                content_type,
                 len(raw),
                 len(reasoning_content),
                 thinking_mode or "provider_default",
                 round((time.perf_counter() - attempt_started) * 1000),
             )
-            if finish_reason == "length":
-                empty_content = not raw.strip()
+            response_metadata = {
+                "finish_reason": finish_reason,
+                "content_type": content_type,
+                "content_length": len(raw),
+                "reasoning_content_length": len(reasoning_content),
+                "completion_tokens": completion_tokens,
+                "reasoning_tokens": reasoning_tokens,
+                "response_length": response_length,
+            }
+            if not raw.strip():
                 raise LLMProviderError(
-                    code="llm_empty_content_exhausted" if empty_content else "llm_response_truncated",
-                    message=(
-                        "AI 响应输出预算已耗尽，未产生最终正文。"
-                        if empty_content
-                        else "AI 响应达到输出上限，结果已截断。"
-                    ),
+                    code="llm_empty_content",
+                    message="AI 服务未产生最终正文。",
                     retryable=True,
                     http_status=response.status_code,
                     response_length=response_length,
-                    schema_error=(
-                        "finish_reason=length;content=empty"
-                        if empty_content
-                        else "finish_reason=length"
-                    ),
+                    schema_error=f"finish_reason={finish_reason or 'none'};content=empty",
                     content_length=len(raw),
                     reasoning_content_length=len(reasoning_content),
                     completion_tokens=completion_tokens,
                     reasoning_tokens=reasoning_tokens,
+                    finish_reason=finish_reason,
+                    content_type=content_type,
                 )
-            return raw, response.status_code, finish_reason
+            if finish_reason == "length":
+                raise LLMProviderError(
+                    code="llm_response_truncated",
+                    message="AI 响应达到输出上限，结果已截断。",
+                    retryable=True,
+                    http_status=response.status_code,
+                    response_length=response_length,
+                    schema_error="finish_reason=length",
+                    content_length=len(raw),
+                    reasoning_content_length=len(reasoning_content),
+                    completion_tokens=completion_tokens,
+                    reasoning_tokens=reasoning_tokens,
+                    finish_reason=finish_reason,
+                    content_type=content_type,
+                )
+            return raw, response.status_code, finish_reason, response_metadata
 
-        raw, http_status, finish_reason = await request_completion(
+        raw, http_status, finish_reason, response_metadata = await request_completion(
             [
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -438,15 +477,32 @@ class LLMProvider:
             attempt=attempt_label,
         )
         try:
-            return safe_parse_json_response(raw)
+            parsed, parser_repair_applied = _parse_json_response_with_metadata(raw)
+            logger.warning(
+                "viral_llm request_id=%s provider=%s model=%s attempt=%s outcome=parsed "
+                "http_status=%s finish_reason=%s content_type=%s content_length=%s parser_repair_applied=%s",
+                request_id,
+                provider_name,
+                model,
+                attempt_label,
+                http_status,
+                finish_reason,
+                response_metadata["content_type"],
+                response_metadata["content_length"],
+                parser_repair_applied,
+            )
+            return parsed
         except ValueError as initial_error:
             initial_schema_error = str(initial_error)[:300]
             logger.warning(
-                "viral_llm request_id=%s provider=%s model=%s attempt=initial outcome=parse_error http_status=%s content_length=%s finish_reason=%s schema_error=%r",
+                "viral_llm request_id=%s provider=%s model=%s attempt=initial outcome=parse_error "
+                "http_status=%s content_type=%s content_length=%s finish_reason=%s "
+                "parser_repair_applied=true schema_error=%r",
                 request_id,
                 provider_name,
                 model,
                 http_status,
+                response_metadata["content_type"],
                 len(raw),
                 finish_reason,
                 initial_schema_error,
@@ -454,15 +510,22 @@ class LLMProvider:
 
         if not allow_format_repair:
             raise LLMProviderError(
-                code="llm_json_contract_error",
+                code="llm_json_parse_error",
                 message="AI 响应不符合 JSON 契约。",
                 retryable=False,
                 http_status=http_status,
                 response_length=len(raw),
                 schema_error=initial_schema_error,
+                content_length=response_metadata["content_length"],
+                reasoning_content_length=response_metadata["reasoning_content_length"],
+                completion_tokens=response_metadata["completion_tokens"],
+                reasoning_tokens=response_metadata["reasoning_tokens"],
+                finish_reason=finish_reason,
+                content_type=response_metadata["content_type"],
+                parser_repair_applied=True,
             )
 
-        repaired_raw, repaired_status, repaired_finish = await request_completion(
+        repaired_raw, repaired_status, repaired_finish, repaired_metadata = await request_completion(
             [
                 {
                     "role": "system",
@@ -473,7 +536,8 @@ class LLMProvider:
             attempt=f"{attempt_label}_format_repair",
         )
         try:
-            return safe_parse_json_response(repaired_raw)
+            repaired, _repair_applied = _parse_json_response_with_metadata(repaired_raw)
+            return repaired
         except ValueError as repair_error:
             schema_error = str(repair_error)[:300]
             logger.warning(
@@ -493,6 +557,13 @@ class LLMProvider:
                 http_status=repaired_status,
                 response_length=len(repaired_raw),
                 schema_error=schema_error,
+                content_length=repaired_metadata["content_length"],
+                reasoning_content_length=repaired_metadata["reasoning_content_length"],
+                completion_tokens=repaired_metadata["completion_tokens"],
+                reasoning_tokens=repaired_metadata["reasoning_tokens"],
+                finish_reason=repaired_finish,
+                content_type=repaired_metadata["content_type"],
+                parser_repair_applied=True,
             ) from repair_error
 
     def _mock(self, payload: dict[str, Any]) -> dict[str, Any]:
