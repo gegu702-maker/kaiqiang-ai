@@ -104,6 +104,7 @@ MAX_REQUESTED_ADDITIONAL_CJK_CHARS = 1800
 MAX_SUPPLEMENT_RESPONSE_TOKENS = 8000
 MAX_SOURCE_CONSTRAINED_LLM_CALLS = 9
 MIN_SOURCE_FACT_COVERAGE_RATE = 0.35
+MAX_VARIANT_SIMILARITY = 0.75
 SOURCE_INITIAL_CONCURRENCY = 2
 SOURCE_INITIAL_MAX_NETWORK_RETRIES = 1
 SOURCE_INITIAL_MAX_EXHAUSTION_REGENERATIONS = 1
@@ -324,76 +325,44 @@ def _source_backed_scaffold(
     target_center_chars: int,
     maximum_chars: int,
 ) -> str:
-    """Build a bounded fallback from unique source sentences plus neutral framing."""
+    """Build one bounded primary fallback from unique source sentences only."""
+    _ = index
     facts = [
         {**fact, "_source_order": order}
         for order, fact in enumerate(source_fact_ledger.get("facts") or [])
         if isinstance(fact, dict) and str(fact.get("evidence") or "").strip()
     ]
-    category_orders = (
-        (),
-        ("风险边界", "自购与ETF", "回购及限定条件", "机构及表态", "中报和产业链", "外资观点", "其他来源事实"),
-        ("中报和产业链", "机构及表态", "自购与ETF", "回购及限定条件", "外资观点", "风险边界", "其他来源事实"),
-    )
-    if index:
-        priority = {
-            category: order
-            for order, category in enumerate(category_orders[index % len(category_orders)])
-        }
-        facts.sort(
-            key=lambda item: (
-                priority.get(str(item.get("category") or ""), len(priority)),
-                item["_source_order"],
-            )
-        )
-
-    framing = (
-        (
-            "先别急着把这些信号直接当成结论。下面只按来源信息逐项核对。",
-            "所以，先核对证据和限定条件，再形成判断。",
-        ),
-        (
-            "对普通用户来说，最重要的是别跟着单一信号下结论，而要逐项核对来源。",
-            "把事实、条件和风险放在一起看，才能避免被短期情绪带着走。",
-        ),
-        (
-            "从信息分析与内容表达角度，可以把来源中的不同信号拆开，再重新组织。",
-            "表达时把事实、条件和风险分开，结论就不会跑在证据前面。",
-        ),
-    )[index % 3]
-    prefix, suffix = (_with_sentence_end(item) for item in framing)
     selected: list[str] = []
     seen: set[str] = set()
-    suffix_chars = _cjk_len(suffix)
-    current_chars = _cjk_len(prefix)
+    current_chars = 0
     for fact in facts:
         evidence = _with_sentence_end(str(fact.get("evidence") or ""))
         normalized = _normalize_for_similarity(evidence)
         if not normalized or normalized in seen:
             continue
-        candidate_chars = current_chars + _cjk_len(evidence) + suffix_chars
+        candidate_chars = current_chars + _cjk_len(evidence)
         if candidate_chars > maximum_chars:
             continue
         seen.add(normalized)
         selected.append(evidence)
         current_chars += _cjk_len(evidence)
-        if current_chars + suffix_chars >= target_center_chars:
+        if current_chars >= target_center_chars:
             break
 
-    if current_chars + suffix_chars < minimum_chars:
+    if current_chars < minimum_chars:
         for fact in facts:
             evidence = _with_sentence_end(str(fact.get("evidence") or ""))
             normalized = _normalize_for_similarity(evidence)
             if not normalized or normalized in seen:
                 continue
-            if current_chars + _cjk_len(evidence) + suffix_chars > maximum_chars:
+            if current_chars + _cjk_len(evidence) > maximum_chars:
                 continue
             seen.add(normalized)
             selected.append(evidence)
             current_chars += _cjk_len(evidence)
-            if current_chars + suffix_chars >= minimum_chars:
+            if current_chars >= minimum_chars:
                 break
-    return f"{prefix}{''.join(selected)}{suffix}".strip()
+    return "".join(selected).strip()
 
 
 def sanitize_rewrite_script(script: str) -> str:
@@ -451,6 +420,25 @@ def rewrite_similarity(left: str, right: str) -> float:
     if not a or not b:
         return 0.0
     return SequenceMatcher(None, a, b).ratio()
+
+
+def _variant_fact_subset(
+    source_fact_ledger: dict[str, Any],
+    index: int,
+) -> list[dict[str, Any]]:
+    category_priorities = (
+        ("机构及表态", "回购及限定条件", "自购与ETF", "风险边界"),
+        ("回购及限定条件", "自购与ETF", "中报和产业链", "风险边界"),
+        ("中报和产业链", "外资观点", "机构及表态", "风险边界"),
+    )
+    priorities = category_priorities[index % len(category_priorities)]
+    facts = [
+        fact
+        for fact in (source_fact_ledger.get("facts") or [])
+        if isinstance(fact, dict)
+    ]
+    selected = [fact for fact in facts if str(fact.get("category") or "") in priorities]
+    return selected or facts
 
 
 def _strategy_for_index(index: int) -> dict[str, str]:
@@ -991,6 +979,8 @@ async def analyze_viral_script(
     llm_budget = _LLMCallBudget(MAX_SOURCE_CONSTRAINED_LLM_CALLS)
     llm_call_count = 0
     independent_initial_results: list[dict[str, Any]] = []
+    all_initial_variants_failed = False
+    initial_generation_failures: list[dict[str, Any]] = []
     version_states: list[dict[str, Any]] = []
     active_initial_calls = 0
     maximum_initial_concurrency = 0
@@ -1334,34 +1324,27 @@ async def analyze_viral_script(
             for index, value in enumerate(generated)
             if isinstance(value, BaseException)
         ]
-        if failures:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "code": "analysis_independent_generation_failed",
-                    "stage": "independent_initial",
-                    "message": "独立版本生成未全部完成。",
-                    "retryable": any(item["retryable"] for item in failures),
-                    "failed_versions": failures,
-                    "succeeded_versions": [
-                        state["index"]
-                        for state in version_states
-                        if state["state"] == "succeeded"
-                    ],
-                    "version_states": version_states,
-                    "stage_timings": stage_timings,
-                    "llm_call_count": llm_call_count,
-                    "maximum_observed_concurrency": maximum_initial_concurrency,
-                    "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
-                },
-            )
-        independent_initial_results = [value[0] for value in generated if not isinstance(value, BaseException)]
-        initial_variant_elapsed = [value[1] for value in generated if not isinstance(value, BaseException)]
+        initial_generation_failures = failures
+        independent_initial_results = [
+            value[0] for value in generated if not isinstance(value, BaseException)
+        ]
+        all_initial_variants_failed = not independent_initial_results
+        initial_variant_elapsed = [
+            value[1] for value in generated if not isinstance(value, BaseException)
+        ]
         stage_timings[-1]["variant_elapsed_ms"] = initial_variant_elapsed
-        first_analysis = independent_initial_results[0].get("analysis")
-        data = first_analysis if isinstance(first_analysis, dict) else independent_initial_results[0]
+        first_success = independent_initial_results[0] if independent_initial_results else {}
+        first_analysis = first_success.get("analysis")
+        data = first_analysis if isinstance(first_analysis, dict) else first_success
+        if not data:
+            data = dict(fallback_text)
         independent_rewrites: list[dict[str, Any]] = []
-        for index, response in enumerate(independent_initial_results):
+        for index, generated_value in enumerate(generated):
+            response = (
+                generated_value[0]
+                if not isinstance(generated_value, BaseException)
+                else {}
+            )
             rewrite = response.get("rewrite")
             if not isinstance(rewrite, dict):
                 legacy_rewrites = response.get("rewrites")
@@ -1383,30 +1366,22 @@ async def analyze_viral_script(
                     "title": REWRITE_STRATEGIES[index]["title"],
                     "script": script,
                     "used_source_fact_ids": list(dict.fromkeys(used_ids)),
+                    "provenance": "independent_initial",
                 }
             )
-        invalid_initial_versions = [
-            index
-            for index, rewrite in enumerate(independent_rewrites)
-            if not rewrite["script"]
-        ]
-        if invalid_initial_versions:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "code": "analysis_independent_generation_failed",
-                    "stage": "independent_initial",
-                    "message": "独立版本生成返回字段不完整。",
-                    "retryable": True,
-                    "failed_versions": [
-                        {"index": index, "error_type": "missing_rewrite_script"}
-                        for index in invalid_initial_versions
-                    ],
-                    "stage_timings": stage_timings,
-                    "llm_call_count": llm_call_count,
-                    "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
-                },
-            )
+        if not independent_initial_results:
+            independent_rewrites[0] = {
+                "title": REWRITE_STRATEGIES[0]["title"],
+                "script": _source_backed_scaffold(
+                    source_fact_ledger=source_fact_ledger,
+                    index=0,
+                    minimum_chars=minimum_chars,
+                    target_center_chars=target_center_chars,
+                    maximum_chars=maximum_chars,
+                ),
+                "used_source_fact_ids": [],
+                "provenance": "deterministic_scaffold",
+            }
         data = {**data, "rewrites": independent_rewrites, "_independent_rewrites": independent_rewrites}
     else:
         initial_started = time.perf_counter()
@@ -1475,7 +1450,11 @@ async def analyze_viral_script(
     )
     # Retained for non-independent legacy callers only. Full-content requests
     # now use source-constrained repair after fact review, never free expansion.
-    if source_scope == "full_content" and not independent_initial_results:
+    if (
+        source_scope == "full_content"
+        and not independent_initial_results
+        and not all_initial_variants_failed
+    ):
         overlong_indexes = [
             index for index, actual_chars in enumerate(normalized_lengths) if actual_chars > maximum_chars
         ]
@@ -1731,9 +1710,13 @@ async def analyze_viral_script(
         unsupported_hard_facts(raw_script, rewrite["script"])
         for rewrite in result["rewrites"]
     ]
-    requires_fact_review = source_scope == "full_content"
+    requires_fact_review = (
+        source_scope == "full_content"
+        and not all_initial_variants_failed
+        and not initial_generation_failures
+    )
     invalid_lengths = [length for length in normalized_lengths if length < minimum_rewrite_chars or length > maximum_chars]
-    if invalid_lengths and not requires_fact_review:
+    if invalid_lengths and source_scope != "full_content":
         actual_chars_text = " / ".join(str(length) for length in normalized_lengths)
         raise HTTPException(
             status_code=502,
@@ -1769,6 +1752,16 @@ async def analyze_viral_script(
         "removed_claims": [],
         "unsupported_remaining": [],
     }
+    minimum_fact_coverage_count = min(
+        source_fact_ledger.get("fact_count", 0),
+        max(
+            1,
+            math.ceil(
+                source_fact_ledger.get("fact_count", 0)
+                * MIN_SOURCE_FACT_COVERAGE_RATE
+            ),
+        ),
+    )
     fact_fidelity_diagnostic["required"] = requires_fact_review
     fact_fidelity_diagnostic["hard_violations_before"] = hard_violations_before
 
@@ -1908,6 +1901,12 @@ async def analyze_viral_script(
                     **rewrite,
                     "script": audited_script,
                     "used_source_fact_ids": list(dict.fromkeys(reviewed_ids)),
+                    "provenance": (
+                        "fact_review"
+                        if _normalize_for_similarity(audited_script)
+                        != _normalize_for_similarity(str(rewrite.get("script") or ""))
+                        else rewrite.get("provenance", "independent_initial")
+                    ),
                 }
             )
             claims = review.get("removed_unsupported_claims")
@@ -1976,10 +1975,6 @@ async def analyze_viral_script(
             length for length in normalized_lengths
             if length < minimum_rewrite_chars or length > maximum_chars
         ]
-        minimum_fact_coverage_count = min(
-            source_fact_ledger["fact_count"],
-            max(1, math.ceil(source_fact_ledger["fact_count"] * MIN_SOURCE_FACT_COVERAGE_RATE)),
-        )
         repair_indexes = [
             index
             for index, length in enumerate(normalized_lengths)
@@ -2125,6 +2120,11 @@ async def analyze_viral_script(
                     **repaired_rewrites[index],
                     "script": repaired_script or repaired_rewrites[index]["script"],
                     "used_source_fact_ids": list(dict.fromkeys(repaired_ids)),
+                    "provenance": (
+                        "source_constrained_repair"
+                        if repaired_script
+                        else repaired_rewrites[index].get("provenance", "fact_review")
+                    ),
                 }
                 repair_diagnostics.append(
                     {
@@ -2343,48 +2343,27 @@ async def analyze_viral_script(
                 applied_script = reconstructed_script
                 applied_mapping = reconstructed_mapping
                 if not reconstruction_valid:
-                    scaffold = _source_backed_scaffold(
-                        source_fact_ledger=source_fact_ledger,
-                        index=index,
-                        minimum_chars=minimum_rewrite_chars,
-                        target_center_chars=target_center_chars,
-                        maximum_chars=maximum_chars,
-                    )
-                    scaffold_mapping = map_source_fact_coverage(
+                    outcome = "failed"
+                    reconstruction_failed_indexes.append(index)
+                    applied_script = reconstructed_rewrites[index]["script"]
+                    applied_mapping = map_source_fact_coverage(
                         source_fact_ledger,
-                        scaffold,
-                        claimed_fact_ids=[],
+                        applied_script,
+                        claimed_fact_ids=list(
+                            reconstructed_rewrites[index].get("used_source_fact_ids") or []
+                        ),
                     )
-                    scaffold_valid = (
-                        minimum_rewrite_chars <= _cjk_len(scaffold) <= maximum_chars
-                        and not scaffold_mapping["unsupported_spans"]
-                        and not _repeated_sentence_spans(scaffold)
-                        and scaffold.rstrip().endswith(tuple("。！？!?"))
-                    )
-                    if scaffold_valid:
-                        outcome = "source_scaffold"
-                        applied_script = scaffold
-                        applied_mapping = scaffold_mapping
-                    else:
-                        outcome = "failed"
-                        reconstruction_failed_indexes.append(index)
-                        applied_script = reconstructed_rewrites[index]["script"]
-                        applied_mapping = map_source_fact_coverage(
-                            source_fact_ledger,
-                            applied_script,
-                            claimed_fact_ids=list(
-                                reconstructed_rewrites[index].get(
-                                    "used_source_fact_ids"
-                                )
-                                or []
-                            ),
-                        )
 
                 reconstructed_rewrites[index] = {
                     **reconstructed_rewrites[index],
                     "script": applied_script,
                     "used_source_fact_ids": list(
                         applied_mapping["directly_supported_fact_ids"]
+                    ),
+                    "provenance": (
+                        "final_source_reconstruction"
+                        if outcome == "reconstructed"
+                        else reconstructed_rewrites[index].get("provenance", "source_constrained_repair")
                     ),
                 }
                 final_reconstruction_diagnostics.append(
@@ -2479,58 +2458,14 @@ async def analyze_viral_script(
                 MAX_SOURCE_CONSTRAINED_LLM_CALLS,
             )
 
-        final_invalid_indexes = [
-            index
-            for index, length in enumerate(normalized_lengths)
-            if length < minimum_rewrite_chars or length > maximum_chars
-        ]
-        final_insufficient_coverage_indexes = [
-            index
-            for index, mapping in enumerate(verified_fact_coverage)
-            if len(mapping["directly_supported_fact_ids"])
-            < minimum_fact_coverage_count
-        ]
-        if (
-            final_invalid_indexes
-            or any(hard_violations_after)
-            or repair_failed_indexes
-            or llm_call_count > MAX_SOURCE_CONSTRAINED_LLM_CALLS
-        ):
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "code": "analysis_fact_fidelity_failed",
-                    "stage": (
-                        "final_source_reconstruction"
-                        if final_reconstruction_indexes
-                        else "source_constrained_repair"
-                        if repair_indexes
-                        else "fact_review"
-                    ),
-                    "message": "来源约束修复后仍存在无来源事实或长度不合格。",
-                    "retryable": (
-                        False
-                        if final_reconstruction_indexes
-                        else not bool(repair_failed_indexes)
-                    ),
-                    "actual_chars": normalized_lengths,
-                    "target_chars": minimum_rewrite_chars,
-                    "target_min_chars": minimum_rewrite_chars,
-                    "target_center_chars": target_center_chars,
-                    "maximum_chars": maximum_chars,
-                    "target_max_chars": maximum_chars,
-                    "fact_fidelity": fact_fidelity_diagnostic,
-                    "minimum_source_fact_coverage_count": minimum_fact_coverage_count,
-                    "insufficient_source_fact_coverage_indexes": final_insufficient_coverage_indexes,
-                    "stage_timings": stage_timings,
-                    "llm_call_count": llm_call_count,
-                    "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
-                },
-            )
-
     source_fact_coverage: list[dict[str, Any]] = []
+    requested_count = FINAL_REWRITE_LIMIT
+    filtered_duplicate_count = 0
+    filtered_invalid_count = 0
+    similar_pairs: list[dict[str, Any]] = []
+    union_source_fact_coverage: dict[str, Any] = {}
     if source_scope == "full_content":
-        for index, rewrite in enumerate(result["rewrites"]):
+        def validate_candidate(index: int, rewrite: dict[str, Any]) -> dict[str, Any]:
             claimed_ids = list(
                 dict.fromkeys(rewrite.get("used_source_fact_ids") or [])
             )
@@ -2539,71 +2474,256 @@ async def analyze_viral_script(
                 rewrite["script"],
                 claimed_fact_ids=claimed_ids,
             )
-            directly_supported_ids = mapping["directly_supported_fact_ids"]
-            source_fact_coverage.append(
-                {
-                    "index": index,
-                    "model_claimed_fact_ids": claimed_ids,
-                    "directly_supported_fact_ids": directly_supported_ids,
-                    "used_source_fact_ids": directly_supported_ids,
-                    "uncertain_fact_ids": mapping["uncertain_fact_ids"],
-                    "unsupported_spans": mapping["unsupported_spans"],
-                    "unused_source_fact_ids": [
-                        fact_id
-                        for fact_id in source_fact_ledger["fact_ids"]
-                        if fact_id not in directly_supported_ids
-                    ],
-                    "used_count": len(directly_supported_ids),
-                    "total_count": source_fact_ledger["fact_count"],
-                    "coverage_rate": (
-                        round(
-                            len(directly_supported_ids)
-                            / source_fact_ledger["fact_count"],
-                            4,
-                        )
-                        if source_fact_ledger["fact_count"]
-                        else 0.0
-                    ),
-                }
+            script = str(rewrite.get("script") or "")
+            actual_chars = _cjk_len(script)
+            directly_supported_ids = list(mapping["directly_supported_fact_ids"])
+            hard_violations = unsupported_hard_facts(raw_script, script)
+            repeated = _repeated_sentence_spans(script)
+            coverage = {
+                "index": index,
+                "model_claimed_fact_ids": claimed_ids,
+                "directly_supported_fact_ids": directly_supported_ids,
+                "used_source_fact_ids": directly_supported_ids,
+                "uncertain_fact_ids": mapping["uncertain_fact_ids"],
+                "unsupported_spans": mapping["unsupported_spans"],
+                "unused_source_fact_ids": [
+                    fact_id
+                    for fact_id in source_fact_ledger["fact_ids"]
+                    if fact_id not in directly_supported_ids
+                ],
+                "used_count": len(directly_supported_ids),
+                "total_count": source_fact_ledger["fact_count"],
+                "coverage_rate": (
+                    round(len(directly_supported_ids) / source_fact_ledger["fact_count"], 4)
+                    if source_fact_ledger["fact_count"]
+                    else 0.0
+                ),
+            }
+            reasons = []
+            if not minimum_rewrite_chars <= actual_chars <= maximum_chars:
+                reasons.append("length")
+            if hard_violations:
+                reasons.append("hard_fact")
+            if mapping["unsupported_spans"]:
+                reasons.append("unsupported")
+            if len(directly_supported_ids) < minimum_fact_coverage_count:
+                reasons.append("source_fact_coverage")
+            if not script.rstrip().endswith(tuple("。！？!?")):
+                reasons.append("incomplete_ending")
+            if repeated:
+                reasons.append("internal_repetition")
+            return {
+                "index": index,
+                "rewrite": rewrite,
+                "actual_chars": actual_chars,
+                "coverage": coverage,
+                "hard_violations": hard_violations,
+                "repeated_spans": repeated,
+                "reasons": reasons,
+                "valid": not reasons,
+            }
+
+        candidate_diagnostics = [
+            validate_candidate(index, rewrite)
+            for index, rewrite in enumerate(result["rewrites"])
+        ]
+        valid_candidates = [item for item in candidate_diagnostics if item["valid"]]
+        filtered_invalid_count = len(candidate_diagnostics) - len(valid_candidates)
+
+        if not valid_candidates:
+            scaffold = _source_backed_scaffold(
+                source_fact_ledger=source_fact_ledger,
+                index=0,
+                minimum_chars=minimum_rewrite_chars,
+                target_center_chars=target_center_chars,
+                maximum_chars=maximum_chars,
             )
-        incomplete_endings = [
-            index
-            for index, rewrite in enumerate(result["rewrites"])
-            if not str(rewrite.get("script") or "").rstrip().endswith(tuple("。！？!?"))
-        ]
-        repeated_spans = [
-            {"index": index, "spans": _repeated_sentence_spans(rewrite["script"])}
-            for index, rewrite in enumerate(result["rewrites"])
-            if _repeated_sentence_spans(rewrite["script"])
-        ]
-        similar_pairs = []
-        for left in range(len(result["rewrites"])):
-            for right in range(left + 1, len(result["rewrites"])):
-                similarity = rewrite_similarity(
-                    result["rewrites"][left]["script"],
-                    result["rewrites"][right]["script"],
-                )
-                if similarity > 0.75:
-                    similar_pairs.append(
-                        {"left": left, "right": right, "similarity": round(similarity, 4)}
-                    )
-        if incomplete_endings or repeated_spans or similar_pairs:
+            scaffold_candidate = validate_candidate(
+                0,
+                {
+                    "title": REWRITE_STRATEGIES[0]["title"],
+                    "script": scaffold,
+                    "used_source_fact_ids": [],
+                    "provenance": "deterministic_scaffold",
+                },
+            )
+            if scaffold_candidate["valid"]:
+                valid_candidates = [scaffold_candidate]
+
+        if not valid_candidates:
             raise HTTPException(
                 status_code=502,
                 detail={
-                    "code": "analysis_joint_validation_failed",
-                    "stage": "final_joint_validation",
-                    "message": "最终联合校验未通过。",
+                    "code": "analysis_fact_fidelity_failed",
+                    "stage": "final_variant_validation",
+                    "message": "所有候选版本及主稿保底均未通过长度与事实校验。",
                     "retryable": False,
                     "actual_chars": normalized_lengths,
-                    "incomplete_endings": incomplete_endings,
-                    "repeated_spans": repeated_spans,
-                    "similar_pairs": similar_pairs,
-                    "source_fact_coverage": source_fact_coverage,
+                    "candidate_diagnostics": candidate_diagnostics,
+                    "minimum_source_fact_coverage_count": minimum_fact_coverage_count,
+                    "fact_fidelity": fact_fidelity_diagnostic,
                     "stage_timings": stage_timings,
                     "llm_call_count": llm_call_count,
+                    "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
                 },
             )
+
+        retained = [valid_candidates[0]]
+        primary_script = retained[0]["rewrite"]["script"]
+        for candidate in valid_candidates[1:]:
+            duplicate_similarity = max(
+                rewrite_similarity(candidate["rewrite"]["script"], item["rewrite"]["script"])
+                for item in retained
+            )
+            if duplicate_similarity <= MAX_VARIANT_SIMILARITY:
+                retained.append(candidate)
+                continue
+
+            diversified: dict[str, Any] | None = None
+            try:
+                call_number = await llm_budget.reserve()
+                diversification = await LLMProvider().generate_json(
+                    system=(
+                        "你是来源约束的差异化编辑。只重写当前重复版本；原始转写和来源事实账本"
+                        "是唯一事实来源。不得改写主版本，不得新增事实。只输出合法 JSON。"
+                    ),
+                    payload={
+                        "corrected_transcript": raw_script,
+                        "source_fact_ledger": source_fact_ledger,
+                        "primary_script": primary_script,
+                        "current_duplicate_variant": candidate["rewrite"],
+                        "variant_angle": variant_requirements[candidate["index"]],
+                        "preferred_source_facts": _variant_fact_subset(
+                            source_fact_ledger,
+                            candidate["index"],
+                        ),
+                        "forbidden_openings": [
+                            str(item["rewrite"]["script"])[:80]
+                            for item in retained
+                        ],
+                        "length_target": {
+                            "minimum_chars": minimum_rewrite_chars,
+                            "target_center_chars": target_center_chars,
+                            "maximum_chars": maximum_chars,
+                        },
+                        "requirements": [
+                            "改变叙事结构、受众问题和信息顺序，不得仅换标题、段落或连接词",
+                            "优先使用本角度 preferred_source_facts；不要求覆盖全部来源事实",
+                            f"至少覆盖 {minimum_fact_coverage_count} 条可直接支持的来源事实",
+                            "不得新增数字、机构、时间、案例、指标、结论或确定性因果",
+                            f"正文必须为 {minimum_rewrite_chars}–{maximum_chars} CJK，句尾完整且内部不重复",
+                            "used_source_fact_ids 只列正文实际表达的事实 ID",
+                        ],
+                        "schema": {
+                            "diversified_script": "差异化后的完整口播正文",
+                            "used_source_fact_ids": ["正文实际表达的来源事实 ID"],
+                        },
+                    },
+                    max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                    attempt_label=f"targeted_diversification_{candidate['index']}_call_{call_number}",
+                    max_transport_attempts=1,
+                    allow_format_repair=False,
+                    thinking_mode="disabled",
+                )
+                diversified_script = smooth_spoken_script(
+                    str(diversification.get("diversified_script") or "")
+                )
+                diversified_candidate = validate_candidate(
+                    candidate["index"],
+                    {
+                        **candidate["rewrite"],
+                        "script": diversified_script,
+                        "used_source_fact_ids": list(
+                            dict.fromkeys(diversification.get("used_source_fact_ids") or [])
+                        ),
+                        "provenance": "targeted_diversification",
+                    },
+                )
+                if diversified_candidate["valid"] and all(
+                    rewrite_similarity(
+                        diversified_candidate["rewrite"]["script"],
+                        item["rewrite"]["script"],
+                    )
+                    <= MAX_VARIANT_SIMILARITY
+                    for item in retained
+                ):
+                    diversified = diversified_candidate
+            except (LLMProviderError, _LLMCallBudgetExceeded):
+                diversified = None
+            except Exception as error:
+                logger.warning(
+                    "viral_targeted_diversification request_id=%s index=%s outcome=failed error_type=%s",
+                    current_request_id(),
+                    candidate["index"],
+                    type(error).__name__,
+                )
+                diversified = None
+
+            if diversified is not None:
+                retained.append(diversified)
+            else:
+                filtered_duplicate_count += 1
+                similar_pairs.append(
+                    {
+                        "left": retained[0]["index"],
+                        "right": candidate["index"],
+                        "similarity": round(duplicate_similarity, 4),
+                    }
+                )
+
+        primary_script = retained[0]["rewrite"]["script"]
+        finalized_rewrites = []
+        source_fact_coverage = []
+        union_fact_ids: list[str] = []
+        for output_index, candidate in enumerate(retained):
+            coverage = {**candidate["coverage"], "index": output_index}
+            source_fact_coverage.append(coverage)
+            union_fact_ids.extend(coverage["directly_supported_fact_ids"])
+            rewrite = candidate["rewrite"]
+            finalized_rewrites.append(
+                {
+                    **rewrite,
+                    "angle": variant_requirements[candidate["index"]],
+                    "actual_chars": candidate["actual_chars"],
+                    "source_fact_coverage": coverage,
+                    "provenance": rewrite.get("provenance", "independent_initial"),
+                    "similarity_to_primary": (
+                        0.0
+                        if output_index == 0
+                        else round(rewrite_similarity(primary_script, rewrite["script"]), 4)
+                    ),
+                    "fact_fidelity": {
+                        "hard_violations": candidate["hard_violations"],
+                        "unsupported_spans": coverage["unsupported_spans"],
+                        "valid": True,
+                    },
+                }
+            )
+        result = {**result, "rewrites": finalized_rewrites}
+        normalized_lengths = [item["actual_chars"] for item in finalized_rewrites]
+        union_ids = list(dict.fromkeys(union_fact_ids))
+        union_source_fact_coverage = {
+            "directly_supported_fact_ids": union_ids,
+            "used_count": len(union_ids),
+            "total_count": source_fact_ledger["fact_count"],
+            "coverage_rate": (
+                round(len(union_ids) / source_fact_ledger["fact_count"], 4)
+                if source_fact_ledger["fact_count"]
+                else 0.0
+            ),
+        }
+        llm_call_count = llm_budget.used_calls
+
+    generated_count = len(result["rewrites"])
+    degraded = generated_count < requested_count
+    degradation_reason = ""
+    if degraded:
+        if filtered_duplicate_count and generated_count == 1:
+            degradation_reason = "其他角度与主稿过于相似，已过滤"
+        elif filtered_duplicate_count:
+            degradation_reason = f"已过滤{filtered_duplicate_count}条高度相似版本"
+        else:
+            degradation_reason = f"已过滤{filtered_invalid_count}条未通过质量校验的版本"
 
     try:
         supabase.table("viral_analyses").insert(
@@ -2638,6 +2758,14 @@ async def analyze_viral_script(
 
     return {
         **result,
+        "generated_count": generated_count,
+        "requested_count": requested_count,
+        "filtered_duplicate_count": filtered_duplicate_count,
+        "filtered_invalid_count": filtered_invalid_count,
+        "degraded": degraded,
+        "degradation_reason": degradation_reason,
+        "variants": result["rewrites"],
+        "union_source_fact_coverage": union_source_fact_coverage,
         "quota": {**quota, "used": quota["used"] + 1},
         "diagnostic": {
             "actual_chars": normalized_lengths,
@@ -2648,6 +2776,12 @@ async def analyze_viral_script(
             "length_repair_rounds": length_repair_rounds,
             "fact_fidelity": fact_fidelity_diagnostic,
             "source_fact_coverage": source_fact_coverage,
+            "union_source_fact_coverage": union_source_fact_coverage,
+            "similar_pairs": similar_pairs,
+            "generated_count": generated_count,
+            "requested_count": requested_count,
+            "filtered_duplicate_count": filtered_duplicate_count,
+            "filtered_invalid_count": filtered_invalid_count,
             "stage_timings": stage_timings,
             "llm_call_count": llm_call_count,
             "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
@@ -2669,6 +2803,12 @@ async def analyze_viral_script(
             "length_repair_rounds": length_repair_rounds,
             "fact_fidelity": fact_fidelity_diagnostic,
             "source_fact_coverage": source_fact_coverage,
+            "union_source_fact_coverage": union_source_fact_coverage,
+            "similar_pairs": similar_pairs,
+            "generated_count": generated_count,
+            "requested_count": requested_count,
+            "filtered_duplicate_count": filtered_duplicate_count,
+            "filtered_invalid_count": filtered_invalid_count,
             "stage_timings": stage_timings,
             "llm_call_count": llm_call_count,
             "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,

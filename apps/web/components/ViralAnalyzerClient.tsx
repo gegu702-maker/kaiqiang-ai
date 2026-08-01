@@ -180,6 +180,13 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
     cases: payload.analysis.cases,
     data_points: payload.analysis.data_points,
     rewrites: payload.rewrites,
+    variants: payload.rewrites,
+    generated_count: payload.generated_count ?? payload.rewrites.length,
+    requested_count: payload.requested_count ?? 3,
+    filtered_duplicate_count: payload.filtered_duplicate_count ?? 0,
+    filtered_invalid_count: payload.filtered_invalid_count ?? 0,
+    degraded: payload.degraded,
+    degradation_reason: payload.degradation_reason,
     diagnostic: payload.diagnostics?.rewrite_actual_chars?.length
       ? {
           actual_chars: payload.diagnostics.rewrite_actual_chars,
@@ -195,6 +202,10 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
           exact_duration_match: payload.diagnostics.exact_duration_match,
           length_unit: "cjk_chars",
           length_repair_rounds: payload.diagnostics.length_repair_rounds,
+          generated_count: payload.generated_count ?? payload.rewrites.length,
+          requested_count: payload.requested_count ?? 3,
+          filtered_duplicate_count: payload.filtered_duplicate_count ?? 0,
+          filtered_invalid_count: payload.filtered_invalid_count ?? 0,
         }
       : undefined,
   };
@@ -860,6 +871,15 @@ export function ViralAnalyzerClient({
                       {result.diagnostic?.target_chars ? `；目标：${result.diagnostic.target_chars}–${result.diagnostic.maximum_chars}` : ""}
                     </p>
                   ) : null}
+                </div>
+              ) : null}
+              {result.degraded ? (
+                <div className="rounded-lg border border-amber-300/25 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100" role="status">
+                  <p>{result.degradation_reason || "部分可选角度未通过质量校验，已返回可靠稿件。"}</p>
+                  <p className="mt-1 text-xs text-amber-100/80">
+                    已生成 {result.generated_count ?? result.rewrites.length} / {result.requested_count ?? 3} 条；
+                    过滤重复 {result.filtered_duplicate_count ?? 0} 条；过滤无效 {result.filtered_invalid_count ?? 0} 条。
+                  </p>
                 </div>
               ) : null}
               <ResultCard title={t.topic}>{result.topic}</ResultCard>

@@ -242,6 +242,22 @@ export type ViralLengthMode = "match_source" | "concise" | "moderate_expand";
 export type ViralRewrite = {
   title: string;
   script: string;
+  angle?: string;
+  actual_chars?: number;
+  provenance?: string;
+  similarity_to_primary?: number;
+  source_fact_coverage?: {
+    directly_supported_fact_ids: string[];
+    used_count: number;
+    total_count: number;
+    coverage_rate: number;
+    unsupported_spans?: Array<{ span: string; reason: string }>;
+  };
+  fact_fidelity?: {
+    hard_violations: unknown[];
+    unsupported_spans: unknown[];
+    valid: boolean;
+  };
 };
 
 export type ViralLengthRepairRound = {
@@ -271,6 +287,13 @@ export type ViralAnalyzeResult = {
   structure: string[];
   template: string;
   rewrites: ViralRewrite[];
+  variants?: ViralRewrite[];
+  generated_count?: number;
+  requested_count?: number;
+  filtered_duplicate_count?: number;
+  filtered_invalid_count?: number;
+  degraded?: boolean;
+  degradation_reason?: string;
   core_points?: string[];
   arguments?: string[];
   cases?: string[];
@@ -294,6 +317,10 @@ export type ViralAnalyzeResult = {
     exact_duration_match?: boolean;
     length_unit: "cjk_chars";
     length_repair_rounds?: ViralLengthRepairRound[];
+    generated_count?: number;
+    requested_count?: number;
+    filtered_duplicate_count?: number;
+    filtered_invalid_count?: number;
   };
   diagnostics?: {
     prompt_input_chars?: number;
@@ -391,6 +418,11 @@ export type ViralPipelineResult = {
     data_points?: string[];
   } | null;
   rewrites: ViralRewrite[];
+  generated_count?: number;
+  requested_count?: number;
+  filtered_duplicate_count?: number;
+  filtered_invalid_count?: number;
+  degradation_reason?: string;
   metadata: ViralPipelineMetadata;
   source_type?: "video_asr" | "link_metadata_fallback" | string;
   analysis_quality?: "full" | "partial" | string;

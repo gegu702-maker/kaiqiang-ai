@@ -860,6 +860,65 @@ def test_manual_text_entry_binds_and_returns_structured_request_id(monkeypatch, 
     assert viral_diagnostics.current_request_id() == ""
 
 
+def test_manual_degraded_success_is_returned_normally_with_one_variant(monkeypatch):
+    async def fake_analyze(*_args, **_kwargs):
+        rewrite = {"title": "版本A：热点反差版", "script": "可靠主稿。"}
+        return {
+            **_analysis(1000),
+            "rewrites": [rewrite],
+            "variants": [rewrite],
+            "generated_count": 1,
+            "requested_count": 3,
+            "filtered_duplicate_count": 2,
+            "filtered_invalid_count": 0,
+            "degraded": True,
+            "degradation_reason": "其他角度与主稿过于相似，已过滤",
+            "diagnostic": {
+                "actual_chars": [700],
+                "target_chars": 674,
+                "maximum_chars": 824,
+                "length_unit": "cjk_chars",
+            },
+        }
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+    monkeypatch.setattr(viral_api, "analyze_viral_script", fake_analyze)
+    result = asyncio.run(
+        viral_api.analyze_viral(
+            payload=viral_api.ViralAnalyzeRequest(
+                raw_script="完整财经文本",
+                industry="knowledge",
+                language="zh",
+                rewrite_length="match_source",
+            ),
+            token="token",
+            supabase=_Supabase(),
+        )
+    )
+
+    assert result["generated_count"] == 1
+    assert len(result["rewrites"]) == 1
+    assert result["degraded"] is True
+    assert result["filtered_duplicate_count"] == 2
+
+
+def test_frontend_renders_actual_variant_count_and_non_blocking_degradation_notice():
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "web"
+        / "components"
+        / "ViralAnalyzerClient.tsx"
+    ).read_text(encoding="utf-8")
+    assert "result.rewrites.map((rewrite, index)" in source
+    assert "已生成 {result.generated_count ?? result.rewrites.length}" in source
+    assert 'role="status"' in source
+    assert "result.degradation_reason" in source
+    assert "copyScript(rewrite.script, index)" in source
+    assert "copyOptimizedScript(rewrite.script, index)" in source
+    assert "handleUseScript(rewrite)" in source
+    assert ".fill(" not in source[source.index("result.rewrites.map") :]
+
+
 def test_manual_text_same_submission_concurrently_calls_analyzer_once(monkeypatch):
     viral_analysis_idempotency.clear()
     calls = 0

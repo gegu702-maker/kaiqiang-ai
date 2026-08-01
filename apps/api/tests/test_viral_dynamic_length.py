@@ -109,6 +109,16 @@ def _prepare(monkeypatch, fake_generate):
     )
     monkeypatch.setattr(viral_analyzer.LLMProvider, "generate_json", fake_generate)
     monkeypatch.setattr(viral_analyzer, "validate_viral_analysis_payload", _preserve)
+    monkeypatch.setattr(
+        viral_analyzer,
+        "map_source_fact_coverage",
+        lambda ledger, _script, **_kwargs: {
+            "directly_supported_fact_ids": ledger["fact_ids"][:8],
+            "uncertain_fact_ids": [],
+            "unsupported_spans": [],
+        },
+    )
+    monkeypatch.setattr(viral_analyzer, "unsupported_hard_facts", lambda *_args: [])
 
 
 def _run(*, raw_script="源" * 749, rewrite_length="match_source", seconds=167.6):
@@ -288,10 +298,12 @@ def test_empty_or_missing_repair_fields_use_deterministic_source_scaffold(monkey
         "final_source_reconstruction"
     ]
     assert [item["outcome"] for item in reconstructions] == [
-        "source_scaffold",
-        "source_scaffold",
-        "source_scaffold",
+        "failed",
+        "failed",
+        "failed",
     ]
+    assert result["generated_count"] == 1
+    assert result["rewrites"][0]["provenance"] == "deterministic_scaffold"
     assert result["diagnostic"]["fact_fidelity"]["hard_violations_after"] == [
         [],
         [],
