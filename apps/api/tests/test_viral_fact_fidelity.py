@@ -395,6 +395,7 @@ def test_fact_review_cannot_hide_a_fabricated_case_by_only_removing_its_number(m
 
 
 def test_source_constrained_repair_restores_range_after_fact_review_is_short(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = []
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -476,6 +477,7 @@ def test_independent_generation_repairs_b_and_c_when_they_return_only_120_chars(
 
 
 def test_b_unsourced_yoy_and_consecutive_quarters_are_replaced_with_source_fact(monkeypatch):
+    _mock_source_coverage(monkeypatch, patch_hard_facts=False)
     calls = []
     initial_scripts = [
         _sized("热点反差", "甲", 700),
@@ -655,6 +657,14 @@ def test_model_claimed_fact_ids_are_not_treated_as_direct_text_evidence():
     assert mapping["uncertain_fact_ids"] == ledger["fact_ids"]
 
 
+def test_reusable_template_does_not_expose_many_ellipsis_placeholders():
+    payload = _analysis([_sized("反差", "甲", 700)] * 3)
+    payload["template"] = "先说……再说……然后……最后……"
+    result = viral_analyzer.validate_viral_analysis_payload(payload, language="zh")
+    assert result["template"] == "开头钩子 + 问题放大 + 信息价值 + 行动号召"
+    assert "……" not in result["template"]
+
+
 def test_source_scaffold_is_one_bounded_source_only_primary_fallback():
     ledger = build_source_fact_ledger(FINANCE_FIXTURE)
     scaffolds = [
@@ -674,6 +684,169 @@ def test_source_scaffold_is_one_bounded_source_only_primary_fallback():
     assert "下面只按来源信息逐项核对" not in scaffolds[0]
 
 
+def _natural_sized_script(marker: str, length: int) -> str:
+    remaining = length
+    sentences = []
+    labels = ("第一部分", "第二部分", "第三部分", "第四部分", "第五部分", "第六部分", "第七部分", "第八部分", "第九部分")
+    index = 0
+    while remaining:
+        chunk_length = min(90, remaining)
+        label = labels[index % len(labels)]
+        prefix = label[:chunk_length]
+        sentences.append(prefix + marker * (chunk_length - viral_analyzer._cjk_len(prefix)) + "。")
+        remaining -= chunk_length
+        index += 1
+    return "".join(sentences)
+
+
+def test_real_failure_shape_prioritizes_one_primary_before_optional_variants(monkeypatch):
+    _mock_source_coverage(monkeypatch)
+    calls = []
+    primary_attempt = 0
+    initial_lengths = [549, 449, 550]
+    reviewed_lengths = [515, 459, 525]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        nonlocal primary_attempt
+        if "variant_task" in payload:
+            calls.append(("initial", payload["variant_task"]["index"]))
+            scripts = [
+                _sized("反差", "甲", initial_lengths[0]),
+                _sized("痛点", "乙", initial_lengths[1]),
+                _sized("表达", "丙", initial_lengths[2]),
+            ]
+            return _initial_variant(payload, scripts)
+        if "current_rewrites" in payload:
+            calls.append(("review", None))
+            return {
+                "reviews": [
+                    {
+                        "index": index,
+                        "audited_script": _sized(
+                            ("反差", "痛点", "表达")[index],
+                            ("甲", "乙", "丙")[index],
+                            reviewed_lengths[index],
+                        ),
+                        "removed_unsupported_claims": [],
+                        "unsupported_spans": [],
+                        "unsupported_remaining": False,
+                        "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+                    }
+                    for index in range(3)
+                ]
+            }
+        if payload.get("primary_convergence"):
+            primary_attempt += 1
+            calls.append(("primary", payload["variant"]["index"]))
+            length = 574 if primary_attempt == 1 else 780
+            return {
+                "title": "收敛主稿",
+                "script": _sized("表达", "丙", length),
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+            }
+        if "current_script" in payload:
+            index = payload["variant"]["index"]
+            calls.append(("optional", index))
+            return {
+                "repaired_script": _sized(("反差", "痛点")[index], ("甲", "乙")[index], 700),
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+                "replacements": [],
+                "unsupported_spans": [],
+                "unsupported_remaining": False,
+            }
+        raise AssertionError(f"unexpected payload keys: {sorted(payload)}")
+
+    result = _run(monkeypatch, fake_generate)
+    assert result["diagnostic"]["primary_selection"]["selected_index"] == 2
+    assert result["diagnostic"]["primary_selection"]["attempts"][0]["actual_chars"] == 574
+    assert result["diagnostic"]["primary_selection"]["attempts"][1]["actual_chars"] == 780
+    review_position = calls.index(("review", None))
+    assert calls[review_position + 1 : review_position + 3] == [("primary", 2), ("primary", 2)]
+    assert all(stage != "optional" for stage, _index in calls[: review_position + 3])
+    assert result["diagnostic"]["llm_call_count"] <= 9
+    assert result["diagnostic"]["scaffold_polish"]["attempted"] is False
+    assert result["model_rewrite_succeeded"] is True
+
+
+@pytest.mark.parametrize("polish_succeeds", [True, False])
+def test_real_failure_shape_reserves_scaffold_polish_and_reports_fallback(monkeypatch, polish_succeeds):
+    _mock_source_coverage(monkeypatch)
+    calls = []
+    initial_lengths = [549, 449, 550]
+    reviewed_lengths = [515, 459, 525]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" in payload:
+            calls.append(("initial", payload["variant_task"]["index"]))
+            scripts = [
+                _sized("反差", "甲", initial_lengths[0]),
+                _sized("痛点", "乙", initial_lengths[1]),
+                _sized("表达", "丙", initial_lengths[2]),
+            ]
+            return _initial_variant(payload, scripts)
+        if "current_rewrites" in payload:
+            calls.append(("review", None))
+            return {
+                "reviews": [
+                    {
+                        "index": index,
+                        "audited_script": _sized(
+                            ("反差", "痛点", "表达")[index],
+                            ("甲", "乙", "丙")[index],
+                            reviewed_lengths[index],
+                        ),
+                        "removed_unsupported_claims": [],
+                        "unsupported_spans": [],
+                        "unsupported_remaining": False,
+                        "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+                    }
+                    for index in range(3)
+                ]
+            }
+        if payload.get("primary_convergence"):
+            calls.append(("primary", payload["variant"]["index"]))
+            return {
+                "title": "仍然偏短",
+                "script": _sized("表达", "丙", 574),
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+            }
+        if payload.get("scaffold_polish"):
+            calls.append(("scaffold_polish", None))
+            length = 780 if polish_succeeds else 500
+            return {
+                "title": "来源事实AI润色稿",
+                "script": _natural_sized_script("甲", length),
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+            }
+        raise AssertionError(f"B/C must not consume a call before primary fallback: {sorted(payload)}")
+
+    result = _run(monkeypatch, fake_generate)
+    assert [stage for stage, _index in calls].count("primary") == 2
+    assert calls[-1] == ("scaffold_polish", None)
+    assert result["diagnostic"]["llm_call_count"] == 7
+    assert result["diagnostic"]["llm_call_count"] <= 9
+    assert result["generated_count"] == 1
+    assert result["filtered_duplicate_count"] + result["filtered_invalid_count"] == 2
+    assert result["filtered_invalid_count"] == 2
+    assert result["model_invalid_count"] == 3
+    assert result["fallback_generated_count"] == 1
+    assert result["degraded_to_scaffold"] is True
+    assert result["model_rewrite_succeeded"] is False
+    assert result["rewrites"][0]["fact_fidelity"]["hard_violations"] == []
+    if polish_succeeds:
+        assert result["provenance"] == "scaffold_polished_by_model"
+        assert 674 <= result["rewrites"][0]["actual_chars"] <= 824
+        assert "\n\n" in result["rewrites"][0]["script"]
+        assert "\n" not in result["rewrites"][0]["script"].replace("\n\n", "")
+        assert result["degradation_reason"] == "独立改写版本未通过校验，当前展示基于来源事实的AI润色稿。"
+    else:
+        assert result["provenance"] == "deterministic_scaffold"
+        assert result["degradation_reason"] == (
+            "AI改写版本未通过质量校验，当前展示来源保底整理稿。"
+            "内容基于原转写，事实安全，但改写程度有限。"
+        )
+
+
 def test_parallel_initial_generation_exception_is_controlled(monkeypatch):
     async def fake_generate(_self, *, payload, **_kwargs):
         if payload["variant_task"]["index"] == 1:
@@ -687,6 +860,7 @@ def test_parallel_initial_generation_exception_is_controlled(monkeypatch):
 
 
 def test_missing_independent_rewrite_json_field_is_controlled(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
 
     async def fake_generate(_self, *, payload, **_kwargs):
@@ -849,6 +1023,7 @@ def test_truncated_or_contract_failure_does_not_retry_and_preserves_other_succes
 
 
 def test_empty_content_exhaustion_compactly_regenerates_only_failed_b(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     observed = []
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
@@ -949,6 +1124,7 @@ def test_missing_script_compactly_regenerates_only_failed_b(monkeypatch):
 
 
 def test_second_json_parse_failure_stops_without_third_generation(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
 
@@ -976,6 +1152,7 @@ def test_second_json_parse_failure_stops_without_third_generation(monkeypatch):
 
 
 def test_second_empty_content_is_marked_exhausted_without_third_generation(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
 
@@ -1044,11 +1221,10 @@ def test_request_level_llm_call_budget_is_strict(monkeypatch):
     assert provider_calls == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
     assert result["diagnostic"]["llm_call_count"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
     assert result["diagnostic"]["maximum_llm_calls"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
-    assert all(
-        item["outcome"] == "failed"
-        for item in result["diagnostic"]["fact_fidelity"][
-            "final_source_reconstruction"
-        ]
+    assert result["diagnostic"]["fact_fidelity"]["final_source_reconstruction"] == []
+    assert result["diagnostic"]["primary_selection"]["attempts"][-1]["outcome"] == (
+        "reserved_for_scaffold_polish"
     )
+    assert result["diagnostic"]["scaffold_polish"]["attempted"] is True
     assert result["generated_count"] == 1
     assert result["rewrites"][0]["provenance"] == "deterministic_scaffold"

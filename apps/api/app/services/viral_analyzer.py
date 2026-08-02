@@ -103,6 +103,8 @@ REWRITE_SECOND_ROUND_MULTIPLIER = 1.25
 MAX_REQUESTED_ADDITIONAL_CJK_CHARS = 1800
 MAX_SUPPLEMENT_RESPONSE_TOKENS = 8000
 MAX_SOURCE_CONSTRAINED_LLM_CALLS = 9
+PRIMARY_CONVERGENCE_MAX_CALLS = 2
+SCAFFOLD_POLISH_RESERVED_CALLS = 1
 MIN_SOURCE_FACT_COVERAGE_RATE = 0.35
 MAX_VARIANT_SIMILARITY = 0.75
 SOURCE_INITIAL_CONCURRENCY = 2
@@ -336,7 +338,9 @@ def _source_backed_scaffold(
     seen: set[str] = set()
     current_chars = 0
     for fact in facts:
-        evidence = _with_sentence_end(str(fact.get("evidence") or ""))
+        evidence = re.sub(r"[\r\n]+", "，", str(fact.get("evidence") or ""))
+        evidence = re.sub(r"，{2,}", "，", evidence).strip(" ，")
+        evidence = _with_sentence_end(evidence)
         normalized = _normalize_for_similarity(evidence)
         if not normalized or normalized in seen:
             continue
@@ -351,7 +355,9 @@ def _source_backed_scaffold(
 
     if current_chars < minimum_chars:
         for fact in facts:
-            evidence = _with_sentence_end(str(fact.get("evidence") or ""))
+            evidence = re.sub(r"[\r\n]+", "，", str(fact.get("evidence") or ""))
+            evidence = re.sub(r"，{2,}", "，", evidence).strip(" ，")
+            evidence = _with_sentence_end(evidence)
             normalized = _normalize_for_similarity(evidence)
             if not normalized or normalized in seen:
                 continue
@@ -362,7 +368,113 @@ def _source_backed_scaffold(
             current_chars += _cjk_len(evidence)
             if current_chars >= minimum_chars:
                 break
-    return "".join(selected).strip()
+    return _natural_paragraphs("".join(selected).strip())
+
+
+def _natural_paragraphs(script: str, *, target_paragraph_chars: int = 220) -> str:
+    """Normalize ASR newlines and group complete sentences into readable paragraphs."""
+    normalized = re.sub(r"\s+", " ", str(script or "")).strip()
+    if not normalized:
+        return ""
+    sentences = [item.strip() for item in re.split(r"(?<=[。！？!?])", normalized) if item.strip()]
+    if len(sentences) <= 1:
+        return normalized
+    paragraphs: list[str] = []
+    current: list[str] = []
+    current_chars = 0
+    for sentence in sentences:
+        current.append(sentence)
+        current_chars += _cjk_len(sentence)
+        if current_chars >= target_paragraph_chars:
+            paragraphs.append("".join(current))
+            current = []
+            current_chars = 0
+    if current:
+        paragraphs.append("".join(current))
+    return "\n\n".join(paragraphs)
+
+
+def _candidate_quality_snapshot(
+    *,
+    index: int,
+    rewrite: dict[str, Any],
+    raw_script: str,
+    source_fact_ledger: dict[str, Any],
+    minimum_chars: int,
+    maximum_chars: int,
+    minimum_fact_coverage_count: int,
+) -> dict[str, Any]:
+    claimed_ids = list(dict.fromkeys(rewrite.get("used_source_fact_ids") or []))
+    script = str(rewrite.get("script") or "")
+    mapping = map_source_fact_coverage(
+        source_fact_ledger,
+        script,
+        claimed_fact_ids=claimed_ids,
+    )
+    actual_chars = _cjk_len(script)
+    directly_supported_ids = list(mapping["directly_supported_fact_ids"])
+    hard_violations = unsupported_hard_facts(raw_script, script)
+    repeated = _repeated_sentence_spans(script)
+    coverage = {
+        "index": index,
+        "model_claimed_fact_ids": claimed_ids,
+        "directly_supported_fact_ids": directly_supported_ids,
+        "used_source_fact_ids": directly_supported_ids,
+        "uncertain_fact_ids": mapping["uncertain_fact_ids"],
+        "unsupported_spans": mapping["unsupported_spans"],
+        "unused_source_fact_ids": [
+            fact_id
+            for fact_id in source_fact_ledger["fact_ids"]
+            if fact_id not in directly_supported_ids
+        ],
+        "used_count": len(directly_supported_ids),
+        "total_count": source_fact_ledger["fact_count"],
+        "coverage_rate": (
+            round(len(directly_supported_ids) / source_fact_ledger["fact_count"], 4)
+            if source_fact_ledger["fact_count"]
+            else 0.0
+        ),
+    }
+    reasons: list[str] = []
+    if not minimum_chars <= actual_chars <= maximum_chars:
+        reasons.append("length")
+    if hard_violations:
+        reasons.append("hard_fact")
+    if mapping["unsupported_spans"]:
+        reasons.append("unsupported")
+    if len(directly_supported_ids) < minimum_fact_coverage_count:
+        reasons.append("source_fact_coverage")
+    if not script.rstrip().endswith(tuple("。！？!?")):
+        reasons.append("incomplete_ending")
+    if repeated:
+        reasons.append("internal_repetition")
+    return {
+        "index": index,
+        "rewrite": rewrite,
+        "actual_chars": actual_chars,
+        "coverage": coverage,
+        "hard_violations": hard_violations,
+        "repeated_spans": repeated,
+        "reasons": reasons,
+        "valid": not reasons,
+    }
+
+
+def _primary_rank(snapshot: dict[str, Any], *, minimum_chars: int, maximum_chars: int) -> tuple[Any, ...]:
+    actual_chars = int(snapshot["actual_chars"])
+    if actual_chars < minimum_chars:
+        length_distance = minimum_chars - actual_chars
+    elif actual_chars > maximum_chars:
+        length_distance = actual_chars - maximum_chars
+    else:
+        length_distance = 0
+    return (
+        bool(snapshot["hard_violations"]),
+        length_distance,
+        -int(snapshot["coverage"]["used_count"]),
+        "incomplete_ending" in snapshot["reasons"],
+        int(snapshot["index"]),
+    )
 
 
 def sanitize_rewrite_script(script: str) -> str:
@@ -759,11 +871,19 @@ def _rewrites(value: Any, fallback_topic: str, language: str, *, hook: str = "",
 def validate_viral_analysis_payload(payload: dict[str, Any], *, language: str) -> dict[str, Any]:
     topic = str(payload.get("topic") or ("短视频内容拆解" if language == "zh" else "Short video content analysis")).strip()
     hook = str(payload.get("hook") or ("先用一个反差问题抓住注意力。" if language == "zh" else "Start with a contrast question.")).strip()
+    default_template = (
+        "开头钩子 + 问题放大 + 信息价值 + 行动号召"
+        if language == "zh"
+        else "Hook + Problem + Value + CTA"
+    )
     template = str(
         payload.get("template")
         or payload.get("template_formula")
-        or ("开头钩子 + 问题放大 + 信息价值 + 行动号召" if language == "zh" else "Hook + Problem + Value + CTA")
+        or default_template
     ).strip()
+    template = re.sub(r"(?:…{2,}|\.{3,})", "【按来源事实填写】", template)
+    if template.count("【按来源事实填写】") > 3:
+        template = default_template
     default_points = (
         ["热点自带关注", "反差制造好奇", "问题指向明确", "结尾便于互动"]
         if language == "zh"
@@ -1751,7 +1871,11 @@ async def analyze_viral_script(
         "hard_violations_after": [],
         "removed_claims": [],
         "unsupported_remaining": [],
+        "source_constrained_repairs": [],
+        "final_source_reconstruction": [],
     }
+    primary_selection_diagnostic: dict[str, Any] = {}
+    primary_model_rewrite_succeeded = False
     minimum_fact_coverage_count = min(
         source_fact_ledger.get("fact_count", 0),
         max(
@@ -1971,6 +2095,228 @@ async def analyze_viral_script(
             unsupported_remaining,
             normalized_lengths,
         )
+        reviewed_snapshots = [
+            _candidate_quality_snapshot(
+                index=index,
+                rewrite=rewrite,
+                raw_script=raw_script,
+                source_fact_ledger=source_fact_ledger,
+                minimum_chars=minimum_rewrite_chars,
+                maximum_chars=maximum_chars,
+                minimum_fact_coverage_count=minimum_fact_coverage_count,
+            )
+            for index, rewrite in enumerate(result["rewrites"])
+        ]
+        ranked_primary = sorted(
+            reviewed_snapshots,
+            key=lambda item: _primary_rank(
+                item,
+                minimum_chars=minimum_rewrite_chars,
+                maximum_chars=maximum_chars,
+            ),
+        )
+        primary_snapshot = ranked_primary[0]
+        primary_index = int(primary_snapshot["index"])
+        primary_model_rewrite_succeeded = bool(primary_snapshot["valid"])
+        primary_attempts: list[dict[str, Any]] = []
+        primary_selection_diagnostic = {
+            "selected_index": primary_index,
+            "ranking": [
+                {
+                    "index": int(item["index"]),
+                    "hard_violation_count": len(item["hard_violations"]),
+                    "actual_chars": int(item["actual_chars"]),
+                    "source_fact_coverage_count": int(item["coverage"]["used_count"]),
+                    "complete_ending": "incomplete_ending" not in item["reasons"],
+                    "reasons": list(item["reasons"]),
+                }
+                for item in ranked_primary
+            ],
+            "attempts": primary_attempts,
+        }
+
+        if not primary_model_rewrite_succeeded:
+            generation_floor = (
+                max(minimum_rewrite_chars, 720)
+                if maximum_chars >= 720
+                else minimum_rewrite_chars
+            )
+            generation_target_low = (
+                min(maximum_chars, max(generation_floor, 780))
+                if maximum_chars >= 720
+                else target_center_chars
+            )
+            generation_target_high = (
+                min(maximum_chars, 820)
+                if maximum_chars >= 720
+                else maximum_chars
+            )
+            for attempt in range(1, PRIMARY_CONVERGENCE_MAX_CALLS + 1):
+                if (
+                    MAX_SOURCE_CONSTRAINED_LLM_CALLS - llm_budget.used_calls
+                    <= SCAFFOLD_POLISH_RESERVED_CALLS
+                ):
+                    primary_attempts.append(
+                        {"attempt": attempt, "outcome": "reserved_for_scaffold_polish"}
+                    )
+                    break
+                current_rewrite = result["rewrites"][primary_index]
+                current_snapshot = _candidate_quality_snapshot(
+                    index=primary_index,
+                    rewrite=current_rewrite,
+                    raw_script=raw_script,
+                    source_fact_ledger=source_fact_ledger,
+                    minimum_chars=minimum_rewrite_chars,
+                    maximum_chars=maximum_chars,
+                    minimum_fact_coverage_count=minimum_fact_coverage_count,
+                )
+                unused_ids = list(current_snapshot["coverage"]["unused_source_fact_ids"])
+                convergence_started = time.perf_counter()
+                try:
+                    call_number = await llm_budget.reserve()
+                    response = await LLMProvider().generate_json(
+                        system=(
+                            "你是来源约束的主稿收敛编辑。原始转写和事实账本是唯一事实来源。"
+                            "输出完整替换稿，不得追加补丁，不得自由扩写。只输出最小合法 JSON。"
+                        ),
+                        payload={
+                            "primary_convergence": True,
+                            "corrected_transcript": raw_script,
+                            "source_fact_ledger": source_fact_ledger,
+                            "variant": {
+                                "index": primary_index,
+                                "title": current_rewrite["title"],
+                                "angle": variant_requirements[primary_index],
+                            },
+                            "current_script": current_rewrite["script"],
+                            "current_chars": current_snapshot["actual_chars"],
+                            "used_source_fact_ids": current_snapshot["coverage"][
+                                "directly_supported_fact_ids"
+                            ],
+                            "unused_source_fact_ids": unused_ids,
+                            "length_target": {
+                                "validation_minimum_chars": minimum_rewrite_chars,
+                                "generation_minimum_chars": generation_floor,
+                                "generation_target_low": generation_target_low,
+                                "generation_target_high": generation_target_high,
+                                "maximum_chars": maximum_chars,
+                                "unit": "cjk_chars",
+                            },
+                            "requirements": [
+                                "优先恢复尚未表达的来源事实，保持原版本角度并形成自然连续的知识口播",
+                                f"内部生成至少 {generation_floor} CJK，瞄准 {generation_target_low}–{generation_target_high} CJK",
+                                "只允许使用 corrected_transcript 和 source_fact_ledger 中已有的事实",
+                                "禁止新增数字、机构、日期、周期、案例、指标或因果结论",
+                                "必须返回完整替换稿，不得返回追加段落或修改说明",
+                                "句尾完整、内部不重复；超过上限时只能按完整句边界收敛，禁止字符硬截断",
+                                "used_source_fact_ids只列正文实际表达的事实ID",
+                            ],
+                            "schema": {
+                                "title": "主稿标题",
+                                "script": "完整替换口播正文",
+                                "used_source_fact_ids": ["正文实际使用的来源事实ID"],
+                            },
+                        },
+                        max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                        attempt_label=f"primary_convergence_{primary_index}_{attempt}_call_{call_number}",
+                        max_transport_attempts=1,
+                        allow_format_repair=False,
+                        thinking_mode="disabled",
+                    )
+                    converged_script = smooth_spoken_script(
+                        str(
+                            response.get("script")
+                            or response.get("repaired_script")
+                            or response.get("reconstructed_script")
+                            or ""
+                        )
+                    )
+                    if _cjk_len(converged_script) > maximum_chars:
+                        converged_script = _trim_to_sentence_boundary(
+                            converged_script,
+                            minimum_chars=minimum_rewrite_chars,
+                            maximum_chars=maximum_chars,
+                        )
+                    converged_rewrite = {
+                        **current_rewrite,
+                        "title": str(response.get("title") or current_rewrite["title"]),
+                        "script": converged_script,
+                        "used_source_fact_ids": [
+                            str(item)
+                            for item in (response.get("used_source_fact_ids") or [])
+                            if str(item) in source_fact_ids
+                        ],
+                        "provenance": "source_constrained_repair",
+                    }
+                    converged_snapshot = _candidate_quality_snapshot(
+                        index=primary_index,
+                        rewrite=converged_rewrite,
+                        raw_script=raw_script,
+                        source_fact_ledger=source_fact_ledger,
+                        minimum_chars=minimum_rewrite_chars,
+                        maximum_chars=maximum_chars,
+                        minimum_fact_coverage_count=minimum_fact_coverage_count,
+                    )
+                    primary_attempts.append(
+                        {
+                            "attempt": attempt,
+                            "outcome": "converged" if converged_snapshot["valid"] else "invalid",
+                            "actual_chars": converged_snapshot["actual_chars"],
+                            "reasons": converged_snapshot["reasons"],
+                            "elapsed_ms": round((time.perf_counter() - convergence_started) * 1000),
+                        }
+                    )
+                    result["rewrites"][primary_index] = converged_rewrite
+                    primary_snapshot = converged_snapshot
+                    if converged_snapshot["valid"]:
+                        primary_model_rewrite_succeeded = True
+                        break
+                except (LLMProviderError, _LLMCallBudgetExceeded) as error:
+                    primary_attempts.append(
+                        {
+                            "attempt": attempt,
+                            "outcome": "provider_error",
+                            "error_type": type(error).__name__,
+                            "elapsed_ms": round((time.perf_counter() - convergence_started) * 1000),
+                        }
+                    )
+                except Exception as error:
+                    primary_attempts.append(
+                        {
+                            "attempt": attempt,
+                            "outcome": "invalid_response",
+                            "error_type": type(error).__name__,
+                            "elapsed_ms": round((time.perf_counter() - convergence_started) * 1000),
+                        }
+                    )
+            normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
+            hard_violations_after = [
+                unsupported_hard_facts(raw_script, rewrite["script"])
+                for rewrite in result["rewrites"]
+            ]
+            verified_fact_coverage = [
+                map_source_fact_coverage(
+                    source_fact_ledger,
+                    rewrite["script"],
+                    claimed_fact_ids=list(rewrite.get("used_source_fact_ids") or []),
+                )
+                for rewrite in result["rewrites"]
+            ]
+        primary_selection_diagnostic["succeeded"] = primary_model_rewrite_succeeded
+        primary_selection_diagnostic["final_actual_chars"] = _cjk_len(
+            result["rewrites"][primary_index]["script"]
+        )
+        fact_fidelity_diagnostic["primary_selection"] = primary_selection_diagnostic
+        stage_timings.append(
+            {
+                "stage": "primary_convergence",
+                "selected_index": primary_index,
+                "attempt_count": len(
+                    [item for item in primary_attempts if "actual_chars" in item]
+                ),
+                "succeeded": primary_model_rewrite_succeeded,
+            }
+        )
         invalid_after_fact_review = [
             length for length in normalized_lengths
             if length < minimum_rewrite_chars or length > maximum_chars
@@ -1986,6 +2332,10 @@ async def analyze_viral_script(
                 or bool(unsupported_spans[index])
             )
         ]
+        if primary_model_rewrite_succeeded:
+            repair_indexes = [index for index in repair_indexes if index != primary_index]
+        else:
+            repair_indexes = []
         repair_diagnostics: list[dict[str, Any]] = []
         repair_failed_indexes: list[int] = []
         repair_no_progress_indexes: list[int] = []
@@ -2212,6 +2562,12 @@ async def analyze_viral_script(
                 or index in repair_no_progress_indexes
             )
         ]
+        if primary_model_rewrite_succeeded:
+            final_reconstruction_indexes = [
+                index for index in final_reconstruction_indexes if index != primary_index
+            ]
+        else:
+            final_reconstruction_indexes = []
         final_reconstruction_diagnostics: list[dict[str, Any]] = []
         if final_reconstruction_indexes:
             async def reconstruct_variant(index: int) -> tuple[int, dict[str, Any], int]:
@@ -2462,73 +2818,42 @@ async def analyze_viral_script(
     requested_count = FINAL_REWRITE_LIMIT
     filtered_duplicate_count = 0
     filtered_invalid_count = 0
+    model_invalid_count = 0
+    fallback_generated_count = 0
+    degraded_to_scaffold = False
+    scaffold_polish_diagnostic: dict[str, Any] = {"attempted": False}
     similar_pairs: list[dict[str, Any]] = []
     union_source_fact_coverage: dict[str, Any] = {}
     if source_scope == "full_content":
         def validate_candidate(index: int, rewrite: dict[str, Any]) -> dict[str, Any]:
-            claimed_ids = list(
-                dict.fromkeys(rewrite.get("used_source_fact_ids") or [])
+            return _candidate_quality_snapshot(
+                index=index,
+                rewrite=rewrite,
+                raw_script=raw_script,
+                source_fact_ledger=source_fact_ledger,
+                minimum_chars=minimum_rewrite_chars,
+                maximum_chars=maximum_chars,
+                minimum_fact_coverage_count=minimum_fact_coverage_count,
             )
-            mapping = map_source_fact_coverage(
-                source_fact_ledger,
-                rewrite["script"],
-                claimed_fact_ids=claimed_ids,
-            )
-            script = str(rewrite.get("script") or "")
-            actual_chars = _cjk_len(script)
-            directly_supported_ids = list(mapping["directly_supported_fact_ids"])
-            hard_violations = unsupported_hard_facts(raw_script, script)
-            repeated = _repeated_sentence_spans(script)
-            coverage = {
-                "index": index,
-                "model_claimed_fact_ids": claimed_ids,
-                "directly_supported_fact_ids": directly_supported_ids,
-                "used_source_fact_ids": directly_supported_ids,
-                "uncertain_fact_ids": mapping["uncertain_fact_ids"],
-                "unsupported_spans": mapping["unsupported_spans"],
-                "unused_source_fact_ids": [
-                    fact_id
-                    for fact_id in source_fact_ledger["fact_ids"]
-                    if fact_id not in directly_supported_ids
-                ],
-                "used_count": len(directly_supported_ids),
-                "total_count": source_fact_ledger["fact_count"],
-                "coverage_rate": (
-                    round(len(directly_supported_ids) / source_fact_ledger["fact_count"], 4)
-                    if source_fact_ledger["fact_count"]
-                    else 0.0
-                ),
-            }
-            reasons = []
-            if not minimum_rewrite_chars <= actual_chars <= maximum_chars:
-                reasons.append("length")
-            if hard_violations:
-                reasons.append("hard_fact")
-            if mapping["unsupported_spans"]:
-                reasons.append("unsupported")
-            if len(directly_supported_ids) < minimum_fact_coverage_count:
-                reasons.append("source_fact_coverage")
-            if not script.rstrip().endswith(tuple("。！？!?")):
-                reasons.append("incomplete_ending")
-            if repeated:
-                reasons.append("internal_repetition")
-            return {
-                "index": index,
-                "rewrite": rewrite,
-                "actual_chars": actual_chars,
-                "coverage": coverage,
-                "hard_violations": hard_violations,
-                "repeated_spans": repeated,
-                "reasons": reasons,
-                "valid": not reasons,
-            }
 
         candidate_diagnostics = [
             validate_candidate(index, rewrite)
             for index, rewrite in enumerate(result["rewrites"])
         ]
-        valid_candidates = [item for item in candidate_diagnostics if item["valid"]]
-        filtered_invalid_count = len(candidate_diagnostics) - len(valid_candidates)
+        valid_candidates = [
+            item
+            for item in candidate_diagnostics
+            if item["valid"]
+            and item["rewrite"].get("provenance")
+            not in {"deterministic_scaffold", "scaffold_polished_by_model"}
+        ]
+        model_invalid_count = sum(
+            1
+            for item in candidate_diagnostics
+            if not item["valid"]
+            or item["rewrite"].get("provenance")
+            in {"deterministic_scaffold", "scaffold_polished_by_model"}
+        )
 
         if not valid_candidates:
             scaffold = _source_backed_scaffold(
@@ -2541,14 +2866,125 @@ async def analyze_viral_script(
             scaffold_candidate = validate_candidate(
                 0,
                 {
-                    "title": REWRITE_STRATEGIES[0]["title"],
+                    "title": "来源保底整理稿",
                     "script": scaffold,
                     "used_source_fact_ids": [],
                     "provenance": "deterministic_scaffold",
                 },
             )
             if scaffold_candidate["valid"]:
-                valid_candidates = [scaffold_candidate]
+                fallback_generated_count = 1
+                degraded_to_scaffold = True
+                polished_candidate: dict[str, Any] | None = None
+                if llm_budget.used_calls < MAX_SOURCE_CONSTRAINED_LLM_CALLS:
+                    scaffold_polish_diagnostic = {"attempted": True}
+                    polish_started = time.perf_counter()
+                    try:
+                        call_number = await llm_budget.reserve()
+                        polish_response = await LLMProvider().generate_json(
+                            system=(
+                                "你是来源事实等价口语润色编辑。scaffold和事实账本是唯一来源。"
+                                "不得新增、删除或改变事实。只输出最小合法 JSON。"
+                            ),
+                            payload={
+                                "scaffold_polish": True,
+                                "source_fact_ledger": source_fact_ledger,
+                                "scaffold": scaffold,
+                                "length_target": {
+                                    "minimum_chars": minimum_rewrite_chars,
+                                    "target_chars": (
+                                        min(maximum_chars, 780)
+                                        if maximum_chars >= 720
+                                        else target_center_chars
+                                    ),
+                                    "maximum_chars": maximum_chars,
+                                    "unit": "cjk_chars",
+                                },
+                                "requirements": [
+                                    "保持scaffold表达的全部事实，不得新增、删除或改变事实",
+                                    f"正文保持在 {minimum_rewrite_chars}–{maximum_chars} CJK",
+                                    "改为自然连续的知识口播，合并碎片句并保留必要停顿",
+                                    "禁止逐行ASR样式，使用少量自然段",
+                                    "禁止投资确定性承诺，不得新增数字、机构、日期、周期、案例、指标或因果结论",
+                                    "返回完整正文并以完整句结束",
+                                    "used_source_fact_ids只列正文实际表达的事实ID",
+                                ],
+                                "schema": {
+                                    "title": "来源事实AI润色稿标题",
+                                    "script": "等事实自然口播正文",
+                                    "used_source_fact_ids": ["正文实际使用的来源事实ID"],
+                                },
+                            },
+                            max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                            attempt_label=f"scaffold_polish_call_{call_number}",
+                            max_transport_attempts=1,
+                            allow_format_repair=False,
+                            thinking_mode="disabled",
+                        )
+                        polished_script = _natural_paragraphs(
+                            smooth_spoken_script(str(polish_response.get("script") or ""))
+                        )
+                        if _cjk_len(polished_script) > maximum_chars:
+                            polished_script = _trim_to_sentence_boundary(
+                                polished_script,
+                                minimum_chars=minimum_rewrite_chars,
+                                maximum_chars=maximum_chars,
+                            )
+                        polished_candidate = validate_candidate(
+                            0,
+                            {
+                                "title": str(
+                                    polish_response.get("title")
+                                    or "来源事实AI润色稿"
+                                ),
+                                "script": polished_script,
+                                "used_source_fact_ids": [
+                                    str(item)
+                                    for item in (
+                                        polish_response.get("used_source_fact_ids") or []
+                                    )
+                                    if str(item) in source_fact_ids
+                                ],
+                                "provenance": "scaffold_polished_by_model",
+                            },
+                        )
+                        scaffold_polish_diagnostic.update(
+                            {
+                                "outcome": (
+                                    "succeeded" if polished_candidate["valid"] else "invalid"
+                                ),
+                                "actual_chars": polished_candidate["actual_chars"],
+                                "reasons": polished_candidate["reasons"],
+                                "elapsed_ms": round(
+                                    (time.perf_counter() - polish_started) * 1000
+                                ),
+                            }
+                        )
+                    except (LLMProviderError, _LLMCallBudgetExceeded) as error:
+                        scaffold_polish_diagnostic.update(
+                            {
+                                "outcome": "provider_error",
+                                "error_type": type(error).__name__,
+                                "elapsed_ms": round(
+                                    (time.perf_counter() - polish_started) * 1000
+                                ),
+                            }
+                        )
+                    except Exception as error:
+                        scaffold_polish_diagnostic.update(
+                            {
+                                "outcome": "invalid_response",
+                                "error_type": type(error).__name__,
+                                "elapsed_ms": round(
+                                    (time.perf_counter() - polish_started) * 1000
+                                ),
+                            }
+                        )
+                valid_candidates = [
+                    polished_candidate
+                    if polished_candidate is not None and polished_candidate["valid"]
+                    else scaffold_candidate
+                ]
 
         if not valid_candidates:
             raise HTTPException(
@@ -2715,9 +3151,30 @@ async def analyze_viral_script(
         llm_call_count = llm_budget.used_calls
 
     generated_count = len(result["rewrites"])
+    filtered_invalid_count = max(
+        0,
+        requested_count - generated_count - filtered_duplicate_count,
+    )
+    final_provenance = (
+        str(result["rewrites"][0].get("provenance") or "")
+        if result["rewrites"]
+        else ""
+    )
+    model_rewrite_succeeded = bool(
+        result["rewrites"]
+        and final_provenance
+        not in {"deterministic_scaffold", "scaffold_polished_by_model"}
+    )
     degraded = generated_count < requested_count
     degradation_reason = ""
-    if degraded:
+    if final_provenance == "deterministic_scaffold":
+        degradation_reason = (
+            "AI改写版本未通过质量校验，当前展示来源保底整理稿。"
+            "内容基于原转写，事实安全，但改写程度有限。"
+        )
+    elif final_provenance == "scaffold_polished_by_model":
+        degradation_reason = "独立改写版本未通过校验，当前展示基于来源事实的AI润色稿。"
+    elif degraded:
         if filtered_duplicate_count and generated_count == 1:
             degradation_reason = "其他角度与主稿过于相似，已过滤"
         elif filtered_duplicate_count:
@@ -2762,6 +3219,11 @@ async def analyze_viral_script(
         "requested_count": requested_count,
         "filtered_duplicate_count": filtered_duplicate_count,
         "filtered_invalid_count": filtered_invalid_count,
+        "model_invalid_count": model_invalid_count,
+        "fallback_generated_count": fallback_generated_count,
+        "degraded_to_scaffold": degraded_to_scaffold,
+        "provenance": final_provenance,
+        "model_rewrite_succeeded": model_rewrite_succeeded,
         "degraded": degraded,
         "degradation_reason": degradation_reason,
         "variants": result["rewrites"],
@@ -2782,6 +3244,13 @@ async def analyze_viral_script(
             "requested_count": requested_count,
             "filtered_duplicate_count": filtered_duplicate_count,
             "filtered_invalid_count": filtered_invalid_count,
+            "model_invalid_count": model_invalid_count,
+            "fallback_generated_count": fallback_generated_count,
+            "degraded_to_scaffold": degraded_to_scaffold,
+            "provenance": final_provenance,
+            "model_rewrite_succeeded": model_rewrite_succeeded,
+            "primary_selection": primary_selection_diagnostic,
+            "scaffold_polish": scaffold_polish_diagnostic,
             "stage_timings": stage_timings,
             "llm_call_count": llm_call_count,
             "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
@@ -2809,6 +3278,13 @@ async def analyze_viral_script(
             "requested_count": requested_count,
             "filtered_duplicate_count": filtered_duplicate_count,
             "filtered_invalid_count": filtered_invalid_count,
+            "model_invalid_count": model_invalid_count,
+            "fallback_generated_count": fallback_generated_count,
+            "degraded_to_scaffold": degraded_to_scaffold,
+            "provenance": final_provenance,
+            "model_rewrite_succeeded": model_rewrite_succeeded,
+            "primary_selection": primary_selection_diagnostic,
+            "scaffold_polish": scaffold_polish_diagnostic,
             "stage_timings": stage_timings,
             "llm_call_count": llm_call_count,
             "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,

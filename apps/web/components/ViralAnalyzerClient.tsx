@@ -185,6 +185,11 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
     requested_count: payload.requested_count ?? 3,
     filtered_duplicate_count: payload.filtered_duplicate_count ?? 0,
     filtered_invalid_count: payload.filtered_invalid_count ?? 0,
+    model_invalid_count: payload.model_invalid_count ?? 0,
+    fallback_generated_count: payload.fallback_generated_count ?? 0,
+    degraded_to_scaffold: payload.degraded_to_scaffold,
+    provenance: payload.provenance,
+    model_rewrite_succeeded: payload.model_rewrite_succeeded,
     degraded: payload.degraded,
     degradation_reason: payload.degradation_reason,
     diagnostic: payload.diagnostics?.rewrite_actual_chars?.length
@@ -206,6 +211,11 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
           requested_count: payload.requested_count ?? 3,
           filtered_duplicate_count: payload.filtered_duplicate_count ?? 0,
           filtered_invalid_count: payload.filtered_invalid_count ?? 0,
+          model_invalid_count: payload.model_invalid_count ?? 0,
+          fallback_generated_count: payload.fallback_generated_count ?? 0,
+          degraded_to_scaffold: payload.degraded_to_scaffold,
+          provenance: payload.provenance,
+          model_rewrite_succeeded: payload.model_rewrite_succeeded,
         }
       : undefined,
   };
@@ -389,6 +399,15 @@ export function ViralAnalyzerClient({
 
   function isPollutedRewrite(script: string) {
     return /可复用模板|可套用模板|模板是|结构是|这个版本适合|建议用户|分析如下|JSON|字段|\+（|\+【|（开头|（痛点|（行动号召|【热点事件】/i.test(script);
+  }
+
+  function provenanceLabel(provenance?: string) {
+    if (provenance === "deterministic_scaffold") return "来源保底整理稿";
+    if (provenance === "scaffold_polished_by_model") return "来源事实 AI 润色稿";
+    if (provenance === "source_constrained_repair") return "来源约束模型改写";
+    if (provenance === "final_source_reconstruction") return "来源事实模型重构";
+    if (provenance === "targeted_diversification") return "差异化模型改写";
+    return "独立模型改写";
   }
 
   function loadingLabel() {
@@ -852,7 +871,7 @@ export function ViralAnalyzerClient({
                           <p>本次动态目标：{pipelineDiagnostics.target_min_chars ?? "—"}–{pipelineDiagnostics.target_max_chars ?? "—"} CJK</p>
                         </>
                       ) : pipelineDiagnostics ? <p>当前仅基于公开信息初步拆解，无法精确匹配原视频时长。</p> : null}
-                      {pipelineDiagnostics?.rewrite_actual_chars?.length ? <p>三条最终实际字数：{pipelineDiagnostics.rewrite_actual_chars.join(" / ")} CJK</p> : null}
+                      {pipelineDiagnostics?.rewrite_actual_chars?.length ? <p>最终实际字数：{pipelineDiagnostics.rewrite_actual_chars.join(" / ")} CJK</p> : null}
                     </div>
                   </div>
                 </div>
@@ -902,6 +921,7 @@ export function ViralAnalyzerClient({
                         return (
                           <>
                       <h3 className="break-words text-base font-semibold text-cyan [overflow-wrap:anywhere]">{rewrite.title}</h3>
+                      <p className="mt-1 text-xs text-slate-400">{provenanceLabel(rewrite.provenance)}</p>
                       {polluted ? (
                         <p className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">
                           该版本文案格式异常，请点击继续优化或重新生成。

@@ -168,6 +168,19 @@ def test_low_density_emotional_video_is_not_raised_to_finance_density():
     assert (target.target_min_chars, target.target_max_chars) == (216, 264)
 
 
+def test_real_321_cjk_emotional_fixture_keeps_its_dynamic_range():
+    target = calculate_rewrite_length_target(
+        source_cjk=viral_analyzer._cjk_len(EMOTIONAL_FIXTURE),
+        effective_speech_seconds=120,
+        length_mode="match_source",
+    )
+    assert (target.target_min_chars, target.target_center_chars, target.target_max_chars) == (
+        289,
+        321,
+        353,
+    )
+
+
 @pytest.mark.parametrize(
     ("mode", "expected"),
     [
@@ -294,14 +307,9 @@ def test_empty_or_missing_repair_fields_use_deterministic_source_scaffold(monkey
     assert all(
         674 <= length <= 824 for length in result["diagnostic"]["actual_chars"]
     )
-    reconstructions = result["diagnostic"]["fact_fidelity"][
-        "final_source_reconstruction"
-    ]
-    assert [item["outcome"] for item in reconstructions] == [
-        "failed",
-        "failed",
-        "failed",
-    ]
+    assert result["diagnostic"]["fact_fidelity"]["final_source_reconstruction"] == []
+    assert result["diagnostic"]["primary_selection"]["succeeded"] is False
+    assert result["diagnostic"]["scaffold_polish"]["attempted"] is True
     assert result["generated_count"] == 1
     assert result["rewrites"][0]["provenance"] == "deterministic_scaffold"
     assert result["diagnostic"]["fact_fidelity"]["hard_violations_after"] == [

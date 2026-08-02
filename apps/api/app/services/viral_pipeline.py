@@ -714,6 +714,11 @@ async def _process_video_path(
         "requested_count": analysis.get("requested_count", 3),
         "filtered_duplicate_count": analysis.get("filtered_duplicate_count", 0),
         "filtered_invalid_count": analysis.get("filtered_invalid_count", 0),
+        "model_invalid_count": analysis.get("model_invalid_count", 0),
+        "fallback_generated_count": analysis.get("fallback_generated_count", 0),
+        "degraded_to_scaffold": bool(analysis.get("degraded_to_scaffold")),
+        "provenance": analysis.get("provenance", ""),
+        "model_rewrite_succeeded": bool(analysis.get("model_rewrite_succeeded")),
         "source_cjk": analysis.get("diagnostics", {}).get("source_cjk", _cjk_len(corrected_transcript)),
         "effective_speech_seconds": analysis.get("diagnostics", {}).get(
             "effective_speech_seconds", round(asr.coverage_seconds, 3)
@@ -744,6 +749,11 @@ async def _process_video_path(
         "requested_count": analysis.get("requested_count", 3),
         "filtered_duplicate_count": analysis.get("filtered_duplicate_count", 0),
         "filtered_invalid_count": analysis.get("filtered_invalid_count", 0),
+        "model_invalid_count": analysis.get("model_invalid_count", 0),
+        "fallback_generated_count": analysis.get("fallback_generated_count", 0),
+        "degraded_to_scaffold": bool(analysis.get("degraded_to_scaffold")),
+        "provenance": analysis.get("provenance", ""),
+        "model_rewrite_succeeded": bool(analysis.get("model_rewrite_succeeded")),
         "degradation_reason": analysis.get("degradation_reason", ""),
         "metadata": metadata,
         "source_type": source_type,

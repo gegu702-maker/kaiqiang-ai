@@ -292,6 +292,11 @@ export type ViralAnalyzeResult = {
   requested_count?: number;
   filtered_duplicate_count?: number;
   filtered_invalid_count?: number;
+  model_invalid_count?: number;
+  fallback_generated_count?: number;
+  degraded_to_scaffold?: boolean;
+  provenance?: string;
+  model_rewrite_succeeded?: boolean;
   degraded?: boolean;
   degradation_reason?: string;
   core_points?: string[];
@@ -321,6 +326,11 @@ export type ViralAnalyzeResult = {
     requested_count?: number;
     filtered_duplicate_count?: number;
     filtered_invalid_count?: number;
+    model_invalid_count?: number;
+    fallback_generated_count?: number;
+    degraded_to_scaffold?: boolean;
+    provenance?: string;
+    model_rewrite_succeeded?: boolean;
   };
   diagnostics?: {
     prompt_input_chars?: number;
@@ -422,6 +432,11 @@ export type ViralPipelineResult = {
   requested_count?: number;
   filtered_duplicate_count?: number;
   filtered_invalid_count?: number;
+  model_invalid_count?: number;
+  fallback_generated_count?: number;
+  degraded_to_scaffold?: boolean;
+  provenance?: string;
+  model_rewrite_succeeded?: boolean;
   degradation_reason?: string;
   metadata: ViralPipelineMetadata;
   source_type?: "video_asr" | "link_metadata_fallback" | string;
@@ -464,6 +479,11 @@ export type ViralPipelineResult = {
     exact_duration_match?: boolean;
     length_unit?: "cjk_chars";
     length_repair_rounds?: ViralLengthRepairRound[];
+    model_invalid_count?: number;
+    fallback_generated_count?: number;
+    degraded_to_scaffold?: boolean;
+    provenance?: string;
+    model_rewrite_succeeded?: boolean;
   };
   diagnostic?: {
     http_status?: number | null;
