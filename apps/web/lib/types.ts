@@ -277,6 +277,22 @@ export type ViralLengthRepairRound = {
   }>;
 };
 
+export type ViralCandidateFailureDiagnostic = {
+  index: number;
+  actual_chars: number;
+  length_gap: number;
+  length_gap_direction: "below_minimum" | "above_maximum" | "in_range" | string;
+  hard_violations: unknown[];
+  unsupported_spans: unknown[];
+  fact_coverage: { used_count: number; total_count: number; coverage_rate: number };
+  incomplete_ending: boolean;
+  repeated_spans: unknown[];
+  similarity_failure: boolean;
+  exact_failure_reasons: string[];
+  provenance: string;
+  valid: boolean;
+};
+
 export type ViralAnalyzeResult = {
   project_id?: string;
   request_id?: string;
@@ -331,6 +347,7 @@ export type ViralAnalyzeResult = {
     degraded_to_scaffold?: boolean;
     provenance?: string;
     model_rewrite_succeeded?: boolean;
+    candidate_failure_diagnostics?: ViralCandidateFailureDiagnostic[];
   };
   diagnostics?: {
     prompt_input_chars?: number;
@@ -343,6 +360,7 @@ export type ViralAnalyzeResult = {
     rewrite_maximum_chars?: number;
     rewrite_actual_chars?: number[];
     length_repair_rounds?: ViralLengthRepairRound[];
+    candidate_failure_diagnostics?: ViralCandidateFailureDiagnostic[];
   };
 };
 
@@ -484,6 +502,7 @@ export type ViralPipelineResult = {
     degraded_to_scaffold?: boolean;
     provenance?: string;
     model_rewrite_succeeded?: boolean;
+    candidate_failure_diagnostics?: ViralCandidateFailureDiagnostic[];
   };
   diagnostic?: {
     http_status?: number | null;

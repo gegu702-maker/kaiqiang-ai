@@ -216,6 +216,7 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
           degraded_to_scaffold: payload.degraded_to_scaffold,
           provenance: payload.provenance,
           model_rewrite_succeeded: payload.model_rewrite_succeeded,
+          candidate_failure_diagnostics: payload.diagnostics?.candidate_failure_diagnostics,
         }
       : undefined,
   };
@@ -404,6 +405,7 @@ export function ViralAnalyzerClient({
   function provenanceLabel(provenance?: string) {
     if (provenance === "deterministic_scaffold") return "来源保底整理稿";
     if (provenance === "scaffold_polished_by_model") return "来源事实 AI 润色稿";
+    if (provenance === "model_rewrite_with_neutral_closing") return "AI 改写稿";
     if (provenance === "source_constrained_repair") return "来源约束模型改写";
     if (provenance === "final_source_reconstruction") return "来源事实模型重构";
     if (provenance === "targeted_diversification") return "差异化模型改写";

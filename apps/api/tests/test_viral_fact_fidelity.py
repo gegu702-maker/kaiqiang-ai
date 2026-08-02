@@ -165,6 +165,12 @@ def test_progressive_variant_deduplication_contract(
     assert len(result["rewrites"]) == expected_count
     assert result["filtered_duplicate_count"] == expected_duplicates
     assert result["degraded"] is (expected_count < 3)
+    similarity_failures = [
+        item
+        for item in result["diagnostic"]["candidate_failure_diagnostics"]
+        if item["similarity_failure"]
+    ]
+    assert len(similarity_failures) == expected_duplicates
     assert all(item["fact_fidelity"]["valid"] for item in result["rewrites"])
     assert all(674 <= item["actual_chars"] <= 824 for item in result["rewrites"])
     for left in range(expected_count):
@@ -699,6 +705,133 @@ def _natural_sized_script(marker: str, length: int) -> str:
     return "".join(sentences)
 
 
+def _micro_gap_snapshot(*, gap=2, reasons=None, provenance="fact_review"):
+    reasons = ["length"] if reasons is None else reasons
+    return {
+        "valid": False,
+        "provenance": provenance,
+        "exact_failure_reasons": reasons,
+        "length_gap_direction": "below_minimum",
+        "length_gap": gap,
+        "hard_violations": ([{"category": "number", "value": "80%"}] if "hard_fact" in reasons else []),
+        "coverage": {
+            "unsupported_spans": ([{"span": "无来源片段"}] if "unsupported" in reasons else []),
+            "used_count": 8,
+        },
+        "repeated_spans": (["重复句"] if "internal_repetition" in reasons else []),
+        "incomplete_ending": "incomplete_ending" in reasons,
+        "similarity_failure": "similarity" in reasons,
+    }
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        _micro_gap_snapshot(gap=13),
+        _micro_gap_snapshot(reasons=["length", "hard_fact"]),
+        _micro_gap_snapshot(reasons=["length", "unsupported"]),
+        _micro_gap_snapshot(reasons=["length", "incomplete_ending"]),
+    ],
+)
+def test_micro_gap_rescue_rejects_non_length_only_candidates(snapshot):
+    assert viral_analyzer._is_length_only_micro_gap_rescue_eligible(
+        snapshot,
+        minimum_fact_coverage_count=8,
+        is_primary=True,
+    ) is False
+
+
+def test_neutral_micro_gap_closings_are_domain_safe():
+    finance_closing = viral_analyzer._neutral_micro_gap_closing(
+        industry="knowledge",
+        raw_script=FINANCE_FIXTURE,
+    )
+    assert unsupported_hard_facts(FINANCE_FIXTURE, finance_closing) == []
+    assert not any(char.isdigit() for char in finance_closing)
+    emotional_closing = viral_analyzer._neutral_micro_gap_closing(
+        industry="personal_brand",
+        raw_script="先听听自己的感受。",
+    )
+    assert not any(term in emotional_closing for term in ("财经", "商业", "购买", "关注", "评论", "下单"))
+
+
+def test_672_model_primary_is_rescued_without_primary_or_scaffold_call(monkeypatch):
+    _mock_source_coverage(monkeypatch)
+    calls = []
+    reviewed_lengths = [401, 463, 672]
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" in payload:
+            calls.append(("initial", payload["variant_task"]["index"]))
+            scripts = [
+                _sized("反差", "甲", reviewed_lengths[0]),
+                _sized("痛点", "乙", reviewed_lengths[1]),
+                _sized("表达", "丙", reviewed_lengths[2]),
+            ]
+            return _initial_variant(payload, scripts)
+        if "current_rewrites" in payload:
+            calls.append(("review", None))
+            return {
+                "reviews": [
+                    {
+                        "index": index,
+                        "audited_script": _sized(
+                            ("反差", "痛点", "表达")[index],
+                            ("甲", "乙", "丙")[index],
+                            reviewed_lengths[index],
+                        ),
+                        "removed_unsupported_claims": [],
+                        "unsupported_spans": [],
+                        "unsupported_remaining": False,
+                        "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+                    }
+                    for index in range(3)
+                ]
+            }
+        if "current_script" in payload and not payload.get("primary_convergence"):
+            index = payload["variant"]["index"]
+            calls.append(("optional", index))
+            return {
+                "repaired_script": _sized(("反差", "痛点")[index], ("甲", "乙")[index], 700),
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+                "replacements": [],
+                "unsupported_spans": [],
+                "unsupported_remaining": False,
+            }
+        raise AssertionError(f"unexpected call after micro-gap rescue: {sorted(payload)}")
+
+    result = _run(monkeypatch, fake_generate)
+    rescued = next(
+        item
+        for item in result["rewrites"]
+        if item["provenance"] == "model_rewrite_with_neutral_closing"
+    )
+    assert 674 <= rescued["actual_chars"] <= 824
+    assert rescued["script"].endswith("相关信息仍需持续核对。")
+    assert result["diagnostic"]["primary_selection"]["selected_index"] == 2
+    assert result["diagnostic"]["primary_selection"]["micro_gap_rescue"]["succeeded"] is True
+    assert not any(stage in {"primary", "scaffold_polish"} for stage, _index in calls)
+    assert result["fallback_generated_count"] == 0
+    assert result["degraded_to_scaffold"] is False
+    assert result["diagnostic"]["llm_call_count"] == 6
+    assert result["diagnostic"]["llm_call_count"] <= 9
+    for diagnostic in result["diagnostic"]["candidate_failure_diagnostics"]:
+        assert "script" not in diagnostic
+        assert "rewrite" not in diagnostic
+        assert {
+            "actual_chars",
+            "length_gap",
+            "hard_violations",
+            "unsupported_spans",
+            "fact_coverage",
+            "incomplete_ending",
+            "repeated_spans",
+            "similarity_failure",
+            "exact_failure_reasons",
+            "provenance",
+        } <= set(diagnostic)
+
+
 def test_real_failure_shape_prioritizes_one_primary_before_optional_variants(monkeypatch):
     _mock_source_coverage(monkeypatch)
     calls = []
@@ -772,6 +905,7 @@ def test_real_failure_shape_prioritizes_one_primary_before_optional_variants(mon
 def test_real_failure_shape_reserves_scaffold_polish_and_reports_fallback(monkeypatch, polish_succeeds):
     _mock_source_coverage(monkeypatch)
     calls = []
+    polish_payloads = []
     initial_lengths = [549, 449, 550]
     reviewed_lengths = [515, 459, 525]
 
@@ -812,6 +946,7 @@ def test_real_failure_shape_reserves_scaffold_polish_and_reports_fallback(monkey
             }
         if payload.get("scaffold_polish"):
             calls.append(("scaffold_polish", None))
+            polish_payloads.append(payload)
             length = 780 if polish_succeeds else 500
             return {
                 "title": "来源事实AI润色稿",
@@ -823,7 +958,8 @@ def test_real_failure_shape_reserves_scaffold_polish_and_reports_fallback(monkey
     result = _run(monkeypatch, fake_generate)
     assert [stage for stage, _index in calls].count("primary") == 2
     assert calls[-1] == ("scaffold_polish", None)
-    assert result["diagnostic"]["llm_call_count"] == 7
+    assert len(polish_payloads) == (1 if polish_succeeds else 2)
+    assert result["diagnostic"]["llm_call_count"] == (7 if polish_succeeds else 8)
     assert result["diagnostic"]["llm_call_count"] <= 9
     assert result["generated_count"] == 1
     assert result["filtered_duplicate_count"] + result["filtered_invalid_count"] == 2
@@ -840,6 +976,9 @@ def test_real_failure_shape_reserves_scaffold_polish_and_reports_fallback(monkey
         assert "\n" not in result["rewrites"][0]["script"].replace("\n\n", "")
         assert result["degradation_reason"] == "独立改写版本未通过校验，当前展示基于来源事实的AI润色稿。"
     else:
+        assert polish_payloads[1]["scaffold_polish_retry"] is True
+        assert polish_payloads[1]["previous_failure"]["actual_chars"] == 500
+        assert polish_payloads[1]["previous_failure"]["exact_failure_reasons"] == ["length"]
         assert result["provenance"] == "deterministic_scaffold"
         assert result["degradation_reason"] == (
             "AI改写版本未通过质量校验，当前展示来源保底整理稿。"

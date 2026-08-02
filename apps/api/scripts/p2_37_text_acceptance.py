@@ -73,13 +73,44 @@ async def _run(fixture_name: str) -> dict:
     finally:
         reset_request_id(context)
 
+    diagnostic = result["diagnostic"]
+    rewrites = result["rewrites"]
     return {
         "fixture": fixture_name,
         "request_id": request_id,
         "source_cjk": _cjk_len(source),
         "elapsed_seconds": round(time.perf_counter() - started, 3),
-        "diagnostic": result["diagnostic"],
-        "scripts": [item["script"] for item in result["rewrites"]],
+        "acceptance_summary": {
+            "actual_chars": diagnostic["actual_chars"],
+            "target_min_chars": diagnostic["target_chars"],
+            "target_max_chars": diagnostic["maximum_chars"],
+            "generated_count": result["generated_count"],
+            "filtered_duplicate_count": result["filtered_duplicate_count"],
+            "filtered_invalid_count": result["filtered_invalid_count"],
+            "model_invalid_count": result["model_invalid_count"],
+            "fallback_generated_count": result["fallback_generated_count"],
+            "degraded_to_scaffold": result["degraded_to_scaffold"],
+            "provenance": result["provenance"],
+            "model_rewrite_succeeded": result["model_rewrite_succeeded"],
+            "llm_call_count": diagnostic["llm_call_count"],
+            "maximum_llm_calls": diagnostic["maximum_llm_calls"],
+            "primary_selection": diagnostic["primary_selection"],
+            "scaffold_polish": diagnostic["scaffold_polish"],
+            "candidate_failure_diagnostics": diagnostic[
+                "candidate_failure_diagnostics"
+            ],
+            "final_fact_fidelity": [
+                item.get("fact_fidelity", {}) for item in rewrites
+            ],
+            "paragraph_break_counts": [
+                item["script"].count("\n\n") for item in rewrites
+            ],
+            "complete_endings": [
+                item["script"].rstrip().endswith(tuple("。！？!?"))
+                for item in rewrites
+            ],
+        },
+        "scripts": [item["script"] for item in rewrites],
     }
 
 

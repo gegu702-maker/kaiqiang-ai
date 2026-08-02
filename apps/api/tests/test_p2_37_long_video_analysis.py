@@ -920,6 +920,7 @@ def test_frontend_renders_actual_variant_count_and_non_blocking_degradation_noti
     assert "三条最终实际字数" not in source
     assert 'provenance === "deterministic_scaffold"' in source
     assert 'provenance === "scaffold_polished_by_model"' in source
+    assert 'provenance === "model_rewrite_with_neutral_closing"' in source
     assert ".fill(" not in source[source.index("result.rewrites.map") :]
 
 

@@ -719,6 +719,9 @@ async def _process_video_path(
         "degraded_to_scaffold": bool(analysis.get("degraded_to_scaffold")),
         "provenance": analysis.get("provenance", ""),
         "model_rewrite_succeeded": bool(analysis.get("model_rewrite_succeeded")),
+        "candidate_failure_diagnostics": analysis.get("diagnostics", {}).get(
+            "candidate_failure_diagnostics", []
+        ),
         "source_cjk": analysis.get("diagnostics", {}).get("source_cjk", _cjk_len(corrected_transcript)),
         "effective_speech_seconds": analysis.get("diagnostics", {}).get(
             "effective_speech_seconds", round(asr.coverage_seconds, 3)

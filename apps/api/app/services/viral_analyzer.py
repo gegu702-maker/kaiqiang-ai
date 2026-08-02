@@ -105,6 +105,7 @@ MAX_SUPPLEMENT_RESPONSE_TOKENS = 8000
 MAX_SOURCE_CONSTRAINED_LLM_CALLS = 9
 PRIMARY_CONVERGENCE_MAX_CALLS = 2
 SCAFFOLD_POLISH_RESERVED_CALLS = 1
+MAX_LENGTH_ONLY_RESCUE_GAP = 12
 MIN_SOURCE_FACT_COVERAGE_RATE = 0.35
 MAX_VARIANT_SIMILARITY = 0.75
 SOURCE_INITIAL_CONCURRENCY = 2
@@ -415,6 +416,15 @@ def _candidate_quality_snapshot(
     directly_supported_ids = list(mapping["directly_supported_fact_ids"])
     hard_violations = unsupported_hard_facts(raw_script, script)
     repeated = _repeated_sentence_spans(script)
+    if actual_chars < minimum_chars:
+        length_gap = minimum_chars - actual_chars
+        length_gap_direction = "below_minimum"
+    elif actual_chars > maximum_chars:
+        length_gap = actual_chars - maximum_chars
+        length_gap_direction = "above_maximum"
+    else:
+        length_gap = 0
+        length_gap_direction = "in_range"
     coverage = {
         "index": index,
         "model_claimed_fact_ids": claimed_ids,
@@ -452,12 +462,83 @@ def _candidate_quality_snapshot(
         "index": index,
         "rewrite": rewrite,
         "actual_chars": actual_chars,
+        "length_gap": length_gap,
+        "length_gap_direction": length_gap_direction,
         "coverage": coverage,
         "hard_violations": hard_violations,
         "repeated_spans": repeated,
         "reasons": reasons,
+        "exact_failure_reasons": list(reasons),
+        "incomplete_ending": "incomplete_ending" in reasons,
+        "similarity_failure": False,
+        "provenance": str(rewrite.get("provenance") or "independent_initial"),
         "valid": not reasons,
     }
+
+
+def _candidate_diagnostic_record(
+    snapshot: dict[str, Any],
+    *,
+    similarity_failure: bool | None = None,
+) -> dict[str, Any]:
+    similarity_failed = (
+        bool(snapshot.get("similarity_failure"))
+        if similarity_failure is None
+        else similarity_failure
+    )
+    reasons = list(snapshot.get("exact_failure_reasons") or snapshot.get("reasons") or [])
+    if similarity_failed and "similarity" not in reasons:
+        reasons.append("similarity")
+    coverage = snapshot.get("coverage") or {}
+    return {
+        "index": int(snapshot["index"]),
+        "actual_chars": int(snapshot["actual_chars"]),
+        "length_gap": int(snapshot.get("length_gap") or 0),
+        "length_gap_direction": str(snapshot.get("length_gap_direction") or "in_range"),
+        "hard_violations": list(snapshot.get("hard_violations") or []),
+        "unsupported_spans": list(coverage.get("unsupported_spans") or []),
+        "fact_coverage": {
+            "used_count": int(coverage.get("used_count") or 0),
+            "total_count": int(coverage.get("total_count") or 0),
+            "coverage_rate": float(coverage.get("coverage_rate") or 0.0),
+        },
+        "incomplete_ending": bool(snapshot.get("incomplete_ending")),
+        "repeated_spans": list(snapshot.get("repeated_spans") or []),
+        "similarity_failure": similarity_failed,
+        "exact_failure_reasons": reasons,
+        "provenance": str(snapshot.get("provenance") or "independent_initial"),
+        "valid": not reasons,
+    }
+
+
+def _neutral_micro_gap_closing(*, industry: str, raw_script: str) -> str:
+    if industry == "personal_brand":
+        return "先照顾好自己的感受。"
+    if any(marker in raw_script for marker in ("资本市场", "回购", "ETF", "中报", "外资")):
+        return "相关信息仍需持续核对。"
+    return "以上就是这次的梳理。"
+
+
+def _is_length_only_micro_gap_rescue_eligible(
+    snapshot: dict[str, Any],
+    *,
+    minimum_fact_coverage_count: int,
+    is_primary: bool,
+) -> bool:
+    return bool(
+        not snapshot["valid"]
+        and snapshot["provenance"]
+        not in {"deterministic_scaffold", "scaffold_polished_by_model"}
+        and snapshot["exact_failure_reasons"] == ["length"]
+        and snapshot["length_gap_direction"] == "below_minimum"
+        and 1 <= snapshot["length_gap"] <= MAX_LENGTH_ONLY_RESCUE_GAP
+        and not snapshot["hard_violations"]
+        and not snapshot["coverage"]["unsupported_spans"]
+        and snapshot["coverage"]["used_count"] >= minimum_fact_coverage_count
+        and not snapshot["repeated_spans"]
+        and not snapshot["incomplete_ending"]
+        and (not snapshot.get("similarity_failure") or is_primary)
+    )
 
 
 def _primary_rank(snapshot: dict[str, Any], *, minimum_chars: int, maximum_chars: int) -> tuple[Any, ...]:
@@ -2119,6 +2200,12 @@ async def analyze_viral_script(
         primary_index = int(primary_snapshot["index"])
         primary_model_rewrite_succeeded = bool(primary_snapshot["valid"])
         primary_attempts: list[dict[str, Any]] = []
+        micro_gap_diagnostic: dict[str, Any] = {
+            "attempted": False,
+            "succeeded": False,
+            "selected_index": primary_index,
+            "before": _candidate_diagnostic_record(primary_snapshot),
+        }
         primary_selection_diagnostic = {
             "selected_index": primary_index,
             "ranking": [
@@ -2133,7 +2220,59 @@ async def analyze_viral_script(
                 for item in ranked_primary
             ],
             "attempts": primary_attempts,
+            "micro_gap_rescue": micro_gap_diagnostic,
         }
+
+        micro_gap_eligible = _is_length_only_micro_gap_rescue_eligible(
+            primary_snapshot,
+            minimum_fact_coverage_count=minimum_fact_coverage_count,
+            is_primary=True,
+        )
+        if micro_gap_eligible:
+            micro_gap_diagnostic["attempted"] = True
+            closing = _neutral_micro_gap_closing(
+                industry=industry,
+                raw_script=raw_script,
+            )
+            current_rewrite = result["rewrites"][primary_index]
+            rescued_rewrite = {
+                **current_rewrite,
+                "script": f"{str(current_rewrite.get('script') or '').rstrip()}{closing}",
+                "provenance": "model_rewrite_with_neutral_closing",
+            }
+            rescued_snapshot = _candidate_quality_snapshot(
+                index=primary_index,
+                rewrite=rescued_rewrite,
+                raw_script=raw_script,
+                source_fact_ledger=source_fact_ledger,
+                minimum_chars=minimum_rewrite_chars,
+                maximum_chars=maximum_chars,
+                minimum_fact_coverage_count=minimum_fact_coverage_count,
+            )
+            micro_gap_diagnostic.update(
+                {
+                    "closing_chars": _cjk_len(closing),
+                    "after": _candidate_diagnostic_record(rescued_snapshot),
+                    "succeeded": bool(rescued_snapshot["valid"]),
+                }
+            )
+            if rescued_snapshot["valid"]:
+                result["rewrites"][primary_index] = rescued_rewrite
+                primary_snapshot = rescued_snapshot
+                primary_model_rewrite_succeeded = True
+                normalized_lengths[primary_index] = rescued_snapshot["actual_chars"]
+                hard_violations_after[primary_index] = list(
+                    rescued_snapshot["hard_violations"]
+                )
+                verified_fact_coverage[primary_index] = dict(
+                    rescued_snapshot["coverage"]
+                )
+                fact_fidelity_diagnostic["hard_violations_after"] = hard_violations_after
+                fact_fidelity_diagnostic["verified_fact_coverage"] = verified_fact_coverage
+            else:
+                micro_gap_diagnostic["failure_reasons"] = list(
+                    rescued_snapshot["exact_failure_reasons"]
+                )
 
         if not primary_model_rewrite_succeeded:
             generation_floor = (
@@ -2263,6 +2402,9 @@ async def analyze_viral_script(
                             "outcome": "converged" if converged_snapshot["valid"] else "invalid",
                             "actual_chars": converged_snapshot["actual_chars"],
                             "reasons": converged_snapshot["reasons"],
+                            "candidate_diagnostic": _candidate_diagnostic_record(
+                                converged_snapshot
+                            ),
                             "elapsed_ms": round((time.perf_counter() - convergence_started) * 1000),
                         }
                     )
@@ -2822,6 +2964,7 @@ async def analyze_viral_script(
     fallback_generated_count = 0
     degraded_to_scaffold = False
     scaffold_polish_diagnostic: dict[str, Any] = {"attempted": False}
+    candidate_failure_diagnostics: list[dict[str, Any]] = []
     similar_pairs: list[dict[str, Any]] = []
     union_source_fact_coverage: dict[str, Any] = {}
     if source_scope == "full_content":
@@ -2840,6 +2983,14 @@ async def analyze_viral_script(
             validate_candidate(index, rewrite)
             for index, rewrite in enumerate(result["rewrites"])
         ]
+        candidate_failure_diagnostics = [
+            _candidate_diagnostic_record(item) for item in candidate_diagnostics
+        ]
+        logger.warning(
+            "viral_final_candidate_validation request_id=%s candidates=%s",
+            current_request_id(),
+            candidate_failure_diagnostics,
+        )
         valid_candidates = [
             item
             for item in candidate_diagnostics
@@ -2872,21 +3023,30 @@ async def analyze_viral_script(
                     "provenance": "deterministic_scaffold",
                 },
             )
+            candidate_failure_diagnostics.append(
+                _candidate_diagnostic_record(scaffold_candidate)
+            )
             if scaffold_candidate["valid"]:
                 fallback_generated_count = 1
                 degraded_to_scaffold = True
                 polished_candidate: dict[str, Any] | None = None
                 if llm_budget.used_calls < MAX_SOURCE_CONSTRAINED_LLM_CALLS:
-                    scaffold_polish_diagnostic = {"attempted": True}
-                    polish_started = time.perf_counter()
-                    try:
-                        call_number = await llm_budget.reserve()
-                        polish_response = await LLMProvider().generate_json(
-                            system=(
-                                "你是来源事实等价口语润色编辑。scaffold和事实账本是唯一来源。"
-                                "不得新增、删除或改变事实。只输出最小合法 JSON。"
-                            ),
-                            payload={
+                    polish_attempts: list[dict[str, Any]] = []
+                    scaffold_polish_diagnostic = {
+                        "attempted": True,
+                        "attempts": polish_attempts,
+                    }
+                    previous_polish_script = ""
+                    previous_failure: dict[str, Any] | None = None
+                    for polish_attempt in range(1, 3):
+                        if polish_attempt == 2 and previous_failure is None:
+                            break
+                        if llm_budget.used_calls >= MAX_SOURCE_CONSTRAINED_LLM_CALLS:
+                            break
+                        polish_started = time.perf_counter()
+                        try:
+                            call_number = await llm_budget.reserve()
+                            polish_payload: dict[str, Any] = {
                                 "scaffold_polish": True,
                                 "source_fact_ledger": source_fact_ledger,
                                 "scaffold": scaffold,
@@ -2914,72 +3074,117 @@ async def analyze_viral_script(
                                     "script": "等事实自然口播正文",
                                     "used_source_fact_ids": ["正文实际使用的来源事实ID"],
                                 },
-                            },
-                            max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
-                            attempt_label=f"scaffold_polish_call_{call_number}",
-                            max_transport_attempts=1,
-                            allow_format_repair=False,
-                            thinking_mode="disabled",
-                        )
-                        polished_script = _natural_paragraphs(
-                            smooth_spoken_script(str(polish_response.get("script") or ""))
-                        )
-                        if _cjk_len(polished_script) > maximum_chars:
-                            polished_script = _trim_to_sentence_boundary(
-                                polished_script,
-                                minimum_chars=minimum_rewrite_chars,
-                                maximum_chars=maximum_chars,
+                            }
+                            if polish_attempt == 2:
+                                polish_payload.update(
+                                    {
+                                        "scaffold_polish_retry": True,
+                                        "previous_polish_script": previous_polish_script,
+                                        "previous_failure": previous_failure,
+                                        "retry_requirement": (
+                                            "只修复previous_failure列出的精确问题；仍返回完整替换稿，禁止追加补丁。"
+                                        ),
+                                    }
+                                )
+                            polish_response = await LLMProvider().generate_json(
+                                system=(
+                                    "你是来源事实等价口语润色编辑。scaffold和事实账本是唯一来源。"
+                                    "不得新增、删除或改变事实。只输出最小合法 JSON。"
+                                ),
+                                payload=polish_payload,
+                                max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                                attempt_label=(
+                                    f"scaffold_polish_call_{call_number}"
+                                    if polish_attempt == 1
+                                    else f"scaffold_polish_retry_call_{call_number}"
+                                ),
+                                max_transport_attempts=1,
+                                allow_format_repair=False,
+                                thinking_mode="disabled",
                             )
-                        polished_candidate = validate_candidate(
-                            0,
-                            {
-                                "title": str(
-                                    polish_response.get("title")
-                                    or "来源事实AI润色稿"
-                                ),
-                                "script": polished_script,
-                                "used_source_fact_ids": [
-                                    str(item)
-                                    for item in (
-                                        polish_response.get("used_source_fact_ids") or []
-                                    )
-                                    if str(item) in source_fact_ids
-                                ],
-                                "provenance": "scaffold_polished_by_model",
-                            },
-                        )
-                        scaffold_polish_diagnostic.update(
-                            {
+                            polished_script = _natural_paragraphs(
+                                smooth_spoken_script(
+                                    str(polish_response.get("script") or "")
+                                )
+                            )
+                            if _cjk_len(polished_script) > maximum_chars:
+                                polished_script = _trim_to_sentence_boundary(
+                                    polished_script,
+                                    minimum_chars=minimum_rewrite_chars,
+                                    maximum_chars=maximum_chars,
+                                )
+                            polished_candidate = validate_candidate(
+                                0,
+                                {
+                                    "title": str(
+                                        polish_response.get("title")
+                                        or "来源事实AI润色稿"
+                                    ),
+                                    "script": polished_script,
+                                    "used_source_fact_ids": [
+                                        str(item)
+                                        for item in (
+                                            polish_response.get("used_source_fact_ids") or []
+                                        )
+                                        if str(item) in source_fact_ids
+                                    ],
+                                    "provenance": "scaffold_polished_by_model",
+                                },
+                            )
+                            polished_record = _candidate_diagnostic_record(
+                                polished_candidate
+                            )
+                            candidate_failure_diagnostics.append(polished_record)
+                            attempt_record = {
+                                "attempt": polish_attempt,
                                 "outcome": (
-                                    "succeeded" if polished_candidate["valid"] else "invalid"
+                                    "succeeded"
+                                    if polished_candidate["valid"]
+                                    else "invalid"
                                 ),
-                                "actual_chars": polished_candidate["actual_chars"],
-                                "reasons": polished_candidate["reasons"],
+                                "candidate_diagnostic": polished_record,
                                 "elapsed_ms": round(
                                     (time.perf_counter() - polish_started) * 1000
                                 ),
                             }
-                        )
-                    except (LLMProviderError, _LLMCallBudgetExceeded) as error:
-                        scaffold_polish_diagnostic.update(
-                            {
-                                "outcome": "provider_error",
-                                "error_type": type(error).__name__,
-                                "elapsed_ms": round(
-                                    (time.perf_counter() - polish_started) * 1000
-                                ),
-                            }
-                        )
-                    except Exception as error:
-                        scaffold_polish_diagnostic.update(
-                            {
-                                "outcome": "invalid_response",
-                                "error_type": type(error).__name__,
-                                "elapsed_ms": round(
-                                    (time.perf_counter() - polish_started) * 1000
-                                ),
-                            }
-                        )
+                            polish_attempts.append(attempt_record)
+                            scaffold_polish_diagnostic.update(
+                                {
+                                    "outcome": attempt_record["outcome"],
+                                    "actual_chars": polished_candidate["actual_chars"],
+                                    "reasons": polished_candidate["exact_failure_reasons"],
+                                }
+                            )
+                            if polished_candidate["valid"]:
+                                break
+                            previous_polish_script = polished_script
+                            previous_failure = polished_record
+                        except (LLMProviderError, _LLMCallBudgetExceeded) as error:
+                            polish_attempts.append(
+                                {
+                                    "attempt": polish_attempt,
+                                    "outcome": "provider_error",
+                                    "error_type": type(error).__name__,
+                                    "elapsed_ms": round(
+                                        (time.perf_counter() - polish_started) * 1000
+                                    ),
+                                }
+                            )
+                            scaffold_polish_diagnostic.update(polish_attempts[-1])
+                            break
+                        except Exception as error:
+                            polish_attempts.append(
+                                {
+                                    "attempt": polish_attempt,
+                                    "outcome": "invalid_response",
+                                    "error_type": type(error).__name__,
+                                    "elapsed_ms": round(
+                                        (time.perf_counter() - polish_started) * 1000
+                                    ),
+                                }
+                            )
+                            scaffold_polish_diagnostic.update(polish_attempts[-1])
+                            break
                 valid_candidates = [
                     polished_candidate
                     if polished_candidate is not None and polished_candidate["valid"]
@@ -2995,7 +3200,7 @@ async def analyze_viral_script(
                     "message": "所有候选版本及主稿保底均未通过长度与事实校验。",
                     "retryable": False,
                     "actual_chars": normalized_lengths,
-                    "candidate_diagnostics": candidate_diagnostics,
+                    "candidate_diagnostics": candidate_failure_diagnostics,
                     "minimum_source_fact_coverage_count": minimum_fact_coverage_count,
                     "fact_fidelity": fact_fidelity_diagnostic,
                     "stage_timings": stage_timings,
@@ -3099,6 +3304,13 @@ async def analyze_viral_script(
                 retained.append(diversified)
             else:
                 filtered_duplicate_count += 1
+                for diagnostic in candidate_failure_diagnostics:
+                    if diagnostic["index"] == candidate["index"]:
+                        diagnostic["similarity_failure"] = True
+                        if "similarity" not in diagnostic["exact_failure_reasons"]:
+                            diagnostic["exact_failure_reasons"].append("similarity")
+                        diagnostic["valid"] = False
+                        break
                 similar_pairs.append(
                     {
                         "left": retained[0]["index"],
@@ -3107,6 +3319,11 @@ async def analyze_viral_script(
                     }
                 )
 
+        logger.warning(
+            "viral_final_candidate_outcomes request_id=%s candidates=%s",
+            current_request_id(),
+            candidate_failure_diagnostics,
+        )
         primary_script = retained[0]["rewrite"]["script"]
         finalized_rewrites = []
         source_fact_coverage = []
@@ -3251,6 +3468,7 @@ async def analyze_viral_script(
             "model_rewrite_succeeded": model_rewrite_succeeded,
             "primary_selection": primary_selection_diagnostic,
             "scaffold_polish": scaffold_polish_diagnostic,
+            "candidate_failure_diagnostics": candidate_failure_diagnostics,
             "stage_timings": stage_timings,
             "llm_call_count": llm_call_count,
             "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
@@ -3285,6 +3503,7 @@ async def analyze_viral_script(
             "model_rewrite_succeeded": model_rewrite_succeeded,
             "primary_selection": primary_selection_diagnostic,
             "scaffold_polish": scaffold_polish_diagnostic,
+            "candidate_failure_diagnostics": candidate_failure_diagnostics,
             "stage_timings": stage_timings,
             "llm_call_count": llm_call_count,
             "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
