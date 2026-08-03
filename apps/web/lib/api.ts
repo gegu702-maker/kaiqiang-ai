@@ -52,11 +52,16 @@ async function parseResponse<T>(response: Response, context?: { url?: string; me
   if (!response.ok) {
     const body = await response.text();
     let message = "";
+    let structured: StructuredApiError | null = null;
     try {
       const payload = JSON.parse(body) as { detail?: unknown; error?: unknown; message?: unknown };
+      structured = structuredApiError(payload.detail ?? payload.error ?? payload);
       message = stringifyDetail(payload.detail ?? payload.error ?? payload.message);
     } catch {
       // Fall through to the raw response body below.
+    }
+    if (structured && (structured.code || structured.stage || structured.request_id || structured.retryable !== undefined)) {
+      throw new Error(formatStructuredApiError(structured, response.status, response.statusText));
     }
     const details = [
       `API request failed`,
@@ -161,6 +166,35 @@ export async function getUserOrders(accessToken?: string): Promise<Order[]> {
   return parseResponse<Order[]>(response);
 }
 
+type StructuredApiError = {
+  code?: unknown;
+  stage?: unknown;
+  message?: unknown;
+  request_id?: unknown;
+  retryable?: unknown;
+};
+
+function structuredApiError(value: unknown): StructuredApiError | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as StructuredApiError;
+}
+
+function formatStructuredApiError(detail: StructuredApiError, status: number, statusText: string): string {
+  const code = typeof detail.code === "string" ? detail.code : "api_http_error";
+  const stage = typeof detail.stage === "string" ? detail.stage : "unknown";
+  const message = typeof detail.message === "string" ? detail.message : "API 请求失败。";
+  const requestId = typeof detail.request_id === "string" ? detail.request_id : "unavailable";
+  const retryable = detail.retryable === true ? "true" : detail.retryable === false ? "false" : "unknown";
+  return [
+    message,
+    `code: ${code}`,
+    `stage: ${stage}`,
+    `request_id: ${requestId}`,
+    `retryable: ${retryable}`,
+    `Status: ${status} ${statusText}`.trim(),
+  ].join("\n");
+}
+
 export async function getUserPayments(accessToken?: string): Promise<Payment[]> {
   if (!accessToken) return [];
   const response = await fetch(`${API_URL}/api/billing/payments`, {
@@ -199,15 +233,30 @@ export async function analyzeViralScript(
   },
   accessToken?: string,
 ): Promise<ViralAnalyzeResult> {
-  const response = await fetch(`${API_URL}/api/viral/analyze`, {
-    method: "POST",
-    headers: accessToken
-      ? { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }
-      : { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    cache: "no-store",
-  });
-  return parseResponse<ViralAnalyzeResult>(response, { url: `${API_URL}/api/viral/analyze`, method: "POST" });
+  const url = `${API_URL}/api/viral/analyze`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: accessToken
+        ? { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }
+        : { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+  } catch {
+    throw new Error(
+      [
+        "未取得 API HTTP 响应。",
+        "code: cors_or_api_unreachable",
+        "stage: analyzing",
+        "request_id: unavailable",
+        "retryable: true",
+        `endpoint: ${url}`,
+      ].join("\n"),
+    );
+  }
+  return parseResponse<ViralAnalyzeResult>(response, { url, method: "POST" });
 }
 
 export async function resolveVideoLink(sourceUrl: string, accessToken?: string): Promise<VideoLinkResolveResult> {

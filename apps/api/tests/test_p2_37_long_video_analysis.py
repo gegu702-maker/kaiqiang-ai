@@ -13,6 +13,7 @@ from app.api import viral as viral_api
 from app.core.auth import get_bearer_token
 from app.core.supabase import get_supabase
 from app.services.asr_service import ASRResult, ASRSegment
+from app.services.llm_provider import LLMProviderError
 from app.services import viral_analyzer, viral_diagnostics, viral_pipeline
 from app.services.viral_idempotency import InMemoryIdempotencyStore, viral_analysis_idempotency
 
@@ -902,6 +903,42 @@ def test_manual_degraded_success_is_returned_normally_with_one_variant(monkeypat
     assert result["filtered_duplicate_count"] == 2
 
 
+def test_manual_provider_contract_error_is_structured_instead_of_raw_500(monkeypatch):
+    async def fake_analyze(*_args, **_kwargs):
+        raise LLMProviderError(
+            code="llm_json_parse_error",
+            message="invalid json",
+            retryable=False,
+            http_status=200,
+            content_length=1349,
+            finish_reason="stop",
+            parser_repair_applied=True,
+        )
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", lambda *_args: {"id": "u1", "email": "u@example.com"})
+    monkeypatch.setattr(viral_api, "analyze_viral_script", fake_analyze)
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(
+            viral_api.analyze_viral(
+                payload=viral_api.ViralAnalyzeRequest(
+                    raw_script="完整财经文本",
+                    industry="knowledge",
+                    language="zh",
+                    rewrite_length="match_source",
+                ),
+                token="token",
+                supabase=_Supabase(),
+            )
+        )
+
+    assert raised.value.status_code == 502
+    assert raised.value.detail["code"] == "analysis_llm_provider_failed"
+    assert raised.value.detail["failure_code"] == "llm_json_parse_error"
+    assert raised.value.detail["stage"] == "analyzing"
+    assert raised.value.detail["retryable"] is False
+    assert re.fullmatch(r"viral_[0-9a-f]{16}", raised.value.detail["request_id"])
+
+
 def test_frontend_renders_actual_variant_count_and_non_blocking_degradation_notice():
     source = (
         Path(__file__).resolve().parents[2]
@@ -1214,6 +1251,11 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "process.env.SERVER_API_URL || CLIENT_API_URL" in api_source
     assert "request_id: unavailable" in api_source
     assert "retryable: true" in api_source
+    assert "formatStructuredApiError" in api_source
+    assert "structured.request_id" in api_source
+    assert "structured.retryable" in api_source
+    assert "未取得 API HTTP 响应。" in api_source
+    assert "Body: ${message || body" in api_source
     assert "endpoint:" in api_source
     assert 'setRequestHeader("Content-Type"' not in api_source
     assert "上传进度：" in component_source

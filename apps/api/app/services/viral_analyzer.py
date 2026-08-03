@@ -598,6 +598,80 @@ def _primary_rank(snapshot: dict[str, Any], *, minimum_chars: int, maximum_chars
     )
 
 
+LLM_OUTPUT_CONTRACT_ERROR_CODES = {
+    "llm_empty_content",
+    "llm_empty_content_exhausted",
+    "llm_json_contract_error",
+    "llm_json_parse_error",
+    "llm_json_missing_fields",
+}
+
+
+def _is_llm_output_contract_error(error: LLMProviderError) -> bool:
+    return error.code in LLM_OUTPUT_CONTRACT_ERROR_CODES
+
+
+def _llm_error_diagnostic(error: LLMProviderError) -> dict[str, Any]:
+    return {
+        "error_code": error.code,
+        "error_type": type(error).__name__,
+        "http_status": error.http_status,
+        "response_length": error.response_length,
+        "schema_error": error.schema_error,
+        "content_length": error.content_length,
+        "reasoning_content_length": error.reasoning_content_length,
+        "completion_tokens": error.completion_tokens,
+        "reasoning_tokens": error.reasoning_tokens,
+        "finish_reason": error.finish_reason,
+        "content_type": error.content_type,
+        "parser_repair_applied": error.parser_repair_applied,
+    }
+
+
+def _validated_fact_reviews(
+    response: dict[str, Any],
+    *,
+    expected_indexes: set[int],
+    compact: bool,
+) -> dict[int, dict[str, Any]]:
+    reviews_value = [response.get("review")] if compact else response.get("reviews")
+    reviews = reviews_value if isinstance(reviews_value, list) else []
+    reviews_by_index = {
+        item.get("index"): item
+        for item in reviews
+        if isinstance(item, dict)
+        and isinstance(item.get("index"), int)
+        and item.get("index") in expected_indexes
+    }
+    required_fields = {
+        "index",
+        "audited_script",
+        "removed_unsupported_claims",
+        "unsupported_remaining",
+        "unsupported_spans",
+        "used_source_fact_ids",
+    }
+    fields_valid = all(
+        required_fields <= set(item)
+        and isinstance(item.get("audited_script"), str)
+        and bool(str(item.get("audited_script") or "").strip())
+        and isinstance(item.get("removed_unsupported_claims"), list)
+        and isinstance(item.get("unsupported_remaining"), bool)
+        and isinstance(item.get("unsupported_spans"), list)
+        and isinstance(item.get("used_source_fact_ids"), list)
+        for item in reviews_by_index.values()
+    )
+    if set(reviews_by_index) != expected_indexes or not fields_valid:
+        raise LLMProviderError(
+            code="llm_json_missing_fields",
+            message="AI fact review 响应缺少必须字段。",
+            retryable=False,
+            schema_error="missing_or_invalid:fact_review_fields",
+            content_type="parsed_json",
+        )
+    return reviews_by_index
+
+
 def sanitize_rewrite_script(script: str) -> str:
     text = str(script or "").strip()
     text = SCRIPT_PREFIX_RE.sub("", text)
@@ -1424,13 +1498,7 @@ async def analyze_viral_script(
                                 active_initial_calls -= 1
                 except LLMProviderError as error:
                     network_retryable = _retryable_initial_provider_error(error)
-                    application_contract_failure = error.code in {
-                        "llm_empty_content",
-                        "llm_empty_content_exhausted",
-                        "llm_json_contract_error",
-                        "llm_json_parse_error",
-                        "llm_json_missing_fields",
-                    }
+                    application_contract_failure = _is_llm_output_contract_error(error)
                     can_compact_regenerate = (
                         application_contract_failure
                         and not use_compact_regeneration
@@ -2046,40 +2114,9 @@ async def analyze_viral_script(
 
     if requires_fact_review:
         fact_review_started = time.perf_counter()
-        try:
-            fact_review_call_number = await llm_budget.reserve()
-        except _LLMCallBudgetExceeded:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "code": "analysis_llm_call_budget_exhausted",
-                    "stage": "fact_review",
-                    "message": "模型调用已达到请求级资源上限。",
-                    "retryable": False,
-                    "actual_chars": normalized_lengths,
-                    "stage_timings": stage_timings,
-                    "llm_call_count": llm_budget.used_calls,
-                    "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
-                },
-            )
-        call_allocation_diagnostics.append(
-            {
-                "stage": "A_FACT_REVIEW",
-                "version": "A",
-                "attempt": 1,
-                "failure_category": "fact_safety",
-                "chars_before": normalized_lengths[0] if normalized_lengths else 0,
-                "call_number": fact_review_call_number,
-                "remaining_budget": llm_budget.remaining_calls,
-                "provenance": result["rewrites"][0].get("provenance", "independent_initial"),
-            }
-        )
-        fact_review = await LLMProvider().generate_json(
-            system=(
-                "你是严格的来源事实审校编辑。原始转写是唯一事实来源。"
-                "你的任务是删除或改写无来源事实，不是创作新内容。只输出合法 JSON。"
-            ),
-            payload={
+        initial_primary_chars = normalized_lengths[0] if normalized_lengths else 0
+        fact_review_attempts: list[dict[str, Any]] = []
+        full_fact_review_payload = {
                 "corrected_transcript": raw_script,
                 "source_fact_ledger": source_fact_ledger,
                 "current_rewrites": [
@@ -2135,13 +2172,228 @@ async def analyze_viral_script(
                         }
                     ]
                 },
+            }
+        compact_fact_review_payload = {
+            "source_fact_ledger": source_fact_ledger,
+            "current_rewrite": {**result["rewrites"][0], "index": 0},
+            "hard_violations": hard_violations_before[0] if hard_violations_before else [],
+            "length_target": {
+                "minimum_chars": minimum_rewrite_chars,
+                "center_chars": target_center_chars,
+                "maximum_chars": maximum_chars,
+                "unit": "cjk_chars",
             },
-            max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
-            attempt_label=f"fact_review_call_{fact_review_call_number}",
-            max_transport_attempts=1,
-            allow_format_repair=False,
-            thinking_mode="disabled",
-        )
+            "requirements": [
+                "只输出单个合法 JSON 对象，不输出 markdown、分析、解释、规则复述、来源原文或其他版本",
+                "JSON 只能包含 review；review 只能包含 index、audited_script、removed_unsupported_claims、unsupported_remaining、unsupported_spans、used_source_fact_ids",
+                "只审校当前 A 主稿；只使用 source_fact_ledger 支持的事实，不新增事实",
+                "安全内容原样保留，仅局部删除或替换无来源内容，并保留完整句尾",
+            ],
+            "schema": {
+                "review": {
+                    "index": 0,
+                    "audited_script": "审校后的 A 主稿正文",
+                    "removed_unsupported_claims": [],
+                    "unsupported_remaining": False,
+                    "unsupported_spans": [],
+                    "used_source_fact_ids": ["正文实际覆盖的 source fact ID"],
+                }
+            },
+        }
+        fact_review: dict[str, Any] = {}
+        reviews_by_index: dict[int, dict[str, Any]] = {}
+        use_compact_fact_review = False
+        network_retries_used = 0
+        contract_regenerations_used = 0
+        pending_retry_delay: float | None = None
+        while True:
+            if pending_retry_delay is not None:
+                await asyncio.sleep(pending_retry_delay)
+                pending_retry_delay = None
+            attempt_number = len(fact_review_attempts) + 1
+            attempt_started = time.perf_counter()
+            mode = (
+                "compact_fact_review_regeneration"
+                if use_compact_fact_review
+                else "initial_fact_review"
+            )
+            try:
+                fact_review_call_number = await llm_budget.reserve()
+            except _LLMCallBudgetExceeded:
+                stage_timings.append(
+                    {
+                        "stage": "A_FACT_REVIEW",
+                        "elapsed_ms": round((time.perf_counter() - fact_review_started) * 1000),
+                        "parallel": False,
+                        "outcome": "call_budget_exhausted",
+                    }
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "code": "analysis_fact_review_contract_failed",
+                        "stage": "a_fact_review",
+                        "message": "事实审校未能在请求级模型调用预算内完成。",
+                        "retryable": True,
+                        "a_primary_chars": initial_primary_chars,
+                        "actual_chars": [initial_primary_chars],
+                        "llm_call_count": llm_budget.used_calls,
+                        "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
+                        "attempt_status": fact_review_attempts,
+                        "failure_code": "llm_call_budget_exhausted",
+                    },
+                )
+            allocation = {
+                "stage": "A_FACT_REVIEW",
+                "version": "A",
+                "attempt": attempt_number,
+                "mode": mode,
+                "failure_category": "fact_safety",
+                "chars_before": initial_primary_chars,
+                "call_number": fact_review_call_number,
+                "remaining_budget": llm_budget.remaining_calls,
+                "provenance": result["rewrites"][0].get("provenance", "independent_initial"),
+            }
+            call_allocation_diagnostics.append(allocation)
+            attempt_record: dict[str, Any] = {
+                "attempt": attempt_number,
+                "mode": mode,
+                "state": "running",
+                "llm_call_number": fact_review_call_number,
+            }
+            fact_review_attempts.append(attempt_record)
+            try:
+                fact_review = await LLMProvider().generate_json(
+                    system=(
+                        "只输出单个事实审校 JSON 对象；禁止 markdown、分析、解释、规则复述、来源原文或其他版本。"
+                        if use_compact_fact_review
+                        else (
+                            "你是严格的来源事实审校编辑。原始转写是唯一事实来源。"
+                            "你的任务是删除或改写无来源事实，不是创作新内容。只输出合法 JSON。"
+                        )
+                    ),
+                    payload=(
+                        compact_fact_review_payload
+                        if use_compact_fact_review
+                        else full_fact_review_payload
+                    ),
+                    max_tokens=MAX_SUPPLEMENT_RESPONSE_TOKENS,
+                    attempt_label=(
+                        "compact_fact_review_regeneration"
+                        if use_compact_fact_review
+                        else f"fact_review_call_{fact_review_call_number}"
+                    ),
+                    max_transport_attempts=1,
+                    allow_format_repair=False,
+                    thinking_mode="disabled",
+                )
+                reviews_by_index = _validated_fact_reviews(
+                    fact_review,
+                    expected_indexes=set(range(len(result["rewrites"]))),
+                    compact=use_compact_fact_review,
+                )
+            except LLMProviderError as error:
+                contract_failure = (
+                    _is_llm_output_contract_error(error)
+                    or error.code == "llm_response_truncated"
+                )
+                can_compact_regenerate = (
+                    contract_failure
+                    and not use_compact_fact_review
+                    and contract_regenerations_used
+                    < SOURCE_INITIAL_MAX_EXHAUSTION_REGENERATIONS
+                )
+                can_network_retry = (
+                    _retryable_initial_provider_error(error)
+                    and not use_compact_fact_review
+                    and network_retries_used < SOURCE_INITIAL_MAX_NETWORK_RETRIES
+                )
+                attempt_record.update(
+                    {
+                        **_llm_error_diagnostic(error),
+                        "state": "failed",
+                        "retryable": can_compact_regenerate or can_network_retry,
+                        "elapsed_ms": round((time.perf_counter() - attempt_started) * 1000),
+                    }
+                )
+                allocation.update(
+                    {
+                        "outcome": "failed",
+                        "error_code": error.code,
+                        "elapsed_ms": attempt_record["elapsed_ms"],
+                    }
+                )
+                logger.warning(
+                    "viral_fact_review request_id=%s attempt=%s mode=%s outcome=failed "
+                    "error_code=%s http_status=%s finish_reason=%s content_length=%s "
+                    "parser_repair_applied=%s elapsed_ms=%s",
+                    current_request_id(),
+                    attempt_number,
+                    mode,
+                    error.code,
+                    error.http_status,
+                    error.finish_reason or "none",
+                    error.content_length,
+                    error.parser_repair_applied,
+                    attempt_record["elapsed_ms"],
+                )
+                if can_compact_regenerate:
+                    contract_regenerations_used += 1
+                    use_compact_fact_review = True
+                    continue
+                if can_network_retry:
+                    network_retries_used += 1
+                    pending_retry_delay = (
+                        SOURCE_RETRY_BASE_DELAY_SECONDS
+                        * (2 ** (network_retries_used - 1))
+                        + random.uniform(0.0, SOURCE_RETRY_JITTER_SECONDS)
+                    )
+                    continue
+                stage_timings.append(
+                    {
+                        "stage": "A_FACT_REVIEW",
+                        "elapsed_ms": round((time.perf_counter() - fact_review_started) * 1000),
+                        "parallel": False,
+                        "outcome": "failed",
+                    }
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "code": "analysis_fact_review_contract_failed",
+                        "stage": "a_fact_review",
+                        "message": "事实审校响应连续未满足 JSON 契约，已受控停止。",
+                        "retryable": True,
+                        "a_primary_chars": initial_primary_chars,
+                        "actual_chars": [initial_primary_chars],
+                        "llm_call_count": llm_budget.used_calls,
+                        "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
+                        "attempt_status": fact_review_attempts,
+                        "failure_code": error.code,
+                    },
+                ) from error
+            attempt_record.update(
+                {
+                    "state": "succeeded",
+                    "elapsed_ms": round((time.perf_counter() - attempt_started) * 1000),
+                }
+            )
+            allocation.update(
+                {
+                    "outcome": "succeeded",
+                    "elapsed_ms": attempt_record["elapsed_ms"],
+                }
+            )
+            logger.warning(
+                "viral_fact_review request_id=%s attempt=%s mode=%s outcome=succeeded "
+                "llm_call_number=%s elapsed_ms=%s",
+                current_request_id(),
+                attempt_number,
+                mode,
+                fact_review_call_number,
+                attempt_record["elapsed_ms"],
+            )
+            break
         llm_call_count = llm_budget.used_calls
         stage_timings.append(
             {
@@ -2150,30 +2402,7 @@ async def analyze_viral_script(
                 "parallel": False,
             }
         )
-        reviews_value = fact_review.get("reviews")
-        reviews_value = reviews_value if isinstance(reviews_value, list) else []
-        reviews_by_index = {
-            item.get("index"): item
-            for item in reviews_value
-            if isinstance(item, dict)
-            and isinstance(item.get("index"), int)
-            and 0 <= item["index"] < len(result["rewrites"])
-        }
-        if set(reviews_by_index) != set(range(len(result["rewrites"]))):
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "code": "analysis_fact_fidelity_failed",
-                    "stage": "fact_review",
-                    "message": "事实保真审查返回字段不完整。",
-                    "retryable": True,
-                    "actual_chars": normalized_lengths,
-                    "target_chars": minimum_rewrite_chars,
-                    "target_min_chars": minimum_rewrite_chars,
-                    "target_center_chars": target_center_chars,
-                    "maximum_chars": maximum_chars,
-                },
-            )
+        fact_fidelity_diagnostic["review_attempts"] = fact_review_attempts
 
         audited_rewrites = []
         removed_claims: list[list[dict[str, str]]] = []

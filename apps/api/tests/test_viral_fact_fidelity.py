@@ -1458,3 +1458,123 @@ def test_request_level_llm_call_budget_is_strict(monkeypatch):
     assert result["diagnostic"]["scaffold_polish"]["attempted"] is True
     assert result["generated_count"] == 1
     assert result["rewrites"][0]["provenance"] == "deterministic_scaffold"
+
+
+def test_fact_review_unclosed_json_compactly_recovers_preserved_666_primary(monkeypatch):
+    _mock_source_coverage(monkeypatch)
+    primary_script = _sized("反差", "甲", 666)
+    calls = []
+
+    async def fake_generate(_self, *, payload, **kwargs):
+        if "variant_task" in payload:
+            index = payload["variant_task"]["index"]
+            calls.append(("generation", index, kwargs.get("attempt_label")))
+            scripts = [primary_script, _sized("痛点", "乙", 700), _sized("表达", "丙", 710)]
+            return _initial_variant(payload, scripts)
+        if "current_rewrites" in payload:
+            calls.append(("review", "initial", kwargs.get("attempt_label")))
+            raise LLMProviderError(
+                code="llm_json_parse_error",
+                message="'{' was never closed",
+                retryable=False,
+                http_status=200,
+                response_length=1349,
+                content_length=1349,
+                finish_reason="stop",
+                content_type="str",
+                parser_repair_applied=True,
+            )
+        if "current_rewrite" in payload:
+            calls.append(("review", "compact", kwargs.get("attempt_label")))
+            assert payload["current_rewrite"]["script"] == primary_script
+            assert kwargs["thinking_mode"] == "disabled"
+            return {
+                "review": {
+                    "index": 0,
+                    "audited_script": primary_script,
+                    "removed_unsupported_claims": [],
+                    "unsupported_remaining": False,
+                    "unsupported_spans": [],
+                    "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+                }
+            }
+        raise AssertionError(f"unexpected payload keys: {sorted(payload)}")
+
+    result = _run(monkeypatch, fake_generate)
+
+    assert [item for item in calls if item[0] == "generation" and item[1] == 0] == [
+        ("generation", 0, "variant_0_attempt_1")
+    ]
+    review_calls = [item for item in calls if item[0] == "review"]
+    assert review_calls == [
+        ("review", "initial", "fact_review_call_2"),
+        ("review", "compact", "compact_fact_review_regeneration"),
+    ]
+    assert [(item[0], item[1]) for item in calls[:3]] == [
+        ("generation", 0),
+        ("review", "initial"),
+        ("review", "compact"),
+    ]
+    assert result["rewrites"][0]["provenance"] == "model_rewrite_with_neutral_closing"
+    assert 674 <= result["rewrites"][0]["actual_chars"] <= 824
+    assert result["model_primary_passed"] is True
+    assert result["degraded_to_scaffold"] is False
+    review_attempts = result["diagnostic"]["fact_fidelity"]["review_attempts"]
+    assert [item["mode"] for item in review_attempts] == [
+        "initial_fact_review",
+        "compact_fact_review_regeneration",
+    ]
+    assert review_attempts[0]["content_length"] == 1349
+    assert review_attempts[0]["parser_repair_applied"] is True
+    assert result["diagnostic"]["llm_call_count"] <= 9
+
+
+def test_fact_review_two_unclosed_json_failures_return_controlled_502(monkeypatch):
+    _mock_source_coverage(monkeypatch)
+    primary_script = _sized("反差", "甲", 666)
+    generation_calls = 0
+    review_calls = []
+
+    async def fake_generate(_self, *, payload, **kwargs):
+        nonlocal generation_calls
+        if "variant_task" in payload:
+            generation_calls += 1
+            assert payload["variant_task"]["index"] == 0
+            return _initial_variant(payload, [primary_script, primary_script, primary_script])
+        if "current_rewrites" in payload or "current_rewrite" in payload:
+            review_calls.append((payload, kwargs))
+            raise LLMProviderError(
+                code="llm_json_parse_error",
+                message="'{' was never closed",
+                retryable=False,
+                http_status=200,
+                response_length=1349,
+                content_length=1349,
+                finish_reason="stop",
+                content_type="str",
+                parser_repair_applied=True,
+            )
+        raise AssertionError("B/C must not run while A fact review is unresolved")
+
+    with pytest.raises(HTTPException) as raised:
+        _run(monkeypatch, fake_generate)
+
+    assert raised.value.status_code == 502
+    detail = raised.value.detail
+    assert detail["code"] == "analysis_fact_review_contract_failed"
+    assert detail["stage"] == "a_fact_review"
+    assert detail["retryable"] is True
+    assert detail["a_primary_chars"] == 666
+    assert detail["actual_chars"] == [666]
+    assert detail["llm_call_count"] == 3
+    assert detail["maximum_llm_calls"] == 9
+    assert detail["failure_code"] == "llm_json_parse_error"
+    assert generation_calls == 1
+    assert len(review_calls) == 2
+    assert review_calls[1][0]["current_rewrite"]["script"] == primary_script
+    assert review_calls[1][1]["attempt_label"] == "compact_fact_review_regeneration"
+    assert [item["mode"] for item in detail["attempt_status"]] == [
+        "initial_fact_review",
+        "compact_fact_review_regeneration",
+    ]
+    assert all(item["content_length"] == 1349 for item in detail["attempt_status"])

@@ -12,6 +12,7 @@ from app.core.auth import get_authenticated_user, get_bearer_token
 from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.services.video_link_resolver import check_video_link, resolve_video_link
+from app.services.llm_provider import LLMProviderError
 from app.services.viral_analyzer import analyze_viral_script
 from app.services.viral_pipeline import run_uploaded_viral_pipeline, run_viral_pipeline
 from app.services.viral_diagnostics import bind_request_id, new_request_id, reset_request_id
@@ -285,6 +286,28 @@ async def analyze_viral(
             error.detail.get("code", "analysis_http_error") if isinstance(error.detail, dict) else "analysis_http_error",
         )
         raise
+    except LLMProviderError as error:
+        detail = {
+            "code": "analysis_llm_provider_failed",
+            "stage": "analyzing",
+            "message": "模型响应未满足分析契约，已受控停止。",
+            "retryable": bool(error.retryable),
+            "request_id": request_id,
+            "client_submission_id": submission_id or None,
+            "failure_code": error.code,
+        }
+        if claim is not None:
+            viral_analysis_idempotency.complete(
+                user_id=user["id"],
+                submission_id=submission_id,
+                outcome=IdempotencyOutcome(status_code=502, payload=detail),
+            )
+        logger.warning(
+            "viral_analyze request_id=%s stage=analyzing outcome=provider_failure code=%s",
+            request_id,
+            error.code,
+        )
+        raise HTTPException(status_code=502, detail=detail) from error
     except BaseException:
         if claim is not None:
             viral_analysis_idempotency.complete(
