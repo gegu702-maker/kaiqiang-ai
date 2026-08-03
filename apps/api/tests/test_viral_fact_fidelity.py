@@ -164,7 +164,8 @@ def test_progressive_variant_deduplication_contract(
     assert result["generated_count"] == expected_count
     assert len(result["rewrites"]) == expected_count
     assert result["filtered_duplicate_count"] == expected_duplicates
-    assert result["degraded"] is (expected_count < 3)
+    assert result["degraded"] is False
+    assert result["model_primary_passed"] is True
     similarity_failures = [
         item
         for item in result["diagnostic"]["candidate_failure_diagnostics"]
@@ -305,9 +306,19 @@ def test_source_numbers_institutions_and_indicators_remain_allowed():
     assert "ETF" in ledger["hard_fact_tokens"]
     assert any("花旗集团" in item for item in ledger["organizations"])
     assert any("摩根士丹利" in item for item in ledger["organizations"])
+    assert ledger["tier_counts"] == {
+        "core_required": 5,
+        "risk_required": 3,
+        "optional_support": 13,
+    }
+    assert ledger["classification_source"] == "deterministic_rule_v1"
+    full_coverage = map_source_fact_coverage(ledger, FINANCE_FIXTURE)
+    assert full_coverage["tier_coverage"]["core_required"]["missing_fact_ids"] == []
+    assert full_coverage["tier_coverage"]["risk_required"]["missing_fact_ids"] == []
+    assert unsupported_hard_facts(FINANCE_FIXTURE, FINANCE_FIXTURE) == []
 
 
-def test_financial_fact_review_repairs_all_versions_and_preserves_dynamic_range(monkeypatch):
+def test_financial_fact_review_repairs_primary_before_optional_variants(monkeypatch):
     _mock_source_coverage(monkeypatch, patch_hard_facts=False)
     calls = []
     bad_scripts = [
@@ -324,7 +335,10 @@ def test_financial_fact_review_repairs_all_versions_and_preserves_dynamic_range(
     async def fake_generate(_self, *, payload, **_kwargs):
         calls.append(payload)
         if "variant_task" in payload:
-            return _initial_variant(payload, bad_scripts)
+            return _initial_variant(
+                payload,
+                [bad_scripts[0], clean_scripts[1], clean_scripts[2]],
+            )
         if "current_script" in payload:
             raise AssertionError("审查结果已合格，不应修复")
         requirements = " ".join(payload["requirements"])
@@ -333,8 +347,8 @@ def test_financial_fact_review_repairs_all_versions_and_preserves_dynamic_range(
         return {
             "reviews": [
                 {
-                    "index": index,
-                    "audited_script": script,
+                    "index": item["index"],
+                    "audited_script": clean_scripts[item["index"]],
                     "removed_unsupported_claims": [
                         {
                             "span": "原无来源片段",
@@ -346,20 +360,20 @@ def test_financial_fact_review_repairs_all_versions_and_preserves_dynamic_range(
                     "unsupported_remaining": False,
                     "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
                 }
-                for index, script in enumerate(clean_scripts)
+                for item in payload["current_rewrites"]
             ]
         }
 
     result = _run(monkeypatch, fake_generate)
     assert len(calls) == 4
-    assert len({item["script"][:12] for item in result["rewrites"]}) == 3
-    assert all(674 <= length <= 824 for length in result["diagnostic"]["actual_chars"])
+    assert result["model_primary_passed"] is True
+    assert 674 <= result["diagnostic"]["actual_chars"][0] <= 824
     fidelity = result["diagnostic"]["fact_fidelity"]
     assert fidelity["reviewed"] is True
     assert all(fidelity["hard_violations_before"])
-    assert fidelity["hard_violations_after"] == [[], [], []]
+    assert fidelity["hard_violations_after"][0] == []
     assert fidelity["unsupported_remaining"] == []
-    assert all(fidelity["removed_claims"])
+    assert fidelity["removed_claims"][0]
 
 
 def test_fact_review_cannot_hide_a_fabricated_case_by_only_removing_its_number(monkeypatch):
@@ -758,7 +772,7 @@ def test_neutral_micro_gap_closings_are_domain_safe():
 def test_672_model_primary_is_rescued_without_primary_or_scaffold_call(monkeypatch):
     _mock_source_coverage(monkeypatch)
     calls = []
-    reviewed_lengths = [401, 463, 672]
+    reviewed_lengths = [672, 700, 710]
 
     async def fake_generate(_self, *, payload, **_kwargs):
         if "variant_task" in payload:
@@ -785,7 +799,7 @@ def test_672_model_primary_is_rescued_without_primary_or_scaffold_call(monkeypat
                         "unsupported_remaining": False,
                         "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
                     }
-                    for index in range(3)
+                    for index in range(len(payload["current_rewrites"]))
                 ]
             }
         if "current_script" in payload and not payload.get("primary_convergence"):
@@ -808,12 +822,12 @@ def test_672_model_primary_is_rescued_without_primary_or_scaffold_call(monkeypat
     )
     assert 674 <= rescued["actual_chars"] <= 824
     assert rescued["script"].endswith("相关信息仍需持续核对。")
-    assert result["diagnostic"]["primary_selection"]["selected_index"] == 2
+    assert result["diagnostic"]["primary_selection"]["selected_index"] == 0
     assert result["diagnostic"]["primary_selection"]["micro_gap_rescue"]["succeeded"] is True
     assert not any(stage in {"primary", "scaffold_polish"} for stage, _index in calls)
     assert result["fallback_generated_count"] == 0
     assert result["degraded_to_scaffold"] is False
-    assert result["diagnostic"]["llm_call_count"] == 6
+    assert result["diagnostic"]["llm_call_count"] == 4
     assert result["diagnostic"]["llm_call_count"] <= 9
     for diagnostic in result["diagnostic"]["candidate_failure_diagnostics"]:
         assert "script" not in diagnostic
@@ -836,8 +850,8 @@ def test_real_failure_shape_prioritizes_one_primary_before_optional_variants(mon
     _mock_source_coverage(monkeypatch)
     calls = []
     primary_attempt = 0
-    initial_lengths = [549, 449, 550]
-    reviewed_lengths = [515, 459, 525]
+    initial_lengths = [552, 700, 710]
+    reviewed_lengths = [570, 700, 710]
 
     async def fake_generate(_self, *, payload, **_kwargs):
         nonlocal primary_attempt
@@ -865,13 +879,16 @@ def test_real_failure_shape_prioritizes_one_primary_before_optional_variants(mon
                         "unsupported_remaining": False,
                         "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
                     }
-                    for index in range(3)
+                    for index in range(len(payload["current_rewrites"]))
                 ]
             }
         if payload.get("primary_convergence"):
             primary_attempt += 1
             calls.append(("primary", payload["variant"]["index"]))
-            length = 574 if primary_attempt == 1 else 780
+            assert payload["failure_category"] == "length"
+            assert payload["current_chars"] == 570
+            assert "不得压缩或删除已有安全句" in " ".join(payload["requirements"])
+            length = 740
             return {
                 "title": "收敛主稿",
                 "script": _sized("表达", "丙", length),
@@ -890,15 +907,70 @@ def test_real_failure_shape_prioritizes_one_primary_before_optional_variants(mon
         raise AssertionError(f"unexpected payload keys: {sorted(payload)}")
 
     result = _run(monkeypatch, fake_generate)
-    assert result["diagnostic"]["primary_selection"]["selected_index"] == 2
-    assert result["diagnostic"]["primary_selection"]["attempts"][0]["actual_chars"] == 574
-    assert result["diagnostic"]["primary_selection"]["attempts"][1]["actual_chars"] == 780
+    assert result["diagnostic"]["primary_selection"]["selected_index"] == 0
+    assert result["diagnostic"]["primary_selection"]["attempts"][0]["actual_chars"] == 740
+    assert result["diagnostic"]["primary_selection"]["attempts"][0]["actual_gain"] == 170
     review_position = calls.index(("review", None))
-    assert calls[review_position + 1 : review_position + 3] == [("primary", 2), ("primary", 2)]
-    assert all(stage != "optional" for stage, _index in calls[: review_position + 3])
+    assert calls[review_position + 1] == ("primary", 0)
+    assert all(stage != "optional" for stage, _index in calls[: review_position + 2])
     assert result["diagnostic"]["llm_call_count"] <= 9
     assert result["diagnostic"]["scaffold_polish"]["attempted"] is False
     assert result["model_rewrite_succeeded"] is True
+    assert result["model_primary_passed"] is True
+    assert result["fallback_generated_count"] == 0
+
+
+def test_primary_hard_fact_failure_uses_local_replacement_only(monkeypatch):
+    _mock_source_coverage(monkeypatch, patch_hard_facts=False)
+    calls = []
+    bad_script = _sized("这是80%无来源数字", "甲", 700)
+    safe_script = _sized("这是局部替换后的安全主稿", "甲", 700)
+
+    monkeypatch.setattr(
+        viral_analyzer,
+        "unsupported_hard_facts",
+        lambda _source, output: (
+            [{"category": "number_or_time", "value": "80%"}]
+            if "80%" in output
+            else []
+        ),
+    )
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" in payload:
+            index = payload["variant_task"]["index"]
+            scripts = [bad_script, _sized("补充角度", "乙", 700), _sized("补充分析", "丙", 710)]
+            return _initial_variant(payload, scripts)
+        if "current_rewrites" in payload:
+            return {
+                "reviews": [{
+                    "index": 0,
+                    "audited_script": bad_script,
+                    "removed_unsupported_claims": [],
+                    "unsupported_spans": [],
+                    "unsupported_remaining": False,
+                    "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+                }]
+            }
+        if payload.get("primary_convergence"):
+            calls.append(payload)
+            assert payload["failure_category"] == "hard_fact"
+            assert payload["current_script"] == bad_script
+            requirements = " ".join(payload["requirements"])
+            assert "局部替换" in requirements
+            assert "安全段落必须原样保留" in requirements
+            return {
+                "title": "安全主稿",
+                "script": safe_script,
+                "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"][:8],
+            }
+        raise AssertionError(f"unexpected payload keys: {sorted(payload)}")
+
+    result = _run(monkeypatch, fake_generate)
+    assert len(calls) == 1
+    assert result["model_primary_passed"] is True
+    assert result["rewrites"][0]["script"] == safe_script
+    assert result["rewrites"][0]["fact_fidelity"]["hard_violations"] == []
 
 
 @pytest.mark.parametrize("polish_succeeds", [True, False])
@@ -959,12 +1031,12 @@ def test_real_failure_shape_reserves_scaffold_polish_and_reports_fallback(monkey
     assert [stage for stage, _index in calls].count("primary") == 2
     assert calls[-1] == ("scaffold_polish", None)
     assert len(polish_payloads) == (1 if polish_succeeds else 2)
-    assert result["diagnostic"]["llm_call_count"] == (7 if polish_succeeds else 8)
+    assert result["diagnostic"]["llm_call_count"] == (5 if polish_succeeds else 6)
     assert result["diagnostic"]["llm_call_count"] <= 9
     assert result["generated_count"] == 1
     assert result["filtered_duplicate_count"] + result["filtered_invalid_count"] == 2
     assert result["filtered_invalid_count"] == 2
-    assert result["model_invalid_count"] == 3
+    assert result["model_invalid_count"] == 1
     assert result["fallback_generated_count"] == 1
     assert result["degraded_to_scaffold"] is True
     assert result["model_rewrite_succeeded"] is False
@@ -974,7 +1046,7 @@ def test_real_failure_shape_reserves_scaffold_polish_and_reports_fallback(monkey
         assert 674 <= result["rewrites"][0]["actual_chars"] <= 824
         assert "\n\n" in result["rewrites"][0]["script"]
         assert "\n" not in result["rewrites"][0]["script"].replace("\n\n", "")
-        assert result["degradation_reason"] == "独立改写版本未通过校验，当前展示基于来源事实的AI润色稿。"
+        assert result["degradation_reason"] == "独立AI主稿未通过质量校验，当前展示基于来源事实的AI润色稿。"
     else:
         assert polish_payloads[1]["scaffold_polish_retry"] is True
         assert polish_payloads[1]["previous_failure"]["actual_chars"] == 500
@@ -987,7 +1059,10 @@ def test_real_failure_shape_reserves_scaffold_polish_and_reports_fallback(monkey
 
 
 def test_parallel_initial_generation_exception_is_controlled(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
         if payload["variant_task"]["index"] == 1:
             raise RuntimeError("provider limit")
         return _initial_variant(payload, [_sized("甲", "甲", 700)] * 3)
@@ -1003,6 +1078,8 @@ def test_missing_independent_rewrite_json_field_is_controlled(monkeypatch):
     calls = [0, 0, 0]
 
     async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
         index = payload["variant_task"]["index"]
         calls[index] += 1
         if index == 2:
@@ -1013,7 +1090,7 @@ def test_missing_independent_rewrite_json_field_is_controlled(monkeypatch):
     result = _run(monkeypatch, fake_generate)
     assert calls == [1, 1, 2]
     assert result["diagnostic"]["version_states"][2]["error_code"] == "llm_json_missing_fields"
-    assert result["diagnostic"]["llm_call_count"] == 4
+    assert result["diagnostic"]["llm_call_count"] == 5
     assert result["generated_count"] >= 1
 
 
@@ -1034,6 +1111,7 @@ def _successful_review(payload):
 
 
 def test_b_connection_failure_retries_only_b_and_never_exceeds_concurrency_limit(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     active = 0
     maximum_active = 0
@@ -1081,6 +1159,7 @@ def test_b_connection_failure_retries_only_b_and_never_exceeds_concurrency_limit
     ],
 )
 def test_retryable_provider_failures_use_local_retry(monkeypatch, code, http_status):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
 
@@ -1108,6 +1187,7 @@ def test_retryable_provider_failures_use_local_retry(monkeypatch, code, http_sta
 
 
 def test_local_retry_uses_exponential_delay_with_jitter(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     sleeps = []
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
@@ -1139,10 +1219,13 @@ def test_local_retry_uses_exponential_delay_with_jitter(monkeypatch):
 
 
 def test_truncated_or_contract_failure_does_not_retry_and_preserves_other_successes(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
 
     async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
         index = payload["variant_task"]["index"]
         calls[index] += 1
         if index == 1:
@@ -1205,6 +1288,7 @@ def test_empty_content_exhaustion_compactly_regenerates_only_failed_b(monkeypatc
 
 @pytest.mark.parametrize("failure_code", ["llm_empty_content", "llm_json_parse_error"])
 def test_output_contract_failure_compactly_regenerates_only_failed_a(monkeypatch, failure_code):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     observed = []
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
@@ -1242,6 +1326,7 @@ def test_output_contract_failure_compactly_regenerates_only_failed_a(monkeypatch
 
 
 def test_missing_script_compactly_regenerates_only_failed_b(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
 
@@ -1268,6 +1353,8 @@ def test_second_json_parse_failure_stops_without_third_generation(monkeypatch):
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
 
     async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
         index = payload["variant_task"]["index"]
         calls[index] += 1
         if index == 0:
@@ -1284,9 +1371,9 @@ def test_second_json_parse_failure_stops_without_third_generation(monkeypatch):
         return _initial_variant(payload, scripts)
 
     result = _run(monkeypatch, fake_generate)
-    assert calls == [2, 1, 1]
+    assert calls == [2, 0, 0]
     assert result["diagnostic"]["version_states"][0]["error_code"] == "llm_json_parse_error"
-    assert result["diagnostic"]["llm_call_count"] == 4
+    assert result["diagnostic"]["llm_call_count"] == 3
     assert result["diagnostic"]["maximum_llm_calls"] == 9
 
 
@@ -1296,6 +1383,8 @@ def test_second_empty_content_is_marked_exhausted_without_third_generation(monke
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
 
     async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" not in payload:
+            return _successful_review(payload)
         index = payload["variant_task"]["index"]
         calls[index] += 1
         if index == 1:
@@ -1315,11 +1404,12 @@ def test_second_empty_content_is_marked_exhausted_without_third_generation(monke
     b_state = result["diagnostic"]["version_states"][1]
     assert b_state["compact_regenerations"] == 1
     assert [item["mode"] for item in b_state["attempts"]] == ["initial", "compact_regeneration"]
-    assert result["diagnostic"]["llm_call_count"] == 4
+    assert result["diagnostic"]["llm_call_count"] == 5
     assert result["diagnostic"]["maximum_llm_calls"] == 9
 
 
 def test_request_level_llm_call_budget_is_strict(monkeypatch):
+    _mock_source_coverage(monkeypatch)
     calls = [0, 0, 0]
     provider_calls = 0
     scripts = [_sized("反差", "甲", 700), _sized("痛点", "乙", 710), _sized("表达", "丙", 720)]
@@ -1356,14 +1446,15 @@ def test_request_level_llm_call_budget_is_strict(monkeypatch):
     monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_BASE_DELAY_SECONDS", 0)
     monkeypatch.setattr(viral_analyzer, "SOURCE_RETRY_JITTER_SECONDS", 0)
     result = _run(monkeypatch, fake_generate)
-    assert calls == [2, 2, 2]
-    assert provider_calls == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
-    assert result["diagnostic"]["llm_call_count"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
+    assert calls == [2, 0, 0]
+    assert provider_calls <= viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
+    assert result["diagnostic"]["llm_call_count"] <= viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
     assert result["diagnostic"]["maximum_llm_calls"] == viral_analyzer.MAX_SOURCE_CONSTRAINED_LLM_CALLS
     assert result["diagnostic"]["fact_fidelity"]["final_source_reconstruction"] == []
-    assert result["diagnostic"]["primary_selection"]["attempts"][-1]["outcome"] == (
-        "reserved_for_scaffold_polish"
-    )
+    assert result["diagnostic"]["primary_selection"]["attempts"][-1]["outcome"] in {
+        "no_progress",
+        "reserved_for_scaffold_polish",
+    }
     assert result["diagnostic"]["scaffold_polish"]["attempted"] is True
     assert result["generated_count"] == 1
     assert result["rewrites"][0]["provenance"] == "deterministic_scaffold"

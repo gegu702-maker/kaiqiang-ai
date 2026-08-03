@@ -910,7 +910,8 @@ def test_frontend_renders_actual_variant_count_and_non_blocking_degradation_noti
         / "ViralAnalyzerClient.tsx"
     ).read_text(encoding="utf-8")
     assert "result.rewrites.map((rewrite, index)" in source
-    assert "已生成 {result.generated_count ?? result.rewrites.length}" in source
+    assert "result.generation_summary" in source
+    assert 'index === 0 ? "可靠主稿" : "补充角度"' in source
     assert 'role="status"' in source
     assert "result.degradation_reason" in source
     assert "copyScript(rewrite.script, index)" in source
@@ -920,7 +921,6 @@ def test_frontend_renders_actual_variant_count_and_non_blocking_degradation_noti
     assert "三条最终实际字数" not in source
     assert 'provenance === "deterministic_scaffold"' in source
     assert 'provenance === "scaffold_polished_by_model"' in source
-    assert 'provenance === "model_rewrite_with_neutral_closing"' in source
     assert ".fill(" not in source[source.index("result.rewrites.map") :]
 
 

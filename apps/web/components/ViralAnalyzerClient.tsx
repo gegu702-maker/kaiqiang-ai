@@ -190,8 +190,10 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
     degraded_to_scaffold: payload.degraded_to_scaffold,
     provenance: payload.provenance,
     model_rewrite_succeeded: payload.model_rewrite_succeeded,
+    model_primary_passed: payload.model_primary_passed,
     degraded: payload.degraded,
     degradation_reason: payload.degradation_reason,
+    generation_summary: payload.generation_summary,
     diagnostic: payload.diagnostics?.rewrite_actual_chars?.length
       ? {
           actual_chars: payload.diagnostics.rewrite_actual_chars,
@@ -216,6 +218,7 @@ function pipelineToAnalyzeResult(payload: ViralPipelineResult): ViralAnalyzeResu
           degraded_to_scaffold: payload.degraded_to_scaffold,
           provenance: payload.provenance,
           model_rewrite_succeeded: payload.model_rewrite_succeeded,
+          model_primary_passed: payload.model_primary_passed,
           candidate_failure_diagnostics: payload.diagnostics?.candidate_failure_diagnostics,
         }
       : undefined,
@@ -402,14 +405,10 @@ export function ViralAnalyzerClient({
     return /可复用模板|可套用模板|模板是|结构是|这个版本适合|建议用户|分析如下|JSON|字段|\+（|\+【|（开头|（痛点|（行动号召|【热点事件】/i.test(script);
   }
 
-  function provenanceLabel(provenance?: string) {
+  function provenanceLabel(provenance: string | undefined, index: number) {
     if (provenance === "deterministic_scaffold") return "来源保底整理稿";
     if (provenance === "scaffold_polished_by_model") return "来源事实 AI 润色稿";
-    if (provenance === "model_rewrite_with_neutral_closing") return "AI 改写稿";
-    if (provenance === "source_constrained_repair") return "来源约束模型改写";
-    if (provenance === "final_source_reconstruction") return "来源事实模型重构";
-    if (provenance === "targeted_diversification") return "差异化模型改写";
-    return "独立模型改写";
+    return index === 0 ? "可靠主稿" : "补充角度";
   }
 
   function loadingLabel() {
@@ -903,13 +902,20 @@ export function ViralAnalyzerClient({
               ) : null}
               {result.degraded ? (
                 <div className="rounded-lg border border-amber-300/25 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100" role="status">
-                  <p>{result.degradation_reason || "部分可选角度未通过质量校验，已返回可靠稿件。"}</p>
+                  <p>{result.degradation_reason || "独立AI主稿未通过质量校验，当前展示安全降级稿。"}</p>
                   <p className="mt-1 text-xs text-amber-100/80">
-                    已生成 {result.generated_count ?? result.rewrites.length} / {result.requested_count ?? 3} 条；
-                    过滤重复 {result.filtered_duplicate_count ?? 0} 条；过滤无效 {result.filtered_invalid_count ?? 0} 条。
+                    当前展示 {result.generated_count ?? result.rewrites.length} 条；过滤重复 {result.filtered_duplicate_count ?? 0} 条；过滤无效 {result.filtered_invalid_count ?? 0} 条。
                   </p>
                 </div>
-              ) : null}
+              ) : (
+                <div className="rounded-lg border border-cyan/20 bg-cyan/5 p-3 text-sm leading-6 text-cyan-100" role="status">
+                  {result.generation_summary || (result.rewrites.length === 1
+                    ? "已生成1条可靠主稿；其他角度未通过质量校验，未展示。"
+                    : result.rewrites.length === 2
+                      ? "已生成1条可靠主稿和1条补充角度。"
+                      : "已生成1条可靠主稿和2条补充角度。")}
+                </div>
+              )}
               <ResultCard title={t.topic}>{result.topic}</ResultCard>
               <ResultCard title={t.hook}>{result.hook}</ResultCard>
               <ListCard title={t.sellingPoints} items={result.selling_points} />
@@ -930,7 +936,7 @@ export function ViralAnalyzerClient({
                         return (
                           <>
                       <h3 className="break-words text-base font-semibold text-cyan [overflow-wrap:anywhere]">{rewrite.title}</h3>
-                      <p className="mt-1 text-xs text-slate-400">{provenanceLabel(rewrite.provenance)}</p>
+                      <p className="mt-1 text-xs text-slate-400">{provenanceLabel(rewrite.provenance, index)}</p>
                       {polluted ? (
                         <p className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100">
                           该版本文案格式异常，请点击继续优化或重新生成。

@@ -79,7 +79,7 @@ def _source_flow_response(
                     "unsupported_remaining": False,
                     "used_source_fact_ids": payload["source_fact_ledger"]["fact_ids"],
                 }
-                for index in range(3)
+                for index in range(len(payload["current_rewrites"]))
             ]
         }
     if "current_script" in payload:
@@ -277,15 +277,15 @@ def test_overlong_initial_rewrites_are_fact_reviewed_and_compressed(monkeypatch)
         calls.append(payload)
         return _source_flow_response(
             payload,
-            initial_lengths=[900, 910, 920],
-            reviewed_lengths=[760, 760, 760],
+            initial_lengths=[900, 760, 780],
+            reviewed_lengths=[760, 760, 780],
         )
 
     _prepare(monkeypatch, fake_generate)
     result = _run()
     assert len(calls) == 4
-    assert result["diagnostic"]["actual_chars"] == [760, 760, 760]
-    assert result["diagnostic"]["stage_timings"][1]["stage"] == "fact_review"
+    assert result["diagnostic"]["actual_chars"] == [760, 760, 780]
+    assert result["diagnostic"]["stage_timings"][1]["stage"] == "A_FACT_REVIEW"
     assert all(item["script"].endswith("。") for item in result["rewrites"])
 
 
@@ -312,11 +312,7 @@ def test_empty_or_missing_repair_fields_use_deterministic_source_scaffold(monkey
     assert result["diagnostic"]["scaffold_polish"]["attempted"] is True
     assert result["generated_count"] == 1
     assert result["rewrites"][0]["provenance"] == "deterministic_scaffold"
-    assert result["diagnostic"]["fact_fidelity"]["hard_violations_after"] == [
-        [],
-        [],
-        [],
-    ]
+    assert result["diagnostic"]["fact_fidelity"]["hard_violations_after"] == [[]]
 
 
 def test_public_metadata_never_claims_exact_duration_match():

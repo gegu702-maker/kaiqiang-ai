@@ -113,6 +113,14 @@ SOURCE_INITIAL_MAX_NETWORK_RETRIES = 1
 SOURCE_INITIAL_MAX_EXHAUSTION_REGENERATIONS = 1
 SOURCE_RETRY_BASE_DELAY_SECONDS = 0.4
 SOURCE_RETRY_JITTER_SECONDS = 0.2
+PRIMARY_FAILURE_PRIORITY = (
+    "hard_fact",
+    "unsupported",
+    "source_fact_coverage",
+    "length",
+    "internal_repetition",
+    "incomplete_ending",
+)
 
 
 class _LLMCallBudgetExceeded(Exception):
@@ -131,6 +139,22 @@ class _LLMCallBudget:
                 raise _LLMCallBudgetExceeded
             self.used_calls += 1
             return self.used_calls
+
+    @property
+    def remaining_calls(self) -> int:
+        return max(0, self.maximum_calls - self.used_calls)
+
+
+def _primary_generation_band(minimum_chars: int, center_chars: int, maximum_chars: int) -> tuple[int, int]:
+    lower_margin = max(1, center_chars - minimum_chars)
+    upper_margin = max(1, maximum_chars - center_chars)
+    safe_low = max(minimum_chars, center_chars - math.floor(lower_margin * 0.39))
+    safe_high = min(maximum_chars, center_chars + round(upper_margin * 0.55))
+    return safe_low, max(safe_low, safe_high)
+
+
+def _highest_priority_failure(reasons: list[str]) -> str:
+    return next((category for category in PRIMARY_FAILURE_PRIORITY if category in reasons), reasons[0] if reasons else "none")
 
 
 def _retryable_initial_provider_error(error: LLMProviderError) -> bool:
@@ -444,7 +468,15 @@ def _candidate_quality_snapshot(
             if source_fact_ledger["fact_count"]
             else 0.0
         ),
+        "tier_coverage": mapping.get("tier_coverage") or {},
     }
+    required_tier_missing = [
+        fact_id
+        for tier in ("core_required", "risk_required")
+        for fact_id in (
+            (mapping.get("tier_coverage") or {}).get(tier, {}).get("missing_fact_ids") or []
+        )
+    ]
     reasons: list[str] = []
     if not minimum_chars <= actual_chars <= maximum_chars:
         reasons.append("length")
@@ -452,7 +484,7 @@ def _candidate_quality_snapshot(
         reasons.append("hard_fact")
     if mapping["unsupported_spans"]:
         reasons.append("unsupported")
-    if len(directly_supported_ids) < minimum_fact_coverage_count:
+    if len(directly_supported_ids) < minimum_fact_coverage_count or required_tier_missing:
         reasons.append("source_fact_coverage")
     if not script.rstrip().endswith(tuple("。！？!?")):
         reasons.append("incomplete_ending")
@@ -467,6 +499,7 @@ def _candidate_quality_snapshot(
         "coverage": coverage,
         "hard_violations": hard_violations,
         "repeated_spans": repeated,
+        "missing_required_fact_ids": required_tier_missing,
         "reasons": reasons,
         "exact_failure_reasons": list(reasons),
         "incomplete_ending": "incomplete_ending" in reasons,
@@ -490,6 +523,7 @@ def _candidate_diagnostic_record(
     if similarity_failed and "similarity" not in reasons:
         reasons.append("similarity")
     coverage = snapshot.get("coverage") or {}
+    tier_coverage = coverage.get("tier_coverage") or {}
     return {
         "index": int(snapshot["index"]),
         "actual_chars": int(snapshot["actual_chars"]),
@@ -501,6 +535,12 @@ def _candidate_diagnostic_record(
             "used_count": int(coverage.get("used_count") or 0),
             "total_count": int(coverage.get("total_count") or 0),
             "coverage_rate": float(coverage.get("coverage_rate") or 0.0),
+            "core_required_total": int((tier_coverage.get("core_required") or {}).get("total") or 0),
+            "core_required_covered": int((tier_coverage.get("core_required") or {}).get("covered") or 0),
+            "risk_required_total": int((tier_coverage.get("risk_required") or {}).get("total") or 0),
+            "risk_required_covered": int((tier_coverage.get("risk_required") or {}).get("covered") or 0),
+            "optional_support_total": int((tier_coverage.get("optional_support") or {}).get("total") or 0),
+            "optional_support_covered": int((tier_coverage.get("optional_support") or {}).get("covered") or 0),
         },
         "incomplete_ending": bool(snapshot.get("incomplete_ending")),
         "repeated_spans": list(snapshot.get("repeated_spans") or []),
@@ -1073,6 +1113,11 @@ async def analyze_viral_script(
     minimum_chars = length_target.target_min_chars
     target_center_chars = length_target.target_center_chars
     maximum_chars = length_target.target_max_chars
+    primary_generation_low, primary_generation_high = _primary_generation_band(
+        minimum_chars,
+        target_center_chars,
+        maximum_chars,
+    )
     source_fact_ledger = (
         build_source_fact_ledger(raw_script, source_fact_sentences)
         if source_scope == "full_content"
@@ -1188,6 +1233,7 @@ async def analyze_viral_script(
     all_initial_variants_failed = False
     initial_generation_failures: list[dict[str, Any]] = []
     version_states: list[dict[str, Any]] = []
+    call_allocation_diagnostics: list[dict[str, Any]] = []
     active_initial_calls = 0
     maximum_initial_concurrency = 0
     if source_scope == "full_content":
@@ -1253,10 +1299,23 @@ async def analyze_viral_script(
                     "angle": variant_requirements[index],
                     "target_center_chars": target_center_chars,
                 },
+                "length_budget": {
+                    "opening_percent": "12-15%",
+                    "core_facts_percent": "58-62%",
+                    "risk_and_limits_percent": "15-18%",
+                    "closing_percent": "8-10%",
+                    "safe_generation_low": primary_generation_low,
+                    "safe_generation_high": primary_generation_high,
+                    "validation_minimum": minimum_chars,
+                    "validation_maximum": maximum_chars,
+                },
                 "requirements": [
                     *independent_base_requirements,
                     "这是单版本独立生成任务，不要生成或讨论其他版本，不得把篇幅分配给其他版本",
-                    f"本版本瞄准 {target_center_chars} 个中文字符，并严格保持在 {minimum_chars}–{maximum_chars} 字",
+                    f"本版本以 {primary_generation_low}–{primary_generation_high} CJK 为安全生成内区间，瞄准动态中心 {target_center_chars}；后端仍严格接受 {minimum_chars}–{maximum_chars}",
+                    "按开头12%–15%、核心事实58%–62%、风险与限定15%–18%、结尾8%–10%分配篇幅",
+                    "core_required 与 risk_required 必须全部在正文中表达；optional_support 按剩余篇幅选择",
+                    "只输出当前一个版本的合法JSON，不输出规则解释、分析过程、Markdown或其他版本",
                     "每一个数字、机构、时间、指标、案例、条件和风险限定都必须绑定 source_fact_ledger 中的 fact ID",
                     "只能使用来源事实账本中的事实；可以改变表达和顺序，但不得创造账本外证据",
                     "used_source_fact_ids 只列正文实际表达的 fact ID，不得虚报覆盖",
@@ -1493,21 +1552,31 @@ async def analyze_viral_script(
                 return response, state["elapsed_ms"]
 
         initial_started = time.perf_counter()
-        generated = await asyncio.gather(
-            *(generate_variant(index) for index in range(FINAL_REWRITE_LIMIT)),
-            return_exceptions=True,
-        )
+        generated = await asyncio.gather(generate_variant(0), return_exceptions=True)
         llm_call_count = llm_budget.used_calls
+        if version_states[0]["attempts"]:
+            initial_attempt_record = version_states[0]["attempts"][-1]
+            call_allocation_diagnostics.append(
+                {
+                    "stage": "A_PRIMARY_GENERATION",
+                    "version": "A",
+                    "attempt": initial_attempt_record.get("attempt", 1),
+                    "failure_category": "initial_generation",
+                    "call_number": initial_attempt_record.get("llm_call_number"),
+                    "remaining_budget": llm_budget.remaining_calls,
+                    "provenance": "independent_initial",
+                }
+            )
         initial_elapsed_ms = round((time.perf_counter() - initial_started) * 1000)
         stage_timings.append(
             {
-                "stage": "independent_initial",
+                "stage": "A_PRIMARY_GENERATION",
                 "elapsed_ms": initial_elapsed_ms,
                 "variant_elapsed_ms": [
                     state.get("elapsed_ms")
                     for state in version_states
                 ],
-                "parallel": True,
+                "parallel": False,
                 "concurrency_limit": SOURCE_INITIAL_CONCURRENCY,
                 "maximum_observed_concurrency": maximum_initial_concurrency,
             }
@@ -1993,6 +2062,18 @@ async def analyze_viral_script(
                     "maximum_llm_calls": MAX_SOURCE_CONSTRAINED_LLM_CALLS,
                 },
             )
+        call_allocation_diagnostics.append(
+            {
+                "stage": "A_FACT_REVIEW",
+                "version": "A",
+                "attempt": 1,
+                "failure_category": "fact_safety",
+                "chars_before": normalized_lengths[0] if normalized_lengths else 0,
+                "call_number": fact_review_call_number,
+                "remaining_budget": llm_budget.remaining_calls,
+                "provenance": result["rewrites"][0].get("provenance", "independent_initial"),
+            }
+        )
         fact_review = await LLMProvider().generate_json(
             system=(
                 "你是严格的来源事实审校编辑。原始转写是唯一事实来源。"
@@ -2019,6 +2100,7 @@ async def analyze_viral_script(
                 "requirements": [
                     "逐条核对机构、公司、人物、案例、指标、数字、百分比、日期、时间范围、具体数量和确定性因果",
                     "只允许使用原始转写明确出现的事实；不得把拆解字段或现有改写中的内容反向当作来源证据",
+                    "只审查当前A主稿；优先局部替换违规句，安全段落必须原样保留，禁止借审查重写或压缩整稿",
                     "删除或改回一般性表述时，必须保持原版本角度和口播风格，并尽量只做必要修改",
                     "对每个 unsupported span 优先用语义最接近的来源事实替换，不能只删除整段",
                     "used_source_fact_ids 必须只列 audited_script 实际覆盖的事实，且只能取自 source_fact_ledger.fact_ids",
@@ -2063,7 +2145,7 @@ async def analyze_viral_script(
         llm_call_count = llm_budget.used_calls
         stage_timings.append(
             {
-                "stage": "fact_review",
+                "stage": "A_FACT_REVIEW",
                 "elapsed_ms": round((time.perf_counter() - fact_review_started) * 1000),
                 "parallel": False,
             }
@@ -2148,6 +2230,16 @@ async def analyze_viral_script(
 
         result = {**result, "rewrites": audited_rewrites}
         normalized_lengths = [_cjk_len(item.get("script", "")) for item in result["rewrites"]]
+        call_allocation_diagnostics[-1].update(
+            {
+                "chars_after": normalized_lengths[0] if normalized_lengths else 0,
+                "actual_gain": (
+                    (normalized_lengths[0] if normalized_lengths else 0)
+                    - int(call_allocation_diagnostics[-1].get("chars_before") or 0)
+                ),
+                "no_progress": False,
+            }
+        )
         hard_violations_after = [
             unsupported_hard_facts(raw_script, rewrite["script"])
             for rewrite in result["rewrites"]
@@ -2205,6 +2297,7 @@ async def analyze_viral_script(
         primary_index = int(primary_snapshot["index"])
         primary_model_rewrite_succeeded = bool(primary_snapshot["valid"])
         primary_attempts: list[dict[str, Any]] = []
+        no_progress_by_category: dict[str, int] = {}
         micro_gap_diagnostic: dict[str, Any] = {
             "attempted": False,
             "succeeded": False,
@@ -2314,17 +2407,67 @@ async def analyze_viral_script(
                     maximum_chars=maximum_chars,
                     minimum_fact_coverage_count=minimum_fact_coverage_count,
                 )
+                failure_category = _highest_priority_failure(
+                    list(current_snapshot["exact_failure_reasons"])
+                )
+                if no_progress_by_category.get(failure_category, 0) >= 2:
+                    primary_attempts.append(
+                        {
+                            "attempt": attempt,
+                            "outcome": "skipped_after_two_no_progress",
+                            "failure_category": failure_category,
+                        }
+                    )
+                    break
                 unused_ids = list(current_snapshot["coverage"]["unused_source_fact_ids"])
+                requested_gap = max(0, generation_target_low - current_snapshot["actual_chars"])
+                if failure_category == "length":
+                    targeted_requirements = [
+                        "当前唯一任务是修复长度不足；保留已经通过事实审查的安全正文，不得压缩或删除已有安全句",
+                        f"当前缺口为 {requested_gap} CJK；优先补充未充分表达的core_required、risk_required，再选择optional_support",
+                        "返回完整替换稿；新增内容只能来自unused_source_fact_ids对应evidence，不得自由扩写",
+                        "返回稿不得短于current_script；若没有来源事实可补，保持原稿并如实返回",
+                    ]
+                elif failure_category in {"hard_fact", "unsupported"}:
+                    targeted_requirements = [
+                        "当前唯一任务是替换hard_fact或unsupported违规句；安全段落必须原样保留",
+                        "使用语义最接近的来源fact evidence局部替换，不得重写全稿",
+                    ]
+                elif failure_category == "source_fact_coverage":
+                    targeted_requirements = [
+                        "当前唯一任务是补齐缺失的core_required和risk_required facts",
+                        "不得重复已覆盖事实，不得改变安全正文中的事实集合",
+                    ]
+                else:
+                    targeted_requirements = [
+                        f"当前唯一任务是修复{failure_category}；不得顺带重写其他已通过部分",
+                        "保持事实集合不变，只处理重复、结构或句尾问题",
+                    ]
                 convergence_started = time.perf_counter()
                 try:
                     call_number = await llm_budget.reserve()
+                    call_allocation_diagnostics.append(
+                        {
+                            "stage": "A_TARGETED_REPAIR",
+                            "version": "A",
+                            "attempt": attempt,
+                            "failure_category": failure_category,
+                            "chars_before": current_snapshot["actual_chars"],
+                            "requested_gap": requested_gap,
+                            "call_number": call_number,
+                            "remaining_budget": llm_budget.remaining_calls,
+                            "provenance": current_snapshot["provenance"],
+                        }
+                    )
                     response = await LLMProvider().generate_json(
                         system=(
-                            "你是来源约束的主稿收敛编辑。原始转写和事实账本是唯一事实来源。"
-                            "输出完整替换稿，不得追加补丁，不得自由扩写。只输出最小合法 JSON。"
+                            "你是来源约束的A主稿定向修复编辑。一次只修复指定的最高优先级失败类别。"
+                            "原始转写和事实账本是唯一事实来源。只输出最小合法 JSON。"
                         ),
                         payload={
                             "primary_convergence": True,
+                            "state": "A_TARGETED_REPAIR",
+                            "failure_category": failure_category,
                             "corrected_transcript": raw_script,
                             "source_fact_ledger": source_fact_ledger,
                             "variant": {
@@ -2347,7 +2490,7 @@ async def analyze_viral_script(
                                 "unit": "cjk_chars",
                             },
                             "requirements": [
-                                "优先恢复尚未表达的来源事实，保持原版本角度并形成自然连续的知识口播",
+                                *targeted_requirements,
                                 f"内部生成至少 {generation_floor} CJK，瞄准 {generation_target_low}–{generation_target_high} CJK",
                                 "只允许使用 corrected_transcript 和 source_fact_ledger 中已有的事实",
                                 "禁止新增数字、机构、日期、周期、案例、指标或因果结论",
@@ -2401,11 +2544,33 @@ async def analyze_viral_script(
                         maximum_chars=maximum_chars,
                         minimum_fact_coverage_count=minimum_fact_coverage_count,
                     )
+                    actual_gain = converged_snapshot["actual_chars"] - current_snapshot["actual_chars"]
+                    no_progress = bool(
+                        _normalize_for_similarity(converged_script)
+                        == _normalize_for_similarity(str(current_rewrite.get("script") or ""))
+                        or (failure_category == "length" and actual_gain <= 0)
+                    )
+                    no_progress_by_category[failure_category] = (
+                        no_progress_by_category.get(failure_category, 0) + 1
+                        if no_progress
+                        else 0
+                    )
+                    call_allocation_diagnostics[-1].update(
+                        {
+                            "chars_after": converged_snapshot["actual_chars"],
+                            "actual_gain": actual_gain,
+                            "no_progress": no_progress,
+                            "final_reasons": list(converged_snapshot["exact_failure_reasons"]),
+                        }
+                    )
                     primary_attempts.append(
                         {
                             "attempt": attempt,
-                            "outcome": "converged" if converged_snapshot["valid"] else "invalid",
+                            "outcome": "no_progress" if no_progress else "converged" if converged_snapshot["valid"] else "invalid",
+                            "failure_category": failure_category,
                             "actual_chars": converged_snapshot["actual_chars"],
+                            "actual_gain": actual_gain,
+                            "no_progress": no_progress,
                             "reasons": converged_snapshot["reasons"],
                             "candidate_diagnostic": _candidate_diagnostic_record(
                                 converged_snapshot
@@ -2413,8 +2578,9 @@ async def analyze_viral_script(
                             "elapsed_ms": round((time.perf_counter() - convergence_started) * 1000),
                         }
                     )
-                    result["rewrites"][primary_index] = converged_rewrite
-                    primary_snapshot = converged_snapshot
+                    if not no_progress:
+                        result["rewrites"][primary_index] = converged_rewrite
+                        primary_snapshot = converged_snapshot
                     if converged_snapshot["valid"]:
                         primary_model_rewrite_succeeded = True
                         break
@@ -2464,6 +2630,128 @@ async def analyze_viral_script(
                 "succeeded": primary_model_rewrite_succeeded,
             }
         )
+        if primary_model_rewrite_succeeded:
+            optional_started = time.perf_counter()
+            optional_before_calls = llm_budget.used_calls
+            optional_generated = await asyncio.gather(
+                generate_variant(1),
+                generate_variant(2),
+                return_exceptions=True,
+            )
+            optional_rewrites: list[dict[str, Any]] = []
+            optional_sequence_intact = True
+            for optional_index, generated_value in zip(
+                (1, 2), optional_generated, strict=True
+            ):
+                if isinstance(generated_value, BaseException):
+                    call_allocation_diagnostics.append(
+                        {
+                            "stage": "OPTIONAL_VARIANTS",
+                            "version": "B" if optional_index == 1 else "C",
+                            "attempt": 1,
+                            "failure_category": "provider_or_budget",
+                            "call_number": None,
+                            "remaining_budget": llm_budget.remaining_calls,
+                            "no_progress": True,
+                            "final_reasons": ["optional_generation_failed"],
+                        }
+                    )
+                    if optional_index == 1:
+                        optional_sequence_intact = False
+                    continue
+                if not optional_sequence_intact:
+                    continue
+                response = generated_value[0]
+                optional_state = version_states[optional_index]
+                rewrite = response.get("rewrite") if isinstance(response, dict) else None
+                if not isinstance(rewrite, dict):
+                    continue
+                optional_rewrites.append(
+                    {
+                        "title": REWRITE_STRATEGIES[optional_index]["title"],
+                        "script": smooth_spoken_script(str(rewrite.get("script") or "")),
+                        "used_source_fact_ids": [
+                            str(item)
+                            for item in (rewrite.get("used_source_fact_ids") or [])
+                            if str(item) in source_fact_ids
+                        ],
+                        "provenance": "independent_initial",
+                    }
+                )
+                call_allocation_diagnostics.append(
+                    {
+                        "stage": "OPTIONAL_VARIANTS",
+                        "version": "B" if optional_index == 1 else "C",
+                        "attempt": 1,
+                        "failure_category": "optional_generation",
+                        "call_number": (
+                            optional_state.get("attempts", [{}])[-1].get("llm_call_number")
+                            if optional_state.get("attempts")
+                            else None
+                        ),
+                        "chars_after": _cjk_len(optional_rewrites[-1]["script"]),
+                        "remaining_budget": llm_budget.remaining_calls,
+                        "provenance": "independent_initial",
+                    }
+                )
+            if optional_rewrites:
+                result = {
+                    **result,
+                    "rewrites": [*result["rewrites"], *optional_rewrites],
+                }
+                normalized_lengths = [
+                    _cjk_len(item.get("script", "")) for item in result["rewrites"]
+                ]
+                hard_violations_after = [
+                    unsupported_hard_facts(raw_script, rewrite["script"])
+                    for rewrite in result["rewrites"]
+                ]
+                verified_fact_coverage = [
+                    map_source_fact_coverage(
+                        source_fact_ledger,
+                        rewrite["script"],
+                        claimed_fact_ids=list(rewrite.get("used_source_fact_ids") or []),
+                    )
+                    for rewrite in result["rewrites"]
+                ]
+                while len(unsupported_spans) < len(result["rewrites"]):
+                    unsupported_spans.append([])
+                while len(used_source_fact_ids) < len(result["rewrites"]):
+                    used_source_fact_ids.append([])
+            stage_timings.append(
+                {
+                    "stage": "OPTIONAL_VARIANTS",
+                    "elapsed_ms": round((time.perf_counter() - optional_started) * 1000),
+                    "call_count": llm_budget.used_calls - optional_before_calls,
+                    "generated_count": len(optional_rewrites),
+                    "primary_preserved": True,
+                }
+            )
+            call_allocation_diagnostics.append(
+                {
+                    "stage": "FALLBACK_ONLY_IF_A_FAILED",
+                    "version": "A_FALLBACK",
+                    "attempt": 0,
+                    "failure_category": "skipped_primary_passed",
+                    "call_number": None,
+                    "remaining_budget": llm_budget.remaining_calls,
+                    "no_progress": False,
+                    "provenance": result["rewrites"][primary_index].get("provenance"),
+                }
+            )
+        else:
+            call_allocation_diagnostics.append(
+                {
+                    "stage": "OPTIONAL_VARIANTS",
+                    "version": "B/C",
+                    "attempt": 0,
+                    "failure_category": "skipped_primary_failed",
+                    "call_number": None,
+                    "remaining_budget": llm_budget.remaining_calls,
+                    "no_progress": True,
+                    "provenance": result["rewrites"][primary_index].get("provenance"),
+                }
+            )
         invalid_after_fact_review = [
             length for length in normalized_lengths
             if length < minimum_rewrite_chars or length > maximum_chars
@@ -2497,6 +2785,18 @@ async def analyze_viral_script(
                 unused_ids = [fact_id for fact_id in source_fact_ledger["fact_ids"] if fact_id not in used_ids]
                 async with initial_semaphore:
                     call_number = await llm_budget.reserve()
+                    call_allocation_diagnostics.append(
+                        {
+                            "stage": "OPTIONAL_VARIANT_REPAIR",
+                            "version": "B" if index == 1 else "C",
+                            "attempt": 1,
+                            "failure_category": "hard_fact_or_length",
+                            "chars_before": normalized_lengths[index],
+                            "call_number": call_number,
+                            "remaining_budget": llm_budget.remaining_calls,
+                            "provenance": rewrite.get("provenance"),
+                        }
+                    )
                     async with concurrency_lock:
                         active_initial_calls += 1
                         maximum_initial_concurrency = max(
@@ -2723,6 +3023,18 @@ async def analyze_viral_script(
                 rewrite = result["rewrites"][index]
                 async with initial_semaphore:
                     call_number = await llm_budget.reserve()
+                    call_allocation_diagnostics.append(
+                        {
+                            "stage": "OPTIONAL_FINAL_RECONSTRUCTION",
+                            "version": "B" if index == 1 else "C",
+                            "attempt": 1,
+                            "failure_category": "length_or_no_progress",
+                            "chars_before": normalized_lengths[index],
+                            "call_number": call_number,
+                            "remaining_budget": llm_budget.remaining_calls,
+                            "provenance": rewrite.get("provenance"),
+                        }
+                    )
                     async with concurrency_lock:
                         active_initial_calls += 1
                         maximum_initial_concurrency = max(
@@ -3051,6 +3363,18 @@ async def analyze_viral_script(
                         polish_started = time.perf_counter()
                         try:
                             call_number = await llm_budget.reserve()
+                            call_allocation_diagnostics.append(
+                                {
+                                    "stage": "FALLBACK_SCAFFOLD_POLISH",
+                                    "version": "A_FALLBACK",
+                                    "attempt": polish_attempt,
+                                    "failure_category": "primary_model_failed",
+                                    "chars_before": _cjk_len(scaffold),
+                                    "call_number": call_number,
+                                    "remaining_budget": llm_budget.remaining_calls,
+                                    "provenance": "deterministic_scaffold",
+                                }
+                            )
                             polish_payload: dict[str, Any] = {
                                 "scaffold_polish": True,
                                 "source_fact_ledger": source_fact_ledger,
@@ -3228,6 +3552,18 @@ async def analyze_viral_script(
             diversified: dict[str, Any] | None = None
             try:
                 call_number = await llm_budget.reserve()
+                call_allocation_diagnostics.append(
+                    {
+                        "stage": "OPTIONAL_DIVERSIFICATION",
+                        "version": "B_OR_C",
+                        "attempt": 1,
+                        "failure_category": "cross_variant_similarity",
+                        "chars_before": _cjk_len(candidate["rewrite"]["script"]),
+                        "call_number": call_number,
+                        "remaining_budget": llm_budget.remaining_calls,
+                        "provenance": candidate["rewrite"].get("provenance"),
+                    }
+                )
                 diversification = await LLMProvider().generate_json(
                     system=(
                         "你是来源约束的差异化编辑。只重写当前重复版本；原始转写和来源事实账本"
@@ -3387,7 +3723,15 @@ async def analyze_viral_script(
         and final_provenance
         not in {"deterministic_scaffold", "scaffold_polished_by_model"}
     )
-    degraded = generated_count < requested_count
+    fallback_provenances = {"deterministic_scaffold", "scaffold_polished_by_model"}
+    model_primary_passed = bool(
+        source_scope != "full_content" or final_provenance not in fallback_provenances
+    )
+    degraded = (
+        final_provenance in fallback_provenances
+        if source_scope == "full_content"
+        else generated_count < requested_count
+    )
     degradation_reason = ""
     if final_provenance == "deterministic_scaffold":
         degradation_reason = (
@@ -3395,7 +3739,7 @@ async def analyze_viral_script(
             "内容基于原转写，事实安全，但改写程度有限。"
         )
     elif final_provenance == "scaffold_polished_by_model":
-        degradation_reason = "独立改写版本未通过校验，当前展示基于来源事实的AI润色稿。"
+        degradation_reason = "独立AI主稿未通过质量校验，当前展示基于来源事实的AI润色稿。"
     elif degraded:
         if filtered_duplicate_count and generated_count == 1:
             degradation_reason = "其他角度与主稿过于相似，已过滤"
@@ -3403,6 +3747,33 @@ async def analyze_viral_script(
             degradation_reason = f"已过滤{filtered_duplicate_count}条高度相似版本"
         else:
             degradation_reason = f"已过滤{filtered_invalid_count}条未通过质量校验的版本"
+    if final_provenance in fallback_provenances:
+        generation_summary = degradation_reason
+    elif generated_count == 1:
+        generation_summary = "已生成1条可靠主稿；其他角度未通过质量校验，未展示。"
+    elif generated_count == 2:
+        generation_summary = "已生成1条可靠主稿和1条补充角度。"
+    else:
+        generation_summary = "已生成1条可靠主稿和2条补充角度。"
+
+    for allocation in call_allocation_diagnostics:
+        logger.warning(
+            "viral_llm_allocation request_id=%s stage=%s version=%s attempt=%s "
+            "failure_category=%s call_number=%s remaining_budget=%s chars_before=%s "
+            "chars_after=%s actual_gain=%s no_progress=%s provenance=%s",
+            current_request_id(),
+            allocation.get("stage"),
+            allocation.get("version"),
+            allocation.get("attempt"),
+            allocation.get("failure_category"),
+            allocation.get("call_number"),
+            allocation.get("remaining_budget"),
+            allocation.get("chars_before"),
+            allocation.get("chars_after"),
+            allocation.get("actual_gain"),
+            allocation.get("no_progress"),
+            allocation.get("provenance"),
+        )
 
     try:
         supabase.table("viral_analyses").insert(
@@ -3446,8 +3817,10 @@ async def analyze_viral_script(
         "degraded_to_scaffold": degraded_to_scaffold,
         "provenance": final_provenance,
         "model_rewrite_succeeded": model_rewrite_succeeded,
+        "model_primary_passed": model_primary_passed,
         "degraded": degraded,
         "degradation_reason": degradation_reason,
+        "generation_summary": generation_summary,
         "variants": result["rewrites"],
         "union_source_fact_coverage": union_source_fact_coverage,
         "quota": {**quota, "used": quota["used"] + 1},
@@ -3471,6 +3844,9 @@ async def analyze_viral_script(
             "degraded_to_scaffold": degraded_to_scaffold,
             "provenance": final_provenance,
             "model_rewrite_succeeded": model_rewrite_succeeded,
+            "model_primary_passed": model_primary_passed,
+            "primary_model_passed": model_primary_passed,
+            "fallback_used": final_provenance in fallback_provenances,
             "primary_selection": primary_selection_diagnostic,
             "scaffold_polish": scaffold_polish_diagnostic,
             "candidate_failure_diagnostics": candidate_failure_diagnostics,
@@ -3480,6 +3856,7 @@ async def analyze_viral_script(
             "version_states": version_states,
             "initial_concurrency_limit": SOURCE_INITIAL_CONCURRENCY,
             "maximum_observed_concurrency": maximum_initial_concurrency,
+            "call_allocations": call_allocation_diagnostics,
             **length_target.diagnostics(),
         },
         "diagnostics": {
@@ -3506,6 +3883,9 @@ async def analyze_viral_script(
             "degraded_to_scaffold": degraded_to_scaffold,
             "provenance": final_provenance,
             "model_rewrite_succeeded": model_rewrite_succeeded,
+            "model_primary_passed": model_primary_passed,
+            "primary_model_passed": model_primary_passed,
+            "fallback_used": final_provenance in fallback_provenances,
             "primary_selection": primary_selection_diagnostic,
             "scaffold_polish": scaffold_polish_diagnostic,
             "candidate_failure_diagnostics": candidate_failure_diagnostics,
@@ -3515,6 +3895,7 @@ async def analyze_viral_script(
             "version_states": version_states,
             "initial_concurrency_limit": SOURCE_INITIAL_CONCURRENCY,
             "maximum_observed_concurrency": maximum_initial_concurrency,
+            "call_allocations": call_allocation_diagnostics,
             **length_target.diagnostics(),
         },
     }

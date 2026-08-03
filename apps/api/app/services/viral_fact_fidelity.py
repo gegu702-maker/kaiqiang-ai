@@ -104,6 +104,17 @@ FACT_CATEGORY_PREFIX = {
     "其他来源事实": "SOURCE",
 }
 
+RISK_REQUIRED_MARKERS = (
+    "不得",
+    "不是确定性",
+    "不意味着",
+    "不等于",
+    "不一定",
+    "风险边界",
+    "收益承诺",
+    "买入信号",
+)
+
 
 def _normalized_token(value: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or ""))).lower()
@@ -223,6 +234,7 @@ def build_source_fact_ledger(
     evidence_items = normalized_sentences or [
         {"text": match.group(0).strip()} for match in SOURCE_SENTENCE_RE.finditer(source_text)
     ]
+    seen_categories: set[str] = set()
     for evidence_item in evidence_items:
         evidence = str(evidence_item.get("text") or "").strip()
         if not evidence:
@@ -236,13 +248,28 @@ def build_source_fact_ledger(
                 best_score = score
         category_counts[category] = category_counts.get(category, 0) + 1
         fact_id = f"{FACT_CATEGORY_PREFIX[category]}-{category_counts[category]:02d}"
+        hard_fact_tokens = extract_hard_fact_tokens(evidence)
+        organizations = _unique_matches(ORGANIZATION_RE, evidence)
+        if category == "风险边界" or any(marker in evidence for marker in RISK_REQUIRED_MARKERS):
+            importance_tier = "risk_required"
+            classification_reason = "risk_or_limitation_marker"
+        elif category not in seen_categories:
+            importance_tier = "core_required"
+            classification_reason = "first_fact_in_category"
+        else:
+            importance_tier = "optional_support"
+            classification_reason = "supporting_fact"
+        seen_categories.add(category)
         fact = {
             "id": fact_id,
             "category": category,
             "claim": evidence.rstrip("。！？!?；;"),
             "evidence": evidence,
-            "hard_fact_tokens": extract_hard_fact_tokens(evidence),
-            "organizations": _unique_matches(ORGANIZATION_RE, evidence),
+            "hard_fact_tokens": hard_fact_tokens,
+            "organizations": organizations,
+            "importance_tier": importance_tier,
+            "classification_source": "deterministic_rule_v1",
+            "classification_reason": classification_reason,
         }
         for key in (
             "source_segment_indexes",
@@ -254,10 +281,17 @@ def build_source_fact_ledger(
             if key in evidence_item:
                 fact[key] = evidence_item[key]
         facts.append(fact)
+    tier_fact_ids = {
+        tier: [item["id"] for item in facts if item["importance_tier"] == tier]
+        for tier in ("core_required", "risk_required", "optional_support")
+    }
     return {
         "facts": facts,
         "fact_ids": [item["id"] for item in facts],
         "fact_count": len(facts),
+        "tier_fact_ids": tier_fact_ids,
+        "tier_counts": {tier: len(ids) for tier, ids in tier_fact_ids.items()},
+        "classification_source": "deterministic_rule_v1",
         "hard_fact_tokens": extract_hard_fact_tokens(source_text),
         "organizations": _unique_matches(ORGANIZATION_RE, source_text),
         "financial_indicators": [term for term in HIGH_RISK_FACT_TERMS if term in source_text],
@@ -327,6 +361,19 @@ def map_source_fact_coverage(
             }
         )
 
+    tier_fact_ids = ledger.get("tier_fact_ids") or {}
+    tier_coverage = {}
+    directly_supported_set = set(directly_supported)
+    for tier in ("core_required", "risk_required", "optional_support"):
+        tier_ids = [str(item) for item in (tier_fact_ids.get(tier) or [])]
+        covered_ids = [fact_id for fact_id in tier_ids if fact_id in directly_supported_set]
+        tier_coverage[tier] = {
+            "fact_ids": tier_ids,
+            "covered_fact_ids": covered_ids,
+            "missing_fact_ids": [fact_id for fact_id in tier_ids if fact_id not in directly_supported_set],
+            "total": len(tier_ids),
+            "covered": len(covered_ids),
+        }
     return {
         "directly_supported_fact_ids": directly_supported,
         "uncertain_fact_ids": uncertain,
@@ -339,4 +386,5 @@ def map_source_fact_coverage(
             script,
         ),
         "evidence": evidence,
+        "tier_coverage": tier_coverage,
     }

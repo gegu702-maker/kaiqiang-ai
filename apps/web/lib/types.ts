@@ -313,8 +313,10 @@ export type ViralAnalyzeResult = {
   degraded_to_scaffold?: boolean;
   provenance?: string;
   model_rewrite_succeeded?: boolean;
+  model_primary_passed?: boolean;
   degraded?: boolean;
   degradation_reason?: string;
+  generation_summary?: string;
   core_points?: string[];
   arguments?: string[];
   cases?: string[];
@@ -347,6 +349,9 @@ export type ViralAnalyzeResult = {
     degraded_to_scaffold?: boolean;
     provenance?: string;
     model_rewrite_succeeded?: boolean;
+    model_primary_passed?: boolean;
+    primary_model_passed?: boolean;
+    fallback_used?: boolean;
     candidate_failure_diagnostics?: ViralCandidateFailureDiagnostic[];
   };
   diagnostics?: {
@@ -455,7 +460,9 @@ export type ViralPipelineResult = {
   degraded_to_scaffold?: boolean;
   provenance?: string;
   model_rewrite_succeeded?: boolean;
+  model_primary_passed?: boolean;
   degradation_reason?: string;
+  generation_summary?: string;
   metadata: ViralPipelineMetadata;
   source_type?: "video_asr" | "link_metadata_fallback" | string;
   analysis_quality?: "full" | "partial" | string;
@@ -516,6 +523,9 @@ export type ViralPipelineResult = {
     degraded_to_scaffold?: boolean;
     provenance?: string;
     model_rewrite_succeeded?: boolean;
+    model_primary_passed?: boolean;
+    primary_model_passed?: boolean;
+    fallback_used?: boolean;
     candidate_failure_diagnostics?: ViralCandidateFailureDiagnostic[];
   };
   diagnostic?: {
