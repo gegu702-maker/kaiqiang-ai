@@ -871,6 +871,13 @@ export function ViralAnalyzerClient({
                           <p>有效语音时长：{pipelineDiagnostics.effective_speech_seconds?.toFixed(1) ?? "—"} 秒；原始转写：{pipelineDiagnostics.source_cjk ?? "—"} CJK</p>
                           <p>原始语速/密度：{pipelineDiagnostics.source_density?.toFixed(2) ?? "—"} CJK/秒</p>
                           <p>本次动态目标：{pipelineDiagnostics.target_min_chars ?? "—"}–{pipelineDiagnostics.target_max_chars ?? "—"} CJK</p>
+                          {pipelineDiagnostics.normalized_sentence_count !== undefined ? (
+                            <p>
+                              原始ASR片段：{pipelineDiagnostics.raw_segment_count ?? "—"}；规范句：{pipelineDiagnostics.normalized_sentence_count}；
+                              事实条目：{pipelineDiagnostics.normalized_fact_count ?? "—"}；句段归一化：
+                              {pipelineDiagnostics.normalization_validation_passed ? "已通过" : "未通过，已安全回退"}
+                            </p>
+                          ) : null}
                         </>
                       ) : pipelineDiagnostics ? <p>当前仅基于公开信息初步拆解，无法精确匹配原视频时长。</p> : null}
                       {pipelineDiagnostics?.rewrite_actual_chars?.length ? <p>最终实际字数：{pipelineDiagnostics.rewrite_actual_chars.join(" / ")} CJK</p> : null}

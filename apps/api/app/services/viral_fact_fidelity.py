@@ -213,12 +213,18 @@ def is_financial_source(source: str) -> bool:
     return sum(1 for marker in FINANCE_DOMAIN_MARKERS if marker in source) >= 3
 
 
-def build_source_fact_ledger(source: str) -> dict[str, Any]:
+def build_source_fact_ledger(
+    source: str,
+    normalized_sentences: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     source_text = str(source or "")
     facts: list[dict[str, Any]] = []
     category_counts: dict[str, int] = {}
-    for match in SOURCE_SENTENCE_RE.finditer(source_text):
-        evidence = match.group(0).strip()
+    evidence_items = normalized_sentences or [
+        {"text": match.group(0).strip()} for match in SOURCE_SENTENCE_RE.finditer(source_text)
+    ]
+    for evidence_item in evidence_items:
+        evidence = str(evidence_item.get("text") or "").strip()
         if not evidence:
             continue
         category = "其他来源事实"
@@ -230,16 +236,24 @@ def build_source_fact_ledger(source: str) -> dict[str, Any]:
                 best_score = score
         category_counts[category] = category_counts.get(category, 0) + 1
         fact_id = f"{FACT_CATEGORY_PREFIX[category]}-{category_counts[category]:02d}"
-        facts.append(
-            {
-                "id": fact_id,
-                "category": category,
-                "claim": evidence.rstrip("。！？!?；;"),
-                "evidence": evidence,
-                "hard_fact_tokens": extract_hard_fact_tokens(evidence),
-                "organizations": _unique_matches(ORGANIZATION_RE, evidence),
-            }
-        )
+        fact = {
+            "id": fact_id,
+            "category": category,
+            "claim": evidence.rstrip("。！？!?；;"),
+            "evidence": evidence,
+            "hard_fact_tokens": extract_hard_fact_tokens(evidence),
+            "organizations": _unique_matches(ORGANIZATION_RE, evidence),
+        }
+        for key in (
+            "source_segment_indexes",
+            "source_segment_start",
+            "source_segment_end",
+            "start_seconds",
+            "end_seconds",
+        ):
+            if key in evidence_item:
+                fact[key] = evidence_item[key]
+        facts.append(fact)
     return {
         "facts": facts,
         "fact_ids": [item["id"] for item in facts],

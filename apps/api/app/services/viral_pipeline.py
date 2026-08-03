@@ -14,6 +14,7 @@ from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.services.asr_service import transcribe_audio
+from app.services.asr_fact_normalization import normalize_asr_for_fact_ledger
 from app.services.financial_transcript import CorrectionResult, correct_financial_transcript
 from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.core.config import settings
@@ -629,6 +630,14 @@ async def _process_video_path(
             provider="none",
         )
     corrected_transcript = correction.corrected_transcript
+    normalization = normalize_asr_for_fact_ledger(
+        correction.corrected_segments,
+        corrected_transcript,
+        raw_transcript=asr.transcript,
+        raw_segment_count=asr.raw_segment_count,
+    )
+    normalized_transcript = normalization.normalized_text
+    normalization_diagnostics = normalization.diagnostics
     correction_count = sum(int(item.get("count") or 1) for item in correction.corrections)
     correction_diagnostics = {
         "source_type": source_type,
@@ -636,7 +645,7 @@ async def _process_video_path(
         "audio_duration_seconds": round(audio_duration, 3),
         "asr_coverage_seconds": round(asr.coverage_seconds, 3),
         "last_timestamp_seconds": round(asr.last_timestamp_seconds, 3),
-        "transcript_chars": len(corrected_transcript),
+        "transcript_chars": len(normalized_transcript),
         "raw_transcript_chars": len(asr.transcript),
         "corrected_transcript_chars": len(corrected_transcript),
         "segment_count": len(correction.corrected_segments),
@@ -644,6 +653,7 @@ async def _process_video_path(
         "word_timestamp_chars": asr.word_timestamp_chars,
         "correction_count": correction_count,
         "review_segment_count": len(correction.review_segments),
+        **normalization_diagnostics,
         "asr_recovery_attempted": asr.recovery_attempted,
         "asr_recovery_used": asr.recovery_used,
         "fallback": False,
@@ -663,10 +673,13 @@ async def _process_video_path(
         _log_diagnostics(correction_diagnostics)
         return result
     logger.info(
-        "viral_pipeline request_id=%s stage=analyzing outcome=started transcript_chars=%s segment_count=%s coverage_seconds=%.3f",
+        "viral_pipeline request_id=%s stage=analyzing outcome=started transcript_chars=%s segment_count=%s "
+        "normalized_sentences=%s normalization_valid=%s coverage_seconds=%.3f",
         request_id,
-        len(corrected_transcript),
+        len(normalized_transcript),
         len(correction.corrected_segments),
+        normalization_diagnostics["normalized_sentence_count"],
+        normalization_diagnostics["normalization_validation_passed"],
         asr.coverage_seconds,
     )
     try:
@@ -675,16 +688,17 @@ async def _process_video_path(
             user_id=user_id,
             email=email,
             source_url=source_url,
-            raw_script=corrected_transcript,
+            raw_script=normalized_transcript,
             industry=industry,
             language=language,
             rewrite_length=rewrite_length,
             effective_speech_seconds=asr.coverage_seconds,
+            source_fact_sentences=normalization.normalized_sentences,
         )
     except Exception as error:
         return _analysis_error_result(error, metadata=metadata, source_type=source_type)
     rewrites = analysis.get("rewrites") or await _generate_nine_rewrites(
-        transcript=corrected_transcript,
+        transcript=normalized_transcript,
         analysis=analysis,
         language=language,
         rewrite_length=rewrite_length,
@@ -694,12 +708,13 @@ async def _process_video_path(
         "source_type": source_type,
         "video_duration_seconds": round(duration, 3),
         "asr_coverage_seconds": round(asr.coverage_seconds, 3),
-        "transcript_chars": len(corrected_transcript),
+        "transcript_chars": len(normalized_transcript),
         "raw_transcript_chars": len(asr.transcript),
         "corrected_transcript_chars": len(corrected_transcript),
         "segment_count": len(correction.corrected_segments),
         "correction_count": correction_count,
         "review_segment_count": len(correction.review_segments),
+        **normalization_diagnostics,
         "asr_recovery_attempted": asr.recovery_attempted,
         "asr_recovery_used": asr.recovery_used,
         "fallback": False,
@@ -722,7 +737,7 @@ async def _process_video_path(
         "candidate_failure_diagnostics": analysis.get("diagnostics", {}).get(
             "candidate_failure_diagnostics", []
         ),
-        "source_cjk": analysis.get("diagnostics", {}).get("source_cjk", _cjk_len(corrected_transcript)),
+        "source_cjk": analysis.get("diagnostics", {}).get("source_cjk", _cjk_len(normalized_transcript)),
         "effective_speech_seconds": analysis.get("diagnostics", {}).get(
             "effective_speech_seconds", round(asr.coverage_seconds, 3)
         ),

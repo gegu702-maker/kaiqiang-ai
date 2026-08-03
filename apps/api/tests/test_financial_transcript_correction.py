@@ -357,6 +357,7 @@ def test_downstream_analysis_uses_corrected_transcript(monkeypatch, tmp_path: Pa
     async def fake_analysis(_supabase, **kwargs):
         observed["raw_script"] = kwargs["raw_script"]
         observed["effective_speech_seconds"] = kwargs["effective_speech_seconds"]
+        observed["source_fact_sentences"] = kwargs["source_fact_sentences"]
         return _analysis()
 
     monkeypatch.setattr(viral_pipeline.settings, "viral_asr_domain", "financial")
@@ -387,9 +388,12 @@ def test_downstream_analysis_uses_corrected_transcript(monkeypatch, tmp_path: Pa
     assert result["ok"] is True
     assert observed["raw_script"] == "中国人保在关键节点投下信心票。"
     assert observed["effective_speech_seconds"] == 5
+    assert observed["source_fact_sentences"][0]["source_segment_indexes"] == [0]
     assert "transcript" not in result
     assert "raw_transcript" not in result
     assert result["diagnostics"]["correction_count"] == 3
+    assert result["diagnostics"]["normalization_validation_passed"] is True
+    assert result["diagnostics"]["normalized_fact_count"] == 1
 
 
 def _legacy_review_continue_blocks_unconfirmed_and_uses_human_text(monkeypatch):

@@ -1037,6 +1037,7 @@ async def analyze_viral_script(
     rewrite_length: str = "match_source",
     source_scope: str = "full_content",
     effective_speech_seconds: float | None = None,
+    source_fact_sentences: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     source_url = source_url.strip()
     raw_script = raw_script.strip()
@@ -1072,7 +1073,11 @@ async def analyze_viral_script(
     minimum_chars = length_target.target_min_chars
     target_center_chars = length_target.target_center_chars
     maximum_chars = length_target.target_max_chars
-    source_fact_ledger = build_source_fact_ledger(raw_script) if source_scope == "full_content" else {}
+    source_fact_ledger = (
+        build_source_fact_ledger(raw_script, source_fact_sentences)
+        if source_scope == "full_content"
+        else {}
+    )
     source_fact_ids = set(source_fact_ledger.get("fact_ids") or [])
     length_guidance = (
         f"动态长度模式为 {length_target.length_mode}；每条严格控制在 "
