@@ -91,7 +91,15 @@ class Settings(BaseSettings):
     viral_review_signing_secret: str = ""
     viral_max_video_duration_seconds: int = 600
     viral_max_download_mb: int = 500
-    viral_pipeline_timeout_seconds: int = 1800
+    viral_pipeline_timeout_seconds: int = 180
+    # Conservative stage-entry gates derived from observed Preview timings:
+    # correction 35-42s, primary 10-13s, and fact review about 12s.
+    viral_budget_transcript_correction_seconds: int = 45
+    viral_budget_a_primary_generation_seconds: int = 20
+    viral_budget_a_fact_review_seconds: int = 20
+    viral_budget_a_targeted_repair_seconds: int = 20
+    viral_budget_optional_variants_seconds: int = 15
+    viral_budget_final_validation_seconds: int = 15
     viral_pipeline_allowed_emails: str = ""
     douyin_cookie_file: str = ""
     elevenlabs_api_key: str = ""

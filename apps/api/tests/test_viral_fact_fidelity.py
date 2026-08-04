@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 from fastapi import HTTPException
@@ -10,6 +11,7 @@ from app.services.viral_fact_fidelity import (
     unsupported_hard_facts,
 )
 from app.services.llm_provider import LLMProviderError
+from app.services.viral_deadline import PipelineDeadline, bind_pipeline_deadline, reset_pipeline_deadline
 from scripts.p2_37_text_acceptance import FINANCE_FIXTURE
 
 
@@ -1527,6 +1529,66 @@ def test_fact_review_unclosed_json_compactly_recovers_preserved_666_primary(monk
     assert review_attempts[0]["content_length"] == 1349
     assert review_attempts[0]["parser_repair_applied"] is True
     assert result["diagnostic"]["llm_call_count"] <= 9
+
+
+def test_fact_review_budget_gate_preserves_primary_without_provider_call(monkeypatch):
+    _mock_source_coverage(monkeypatch)
+    primary_script = _sized("反差", "甲", 666)
+    calls: list[tuple[str, int]] = []
+    deadline = PipelineDeadline(request_id="viral_budget_test", timeout_seconds=180)
+
+    async def fake_generate(_self, *, payload, **_kwargs):
+        if "variant_task" in payload:
+            index = payload["variant_task"]["index"]
+            calls.append(("generation", index))
+            assert index == 0, "B/C must not start before A passes"
+            # Reproduce the audited request: A succeeds with less than the
+            # configured fact-review safety budget remaining.
+            deadline.started_monotonic = time.monotonic() - 175
+            return _initial_variant(payload, [primary_script, "", ""])
+        if "current_rewrites" in payload or "current_rewrite" in payload:
+            calls.append(("review", 0))
+            raise AssertionError("fact review provider must not be called")
+        raise AssertionError(f"unexpected payload keys: {sorted(payload)}")
+
+    token = bind_pipeline_deadline(deadline)
+    try:
+        with pytest.raises(HTTPException) as captured:
+            _run(monkeypatch, fake_generate)
+    finally:
+        reset_pipeline_deadline(token)
+
+    detail = captured.value.detail
+    assert detail["code"] == "budget_insufficient"
+    assert detail["stage"] == "a_fact_review"
+    assert detail["request_id"] == "viral_budget_test"
+    assert detail["remaining_budget_ms"] < detail["required_budget_ms"]
+    assert calls == [("generation", 0)]
+    assert detail["stage_diagnostics"]["a_primary_generation"]["actual_chars"] == 666
+    assert detail["stage_diagnostics"]["a_primary_generation"]["llm_call_count"] == 1
+    assert [item["stage"] for item in detail["completed_stages"]] == ["a_primary_generation"]
+
+
+def test_fast_pipeline_with_shared_deadline_still_succeeds(monkeypatch):
+    _mock_source_coverage(monkeypatch)
+    scripts = [
+        _sized("主稿", "甲", 700),
+        _sized("痛点", "乙", 710),
+        _sized("表达", "丙", 720),
+    ]
+    deadline = PipelineDeadline(request_id="viral_fast_deadline", timeout_seconds=180)
+    token = bind_pipeline_deadline(deadline)
+    try:
+        result = _run(monkeypatch, _contract_provider(scripts))
+    finally:
+        reset_pipeline_deadline(token)
+
+    assert result["model_primary_passed"] is True
+    assert result["rewrites"][0]["actual_chars"] >= 674
+    completed = [item["stage"] for item in deadline.completed_stages]
+    assert "a_primary_generation" in completed
+    assert "a_fact_review" in completed
+    assert "final_validation" in completed
 
 
 def test_fact_review_two_unclosed_json_failures_return_controlled_502(monkeypatch):

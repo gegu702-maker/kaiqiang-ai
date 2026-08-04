@@ -17,6 +17,7 @@ from supabase import Client
 from app.services.billing import current_period_start, ensure_profile
 from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.services.viral_diagnostics import current_request_id
+from app.services.viral_deadline import current_pipeline_deadline
 from app.services.viral_fact_fidelity import (
     build_source_fact_ledger,
     map_source_fact_coverage,
@@ -1308,9 +1309,12 @@ async def analyze_viral_script(
     initial_generation_failures: list[dict[str, Any]] = []
     version_states: list[dict[str, Any]] = []
     call_allocation_diagnostics: list[dict[str, Any]] = []
+    pipeline_deadline = current_pipeline_deadline()
     active_initial_calls = 0
     maximum_initial_concurrency = 0
     if source_scope == "full_content":
+        if pipeline_deadline is not None:
+            pipeline_deadline.ensure_budget("a_primary_generation")
         variant_requirements = (
             "热点反差：只用来源事实呈现“信号不等于结论”的反差，不创造新闻、案例或结果",
             "用户痛点：只解释普通用户容易误读哪些来源信号，以及原文给出的核对方法",
@@ -2115,6 +2119,16 @@ async def analyze_viral_script(
     if requires_fact_review:
         fact_review_started = time.perf_counter()
         initial_primary_chars = normalized_lengths[0] if normalized_lengths else 0
+        if pipeline_deadline is not None:
+            if pipeline_deadline.stage == "a_primary_generation":
+                pipeline_deadline.finish_stage(
+                    "a_primary_generation",
+                    actual_chars=initial_primary_chars,
+                    provenance=result["rewrites"][0].get("provenance", "independent_initial"),
+                    llm_call_count=llm_budget.used_calls,
+                    maximum_llm_calls=MAX_SOURCE_CONSTRAINED_LLM_CALLS,
+                )
+            pipeline_deadline.ensure_budget("a_fact_review")
         fact_review_attempts: list[dict[str, Any]] = []
         full_fact_review_payload = {
                 "corrected_transcript": raw_script,
@@ -2394,6 +2408,13 @@ async def analyze_viral_script(
                 attempt_record["elapsed_ms"],
             )
             break
+        if pipeline_deadline is not None and pipeline_deadline.stage == "a_fact_review":
+            pipeline_deadline.finish_stage(
+                "a_fact_review",
+                actual_chars=initial_primary_chars,
+                llm_call_count=llm_budget.used_calls,
+                review_attempt_count=len(fact_review_attempts),
+            )
         llm_call_count = llm_budget.used_calls
         stage_timings.append(
             {
@@ -2673,6 +2694,8 @@ async def analyze_viral_script(
                         "保持事实集合不变，只处理重复、结构或句尾问题",
                     ]
                 convergence_started = time.perf_counter()
+                if pipeline_deadline is not None:
+                    pipeline_deadline.ensure_budget("a_targeted_repair")
                 try:
                     call_number = await llm_budget.reserve()
                     call_allocation_diagnostics.append(
@@ -2862,6 +2885,10 @@ async def analyze_viral_script(
         if primary_model_rewrite_succeeded:
             optional_started = time.perf_counter()
             optional_before_calls = llm_budget.used_calls
+            if pipeline_deadline is not None:
+                if pipeline_deadline.stage == "a_targeted_repair":
+                    pipeline_deadline.finish_stage("a_targeted_repair")
+                pipeline_deadline.ensure_budget("optional_variants")
             optional_generated = await asyncio.gather(
                 generate_variant(1),
                 generate_variant(2),
@@ -3513,6 +3540,19 @@ async def analyze_viral_script(
     candidate_failure_diagnostics: list[dict[str, Any]] = []
     similar_pairs: list[dict[str, Any]] = []
     union_source_fact_coverage: dict[str, Any] = {}
+    if pipeline_deadline is not None:
+        if pipeline_deadline.stage not in {"final_validation", "a_primary_generation"}:
+            pipeline_deadline.finish_stage(pipeline_deadline.stage)
+        if pipeline_deadline.stage == "a_primary_generation":
+            initial_primary_chars = normalized_lengths[0] if normalized_lengths else 0
+            pipeline_deadline.finish_stage(
+                "a_primary_generation",
+                actual_chars=initial_primary_chars,
+                provenance=(result.get("rewrites") or [{}])[0].get("provenance", "independent_initial"),
+                llm_call_count=llm_budget.used_calls,
+                maximum_llm_calls=MAX_SOURCE_CONSTRAINED_LLM_CALLS,
+            )
+        pipeline_deadline.start_stage("final_validation")
     if source_scope == "full_content":
         def validate_candidate(index: int, rewrite: dict[str, Any]) -> dict[str, Any]:
             return _candidate_quality_snapshot(
@@ -3936,6 +3976,13 @@ async def analyze_viral_script(
             ),
         }
         llm_call_count = llm_budget.used_calls
+        if pipeline_deadline is not None and pipeline_deadline.stage == "final_validation":
+            pipeline_deadline.finish_stage(
+                "final_validation",
+                valid_candidate_count=len(finalized_rewrites),
+                llm_call_count=llm_call_count,
+                maximum_llm_calls=MAX_SOURCE_CONSTRAINED_LLM_CALLS,
+            )
 
     generated_count = len(result["rewrites"])
     filtered_invalid_count = max(

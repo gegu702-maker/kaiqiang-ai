@@ -1268,6 +1268,11 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "ASR 模型不可用" in component_source
     assert "AI 响应格式错误" in component_source
     assert "请求 ID：" in component_source
+    assert 'a_fact_review: "主稿事实审校未完成"' in component_source
+    assert 'budget_insufficient: "剩余处理预算不足"' in component_source
+    assert "remaining_budget_ms" in component_source
+    assert "completed_stages" in component_source
+    assert "ASR及主稿初稿已完成" not in component_source  # message comes from structured API data
     assert "匹配原视频时长（推荐，原文约 90%–110%）" in component_source
     assert "精简版（原文约 65%–80%）" in component_source
     assert "适度扩展（原文约 110%–130%）" in component_source
@@ -1283,6 +1288,14 @@ def test_frontend_upload_has_progress_and_structured_network_errors():
     assert "SegmentAudioPlayer" not in component_source
     assert "continueReviewedViralPipeline" not in component_source
     assert "setUploadProgress(null)" in component_source
+
+
+def test_upload_timeout_uses_live_deadline_stage_instead_of_transcribing_literal():
+    source = (Path(__file__).parents[1] / "app" / "api" / "viral.py").read_text(encoding="utf-8")
+    timeout_block = source[source.index("except asyncio.TimeoutError:", source.index("/pipeline/upload")) :]
+    assert "deadline.stage" in timeout_block
+    assert 'stage="transcribing"' not in timeout_block
+    assert "completed_stages" in source
 
 
 def test_frontend_analysis_submission_has_synchronous_duplicate_gate_and_loading_state():

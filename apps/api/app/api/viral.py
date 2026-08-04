@@ -16,6 +16,12 @@ from app.services.llm_provider import LLMProviderError
 from app.services.viral_analyzer import analyze_viral_script
 from app.services.viral_pipeline import run_uploaded_viral_pipeline, run_viral_pipeline
 from app.services.viral_diagnostics import bind_request_id, new_request_id, reset_request_id
+from app.services.viral_deadline import (
+    PipelineDeadline,
+    bind_pipeline_deadline,
+    new_pipeline_deadline,
+    reset_pipeline_deadline,
+)
 from app.services.viral_idempotency import (
     IdempotencyConflict,
     IdempotencyOutcome,
@@ -77,6 +83,33 @@ def _pipeline_failure(*, request_id: str, code: str, stage: str, message: str, r
         "rewrites": [],
         "metadata": {},
     }
+
+
+def _deadline_failure(
+    deadline: PipelineDeadline,
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+) -> dict:
+    detail = deadline.failure_detail(code=code, message=message, retryable=retryable)
+    result = _pipeline_failure(
+        request_id=deadline.request_id,
+        code=code,
+        stage=str(detail["stage"]),
+        message=message,
+        retryable=retryable,
+    )
+    result.update(detail)
+    result["diagnostic"] = {
+        "elapsed_ms": detail["elapsed_ms"],
+        "remaining_budget_ms": detail["remaining_budget_ms"],
+        "stage_started_at": detail["stage_started_at"],
+        "stage_elapsed_ms": detail["stage_elapsed_ms"],
+        "completed_stages": detail["completed_stages"],
+        "stage_diagnostics": detail["stage_diagnostics"],
+    }
+    return result
 
 
 def _viral_analyze_fingerprint(payload: ViralAnalyzeRequest) -> str:
@@ -343,6 +376,8 @@ async def run_uploaded_viral_agent_pipeline(
     request_id = new_request_id()
     context_token = bind_request_id(request_id)
     user = get_authenticated_user(supabase, token)
+    deadline = new_pipeline_deadline(request_id)
+    deadline_token = bind_pipeline_deadline(deadline)
     try:
         if _viral_upload_lock.locked():
             result = _pipeline_failure(
@@ -366,31 +401,30 @@ async def run_uploaded_viral_agent_pipeline(
                     language=language,
                     rewrite_length=rewrite_length,
                 ),
-                timeout=settings.viral_pipeline_timeout_seconds,
+                timeout=max(0.001, deadline.remaining_budget_ms / 1000),
             )
     except asyncio.TimeoutError:
-        logger.warning("viral_pipeline request_id=%s stage=upload_pipeline outcome=timeout", request_id)
-        result = _pipeline_failure(
-            request_id=request_id,
+        logger.warning("viral_pipeline request_id=%s stage=%s outcome=timeout", request_id, deadline.stage)
+        result = _deadline_failure(
+            deadline,
             code="pipeline_timeout",
-            stage="transcribing",
-            message="上传视频分析超时，未静默降级。",
+            message=f"上传视频分析在 {deadline.stage} 阶段超时，未静默降级。",
             retryable=True,
         )
         result.update({"fallback_options": ["paste_text"], "source_type": "uploaded_video_asr", "degraded": False})
         return result
     except Exception as error:
-        logger.exception("viral_pipeline request_id=%s stage=upload_pipeline outcome=unexpected_failure", request_id)
-        result = _pipeline_failure(
-            request_id=request_id,
+        logger.exception("viral_pipeline request_id=%s stage=%s outcome=unexpected_failure", request_id, deadline.stage)
+        result = _deadline_failure(
+            deadline,
             code="pipeline_unexpected_error",
-            stage="processing",
             message=f"上传视频处理发生未预期错误（{type(error).__name__}）。",
             retryable=True,
         )
         result.update({"fallback_options": ["paste_text"], "source_type": "uploaded_video_asr", "degraded": False})
         return result
     finally:
+        reset_pipeline_deadline(deadline_token)
         reset_request_id(context_token)
 
 

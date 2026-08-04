@@ -434,6 +434,16 @@ export type ViralPipelineResult = {
   retryable?: boolean;
   request_id?: string;
   message?: string;
+  elapsed_ms?: number;
+  remaining_budget_ms?: number;
+  completed_stages?: Array<{
+    stage: string;
+    started_at: string;
+    finished_at: string;
+    elapsed_ms: number;
+    remaining_budget_ms: number;
+  }>;
+  stage_diagnostics?: Record<string, unknown>;
   fallback_available?: boolean;
   fallback_options?: string[];
   fallback_reason: string;

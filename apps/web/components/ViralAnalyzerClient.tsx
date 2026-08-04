@@ -334,17 +334,28 @@ export function ViralAnalyzerClient({
   function friendlyPipelineMessage(
     payload: Pick<
       ViralPipelineResult,
-      "failed_at" | "error_code" | "code" | "stage" | "message" | "fallback_reason" | "request_id" | "retryable" | "diagnostic"
+      "failed_at" | "error_code" | "code" | "stage" | "message" | "fallback_reason" | "request_id" | "retryable" | "diagnostic" | "elapsed_ms" | "remaining_budget_ms" | "completed_stages"
     >,
   ) {
     const code = payload.code || payload.error_code || "unknown_error";
     const stage = payload.stage || payload.failed_at || "failed";
     const stageLabels: Record<string, string> = {
       pending: "上传接收失败",
+      receiving: "视频接收失败",
+      uploading: "视频上传失败",
       resolving_link: "链接解析失败",
       downloading_video: "平台视频下载失败",
       extracting_audio: "音频提取失败",
+      media_extracting: "音频提取失败",
+      asr_loading: "ASR 模型加载失败",
       transcribing: "语音转写失败",
+      transcript_correcting: "金融转写校正失败",
+      asr_normalizing: "ASR 句段归一化失败",
+      a_primary_generation: "主稿初稿生成失败",
+      a_fact_review: "主稿事实审校未完成",
+      a_targeted_repair: "主稿定向修复未完成",
+      optional_variants: "附加版本生成未完成",
+      final_validation: "最终质量校验失败",
       analyzing: "AI 拆解失败",
       rewriting: "改写生成失败",
       processing: "视频处理失败",
@@ -373,6 +384,7 @@ export function ViralAnalyzerClient({
       analysis_output_too_short: "AI 改写长度不足",
       analysis_output_out_of_range: "AI 改写长度未进入动态目标范围",
       pipeline_timeout: "处理超时",
+      budget_insufficient: "剩余处理预算不足",
     };
     const title = codeLabels[code] || stageLabels[stage] || "拆解失败";
     const detail = payload.message || payload.fallback_reason || "服务端未返回具体原因。";
@@ -387,13 +399,20 @@ export function ViralAnalyzerClient({
       : "";
     const requestLine = payload.request_id ? `请求 ID：${payload.request_id}` : "";
     const retryLine = payload.retryable === true ? "可重试：是" : payload.retryable === false ? "可重试：否" : "";
+    const budgetLine =
+      typeof payload.elapsed_ms === "number" || typeof payload.remaining_budget_ms === "number"
+        ? `已用：${Math.max(0, Math.round((payload.elapsed_ms || 0) / 1000))} 秒；剩余预算：${Math.max(0, Math.round((payload.remaining_budget_ms || 0) / 1000))} 秒`
+        : "";
+    const completedLine = payload.completed_stages?.length
+      ? `已完成：${payload.completed_stages.map((item) => item.stage).join(" → ")}`
+      : "";
     if (
       payload.error_code === "not_downloadable" &&
       (payload.failed_at === "downloading_video" || payload.failed_at === "resolving_link")
     ) {
       return "已基于链接公开信息完成初步拆解。由于平台限制，未读取完整视频语音，补充原文案可提升准确度。";
     }
-    return [`${title}（${code} / ${stage}）`, detail, actualChars, repairRounds, retryLine, requestLine].filter(Boolean).join("\n");
+    return [`${title}（${code} / ${stage}）`, detail, budgetLine, completedLine, actualChars, repairRounds, retryLine, requestLine].filter(Boolean).join("\n");
   }
 
   function friendlyError(error: unknown) {

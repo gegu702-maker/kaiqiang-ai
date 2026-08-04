@@ -5,12 +5,18 @@ from dataclasses import dataclass
 from functools import lru_cache
 import logging
 import math
+import multiprocessing
+import os
 from pathlib import Path
+import queue
+import threading
 import time
+from typing import Any, Callable
 
 from app.core.config import settings
 from app.services.financial_terms import FINANCIAL_HOTWORDS, FINANCIAL_INITIAL_PROMPT
-from app.services.viral_diagnostics import current_request_id
+from app.services.viral_deadline import current_pipeline_deadline
+from app.services.viral_diagnostics import bind_request_id, current_request_id, reset_request_id
 
 
 logger = logging.getLogger(__name__)
@@ -252,7 +258,12 @@ def _needs_vad_recovery(*, transcript: str, coverage_seconds: float, expected_du
     return False
 
 
-def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_duration: float = 0.0) -> ASRResult:
+def _transcribe_with_faster_whisper(
+    audio_path: Path,
+    language: str,
+    expected_duration: float = 0.0,
+    model_ready_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> ASRResult:
     request_id = current_request_id()
     logger.info(
         "viral_asr request_id=%s stage=model_load provider=faster-whisper model=%s device=%s compute_type=%s audio_bytes=%s",
@@ -262,6 +273,9 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
         settings.faster_whisper_compute_type,
         audio_path.stat().st_size if audio_path.exists() else -1,
     )
+    model_load_started = time.perf_counter()
+    cache_info = getattr(_get_model, "cache_info", None)
+    cache_info_before = cache_info() if callable(cache_info) else None
     try:
         model = _get_model()
     except ImportError as error:
@@ -285,9 +299,38 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
             diagnostic=diagnostic,
         )
 
+    cache_info_after = cache_info() if callable(cache_info) else None
+    model_initialization_elapsed_ms = round((time.perf_counter() - model_load_started) * 1000)
+    cache_hit = bool(
+        cache_info_before is not None
+        and cache_info_after is not None
+        and cache_info_after.hits > cache_info_before.hits
+    )
+    model_diagnostic = {
+        "model": settings.faster_whisper_model_size,
+        "device": settings.faster_whisper_device,
+        "compute_type": settings.faster_whisper_compute_type,
+        "cache_hit": cache_hit,
+        "model_initialization_elapsed_ms": model_initialization_elapsed_ms,
+        "worker_pid": os.getpid(),
+    }
+    logger.warning(
+        "viral_asr request_id=%s stage=asr_loading outcome=model_ready model=%s device=%s compute_type=%s "
+        "cache_hit=%s model_initialization_elapsed_ms=%s worker_pid=%s",
+        request_id,
+        settings.faster_whisper_model_size,
+        settings.faster_whisper_device,
+        settings.faster_whisper_compute_type,
+        cache_hit,
+        model_initialization_elapsed_ms,
+        os.getpid(),
+    )
+    if model_ready_callback is not None:
+        model_ready_callback(model_diagnostic)
+
     domain = settings.viral_asr_domain.strip().lower()
     logger.warning(
-        "viral_asr request_id=%s stage=transcribe outcome=started model=%s device=%s compute_type=%s language=%s beam_size=%s vad_filter=%s word_timestamps=%s domain=%s initial_prompt=%s hotwords=%s",
+        "viral_asr request_id=%s stage=transcribe outcome=started model=%s device=%s compute_type=%s language=%s beam_size=%s vad_filter=%s word_timestamps=%s domain=%s initial_prompt=%s hotwords=%s worker_pid=%s",
         request_id,
         settings.faster_whisper_model_size,
         settings.faster_whisper_device,
@@ -299,6 +342,7 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
         domain or "general",
         domain == "financial" and settings.viral_asr_use_initial_prompt,
         domain == "financial" and settings.viral_asr_use_hotwords,
+        os.getpid(),
     )
     try:
         transcribe_options = {
@@ -456,6 +500,16 @@ def _transcribe_with_faster_whisper(audio_path: Path, language: str, expected_du
         recovery_attempted,
         recovery_used,
     )
+    inference_elapsed_seconds = max(0.001, time.perf_counter() - initial_started)
+    logger.warning(
+        "viral_asr request_id=%s stage=transcribe outcome=metrics audio_duration_seconds=%.3f "
+        "inference_elapsed_seconds=%.3f real_time_factor=%.4f worker_pid=%s",
+        request_id,
+        expected_duration,
+        inference_elapsed_seconds,
+        inference_elapsed_seconds / max(expected_duration, 0.001),
+        os.getpid(),
+    )
     return ASRResult(
         ok=True,
         transcript=transcript,
@@ -487,4 +541,199 @@ def _get_model():
 
 
 async def transcribe_audio(audio_path: Path, language: str = "zh", expected_duration: float = 0.0) -> ASRResult:
-    return await asyncio.to_thread(_transcribe_with_faster_whisper, audio_path, language, expected_duration)
+    return await _asr_process_manager.transcribe(audio_path, language, expected_duration)
+
+
+def _asr_worker_main(command_queue, result_queue) -> None:
+    while True:
+        command = command_queue.get()
+        if command is None:
+            return
+        task_id, request_id, audio_path, language, expected_duration = command
+        request_token = bind_request_id(request_id)
+        try:
+            def report_model_ready(diagnostic: dict[str, Any]) -> None:
+                result_queue.put(("model_ready", task_id, diagnostic))
+
+            result = _transcribe_with_faster_whisper(
+                Path(audio_path),
+                language,
+                expected_duration,
+                model_ready_callback=report_model_ready,
+            )
+            result_queue.put(("result", task_id, result))
+        except BaseException as error:
+            result_queue.put(
+                (
+                    "result",
+                    task_id,
+                    ASRResult(
+                        ok=False,
+                        fallback_reason="ASR worker 发生未预期错误。",
+                        error_code="asr_worker_failed",
+                        retryable=True,
+                        diagnostic=f"{type(error).__name__}: {error}"[:500],
+                    ),
+                )
+            )
+        finally:
+            reset_request_id(request_token)
+
+
+class _ASRProcessManager:
+    def __init__(self) -> None:
+        self._context = multiprocessing.get_context("spawn")
+        self._state_lock = threading.Lock()
+        self._process = None
+        self._commands = None
+        self._results = None
+        self._active_task_id: str | None = None
+        self._residual_worker = False
+        self._model_ready = False
+
+    def status(self) -> dict[str, Any]:
+        with self._state_lock:
+            process = self._process
+            return {
+                "worker_alive": bool(process and process.is_alive()),
+                "worker_pid": process.pid if process and process.is_alive() else None,
+                "model_ready": self._model_ready,
+                "task_active": self._active_task_id is not None,
+                "residual_worker": self._residual_worker,
+            }
+
+    def _ensure_worker(self) -> tuple[Any, Any, int]:
+        with self._state_lock:
+            if self._residual_worker:
+                raise RuntimeError("previous_asr_worker_residual")
+            if self._process is None or not self._process.is_alive():
+                self._commands = self._context.Queue()
+                self._results = self._context.Queue()
+                self._process = self._context.Process(
+                    target=_asr_worker_main,
+                    args=(self._commands, self._results),
+                    name="viral-asr-worker",
+                    daemon=True,
+                )
+                self._process.start()
+                self._model_ready = False
+            return self._commands, self._results, int(self._process.pid or -1)
+
+    def _terminate_active_worker(self, task_id: str) -> bool:
+        with self._state_lock:
+            process = self._process
+            commands = self._commands
+            results = self._results
+        if process is None:
+            return True
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=3)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=2)
+        exited = not process.is_alive()
+        with self._state_lock:
+            self._residual_worker = not exited
+            self._process = None if exited else process
+            self._commands = None if exited else self._commands
+            self._results = None if exited else self._results
+            self._active_task_id = None
+            self._model_ready = False
+        if exited:
+            for worker_queue in (commands, results):
+                if worker_queue is not None and hasattr(worker_queue, "cancel_join_thread"):
+                    worker_queue.cancel_join_thread()
+                if worker_queue is not None and hasattr(worker_queue, "close"):
+                    worker_queue.close()
+        logger.warning(
+            "viral_asr request_id=%s stage=transcribing outcome=worker_cancelled task_id=%s "
+            "worker_pid=%s worker_exited=%s residual_worker=%s",
+            current_request_id(),
+            task_id,
+            process.pid,
+            exited,
+            not exited,
+        )
+        return exited
+
+    async def transcribe(self, audio_path: Path, language: str, expected_duration: float) -> ASRResult:
+        request_id = current_request_id()
+        task_id = f"{request_id}:{time.monotonic_ns()}"
+        queued_at = time.perf_counter()
+        try:
+            commands, results, worker_pid = self._ensure_worker()
+        except RuntimeError as error:
+            logger.warning(
+                "viral_asr request_id=%s stage=asr_loading outcome=rejected previous_task_residual=true",
+                request_id,
+            )
+            return ASRResult(
+                ok=False,
+                fallback_reason="上一 ASR worker 尚未确认退出，已拒绝新任务。",
+                error_code="asr_worker_residual",
+                retryable=True,
+                diagnostic=str(error),
+            )
+        with self._state_lock:
+            if self._active_task_id is not None:
+                return ASRResult(
+                    ok=False,
+                    fallback_reason="ASR worker 正在处理上一任务。",
+                    error_code="asr_busy",
+                    retryable=True,
+                    diagnostic="worker_queue_busy",
+                )
+            self._active_task_id = task_id
+        queue_elapsed_ms = round((time.perf_counter() - queued_at) * 1000)
+        logger.warning(
+            "viral_asr request_id=%s stage=asr_loading outcome=queued queue_elapsed_ms=%s "
+            "worker_pid=%s previous_task_residual=false",
+            request_id,
+            queue_elapsed_ms,
+            worker_pid,
+        )
+        commands.put((task_id, request_id, str(audio_path), language, expected_duration))
+        deadline = current_pipeline_deadline()
+        try:
+            while True:
+                try:
+                    kind, result_task_id, payload = await asyncio.to_thread(results.get, True, 0.25)
+                except queue.Empty:
+                    continue
+                if result_task_id != task_id:
+                    continue
+                if kind == "model_ready":
+                    with self._state_lock:
+                        self._model_ready = True
+                    if deadline is not None:
+                        if deadline.stage == "asr_loading":
+                            deadline.finish_stage("asr_loading", **payload, queue_elapsed_ms=queue_elapsed_ms)
+                        deadline.start_stage("transcribing")
+                    continue
+                with self._state_lock:
+                    self._active_task_id = None
+                return payload
+        except asyncio.CancelledError:
+            logger.warning(
+                "viral_asr request_id=%s stage=%s outcome=cancellation_received task_id=%s worker_pid=%s",
+                request_id,
+                deadline.stage if deadline is not None else "transcribing",
+                task_id,
+                worker_pid,
+            )
+            exited = await asyncio.shield(asyncio.to_thread(self._terminate_active_worker, task_id))
+            if not exited:
+                logger.error(
+                    "viral_asr request_id=%s stage=transcribing outcome=residual_worker_detected worker_pid=%s",
+                    request_id,
+                    worker_pid,
+                )
+            raise
+
+
+_asr_process_manager = _ASRProcessManager()
+
+
+def asr_worker_status() -> dict[str, Any]:
+    return _asr_process_manager.status()

@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from app.core.config import settings
 from app.services.viral_diagnostics import current_request_id
+from app.services.viral_deadline import ensure_llm_budget
 
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,10 @@ class LLMProvider:
         allow_format_repair: bool = True,
         thinking_mode: str | None = None,
     ) -> dict[str, Any]:
+        # The request deadline is shared across every stage. This guard is the
+        # final safety net preventing an LLM call from starting with less than
+        # the configured minimum budget for the active stage.
+        ensure_llm_budget()
         provider = settings.llm_provider.lower()
         if provider == "deepseek":
             return await self._chat_json(

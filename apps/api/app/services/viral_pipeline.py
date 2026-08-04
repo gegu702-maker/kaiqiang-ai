@@ -19,6 +19,7 @@ from app.services.financial_transcript import CorrectionResult, correct_financia
 from app.services.llm_provider import LLMProvider, LLMProviderError
 from app.core.config import settings
 from app.services.viral_diagnostics import current_request_id
+from app.services.viral_deadline import current_pipeline_deadline
 from app.services.viral_review import verify_review_token
 from app.services.viral_length import calculate_rewrite_length_target
 from app.services.video_download_service import DOWNLOAD_FALLBACK, download_video, extract_audio, probe_audio_stream, probe_media_duration
@@ -68,7 +69,7 @@ DOUYIN_COMMAND_RE = re.compile(
 
 def _failed(
     *,
-    status: ViralPipelineStatus,
+    status: ViralPipelineStatus | str,
     fallback_reason: str,
     metadata: dict[str, Any] | None = None,
     error_code: str = "unknown_error",
@@ -104,7 +105,7 @@ def _analysis_error_result(
     metadata: dict[str, Any],
     source_type: str,
 ) -> dict[str, Any]:
-    failure_stage = ViralPipelineStatus.ANALYZING
+    failure_stage: ViralPipelineStatus | str = ViralPipelineStatus.ANALYZING
     if isinstance(error, LLMProviderError):
         diagnostic = {
             "http_status": error.http_status,
@@ -119,8 +120,8 @@ def _analysis_error_result(
         message = str(detail.get("message") if isinstance(detail, dict) else detail)
         code = str(detail.get("code") if isinstance(detail, dict) else "analysis_http_error")
         retryable = bool(detail.get("retryable")) if isinstance(detail, dict) and "retryable" in detail else error.status_code >= 500
-        if isinstance(detail, dict) and detail.get("stage") == ViralPipelineStatus.REWRITING.value:
-            failure_stage = ViralPipelineStatus.REWRITING
+        if isinstance(detail, dict) and detail.get("stage"):
+            failure_stage = str(detail["stage"])
         diagnostic = {"http_status": None, "internal_http_status": error.status_code, "response_length": 0, "schema_error": ""}
         if isinstance(detail, dict):
             diagnostic.update(
@@ -140,6 +141,16 @@ def _analysis_error_result(
                         "exact_duration_match",
                         "length_repair_rounds",
                         "resource_limits",
+                        "elapsed_ms",
+                        "remaining_budget_ms",
+                        "stage_started_at",
+                        "stage_elapsed_ms",
+                        "completed_stages",
+                        "stage_diagnostics",
+                        "required_budget_ms",
+                        "a_primary_chars",
+                        "llm_call_count",
+                        "maximum_llm_calls",
                     )
                     if key in detail
                 }
@@ -166,6 +177,25 @@ def _analysis_error_result(
         diagnostic=diagnostic,
     )
     result.update({"source_type": source_type, "degraded": source_type.endswith("fallback")})
+    if isinstance(error, HTTPException) and isinstance(error.detail, dict):
+        result.update(
+            {
+                key: error.detail[key]
+                for key in (
+                    "elapsed_ms",
+                    "remaining_budget_ms",
+                    "stage_started_at",
+                    "stage_elapsed_ms",
+                    "completed_stages",
+                    "stage_diagnostics",
+                    "required_budget_ms",
+                    "a_primary_chars",
+                    "llm_call_count",
+                    "maximum_llm_calls",
+                )
+                if key in error.detail
+            }
+        )
     return result
 
 
@@ -484,6 +514,9 @@ async def _process_video_path(
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
     request_id = current_request_id()
+    deadline = current_pipeline_deadline()
+    if deadline is not None:
+        deadline.start_stage("media_extracting")
     logger.info(
         "viral_pipeline request_id=%s stage=media_probe outcome=started source_type=%s video_bytes=%s",
         request_id,
@@ -559,8 +592,25 @@ async def _process_video_path(
         audio_stream.get("channels"),
         audio_stream.get("channel_layout"),
     )
+    if deadline is not None:
+        deadline.finish_stage(
+            "media_extracting",
+            video_duration_seconds=round(duration, 3),
+            audio_duration_seconds=round(audio_duration, 3),
+            audio_bytes=audio_path.stat().st_size if audio_path.exists() else -1,
+        )
+        deadline.start_stage("asr_loading")
 
     asr = await transcribe_audio(audio_path, language, duration)
+    if deadline is not None:
+        deadline.finish_stage(
+            deadline.stage if deadline.stage in {"asr_loading", "transcribing"} else "transcribing",
+            provider=asr.provider,
+            ok=asr.ok,
+            audio_duration_seconds=round(audio_duration or duration, 3),
+            coverage_seconds=round(asr.coverage_seconds, 3),
+            segment_count=len(asr.segments or []),
+        )
     if not asr.ok:
         logger.warning(
             "viral_pipeline request_id=%s stage=transcribing outcome=failed code=%s retryable=%s diagnostic=%r",
@@ -619,6 +669,8 @@ async def _process_video_path(
         _log_diagnostics({"source_type": source_type, "video_duration_seconds": duration, "audio_duration_seconds": audio_duration, "asr_coverage_seconds": asr.coverage_seconds, "last_timestamp_seconds": asr.last_timestamp_seconds, "transcript_chars": len(asr.transcript), "raw_transcript_chars": asr.raw_transcript_chars, "segment_count": len(raw_segments), "raw_segment_count": asr.raw_segment_count, "fallback": False, "prompt_input_chars": 0, "output_chars": 0})
         return result
     if settings.viral_asr_domain.strip().lower() == "financial":
+        if deadline is not None:
+            deadline.ensure_budget("transcript_correcting")
         correction = await correct_financial_transcript(raw_segments, language)
     else:
         correction = CorrectionResult(
@@ -629,6 +681,13 @@ async def _process_video_path(
             quality_passed=True,
             provider="none",
         )
+    if deadline is not None:
+        deadline.finish_stage(
+            "transcript_correcting",
+            correction_count=sum(int(item.get("count") or 1) for item in correction.corrections),
+            quality_passed=correction.quality_passed,
+        )
+        deadline.start_stage("asr_normalizing")
     corrected_transcript = correction.corrected_transcript
     normalization = normalize_asr_for_fact_ledger(
         correction.corrected_segments,
@@ -638,6 +697,12 @@ async def _process_video_path(
     )
     normalized_transcript = normalization.normalized_text
     normalization_diagnostics = normalization.diagnostics
+    if deadline is not None:
+        deadline.finish_stage(
+            "asr_normalizing",
+            normalized_sentence_count=normalization_diagnostics["normalized_sentence_count"],
+            normalization_validation_passed=normalization_diagnostics["normalization_validation_passed"],
+        )
     correction_count = sum(int(item.get("count") or 1) for item in correction.corrections)
     correction_diagnostics = {
         "source_type": source_type,
@@ -1195,6 +1260,13 @@ async def run_uploaded_viral_pipeline(
             total,
             getattr(upload, "size", None) if getattr(upload, "size", None) is not None else -1,
         )
+        deadline = current_pipeline_deadline()
+        if deadline is not None and deadline.stage == "receiving":
+            deadline.finish_stage(
+                "receiving",
+                uploaded_bytes=total,
+                expected_bytes=getattr(upload, "size", None) if getattr(upload, "size", None) is not None else -1,
+            )
         metadata = {
             "platform": "upload",
             "title": Path(upload.filename or "上传视频").stem,

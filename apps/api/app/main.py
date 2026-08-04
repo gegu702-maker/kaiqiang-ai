@@ -17,6 +17,7 @@ from app.api.viral import router as viral_router
 from app.api.voice_clone import router as voice_clone_router
 from app.core.config import settings
 from app.services.autodl_client import autodl_idle_shutdown_loop
+from app.services.asr_service import asr_worker_status
 from app.services.task_worker import worker_loop
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 @app.get("/health")
-def root_health() -> dict[str, str]:
-    return {"status": "ok"}
+def root_health() -> dict[str, object]:
+    # Process liveness remains the deployment health contract. ASR readiness is
+    # reported separately so a lazy model load never makes health permanently fail.
+    return {"status": "ok", "asr": asr_worker_status()}
 
 app.include_router(health_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
