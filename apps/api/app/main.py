@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.services.autodl_client import autodl_idle_shutdown_loop
 from app.services.asr_service import asr_worker_status
 from app.services.task_worker import worker_loop
+from app.services.viral_job_worker import viral_job_worker_loop
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,8 @@ app = FastAPI(title="AI Digital Human API", version="0.1.0")
 async def start_worker() -> None:
     if settings.enable_task_worker:
         asyncio.create_task(worker_loop())
+    if settings.viral_async_jobs_enabled:
+        asyncio.create_task(viral_job_worker_loop())
     asyncio.create_task(autodl_idle_shutdown_loop())
 
 app.add_middleware(

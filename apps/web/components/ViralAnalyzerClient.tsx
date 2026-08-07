@@ -3,9 +3,20 @@
 import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Sparkles, UploadCloud, WandSparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { analyzeViralScript, checkVideoLink, runUploadedViralPipeline, runViralPipeline, type ViralUploadProgress } from "@/lib/api";
+import {
+  analyzeViralScript,
+  cancelViralJob,
+  checkVideoLink,
+  createViralJob,
+  getViralJob,
+  runUploadedViralPipeline,
+  runViralPipeline,
+  ViralJobApiUnavailableError,
+  type ViralJobStatus,
+  type ViralUploadProgress,
+} from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 import type { ViralAnalyzeResult, ViralIndustry, ViralLengthMode, ViralLinkErrorCode, ViralPipelineResult, VideoLinkResolveResult } from "@/lib/types";
 
@@ -247,6 +258,7 @@ export function ViralAnalyzerClient({
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [uploadProgress, setUploadProgress] = useState<ViralUploadProgress | null>(null);
+  const [activeJob, setActiveJob] = useState<ViralJobStatus | null>(null);
   const [rewriteLength, setRewriteLength] = useState<ViralLengthMode>("match_source");
   const [result, setResult] = useState<ViralAnalyzeResult | null>(null);
   const [linkCheck, setLinkCheck] = useState<VideoLinkResolveResult | null>(null);
@@ -261,6 +273,7 @@ export function ViralAnalyzerClient({
   const [runStage, setRunStage] = useState<"idle" | "checking" | "uploading" | "processing" | "pipeline" | "manual">("idle");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const analysisInFlightRef = useRef(false);
+  const pollGenerationRef = useRef(0);
   const manualSubmissionRef = useRef<ManualSubmissionCache | null>(null);
   const t = analyzerCopy[language];
   const successfulActualChars = result?.diagnostic?.actual_chars ?? result?.diagnostics?.rewrite_actual_chars ?? [];
@@ -304,6 +317,63 @@ export function ViralAnalyzerClient({
       hasRewrites: Boolean(result?.rewrites?.length),
     });
   }, [linkCheck, onWorkflowStateChange, pipelineMetadata, result]);
+
+  const pollViralJob = useCallback(async (jobId: string, accessToken: string, userId: string, generation: number) => {
+    let delayMs = 1500;
+    while (pollGenerationRef.current === generation) {
+      const job = await getViralJob(jobId, accessToken);
+      if (pollGenerationRef.current !== generation) return;
+      setActiveJob(job);
+      setRunStage("processing");
+      if (job.status === "succeeded") {
+        if (!job.result) throw new Error("任务已完成，但安全结果字段为空。");
+        setResult({ ...job.result, request_id: job.result.request_id || job.request_id });
+        localStorage.removeItem(`viral-analysis-job:${userId}`);
+        return;
+      }
+      if (job.status === "failed" || job.status === "cancelled") {
+        localStorage.removeItem(`viral-analysis-job:${userId}`);
+        throw new Error(
+          job.status === "cancelled"
+            ? "任务已取消。"
+            : `${job.safe_error_message || "异步任务失败。"}\ncode: ${job.error_code || "unknown"}\nstage: ${job.stage}`,
+        );
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+      delayMs = Math.min(8000, Math.round(delayMs * 1.5));
+    }
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    void (async () => {
+      const { data } = await supabase.auth.getUser();
+      const user = data.user;
+      if (!user || disposed) return;
+      const jobId = localStorage.getItem(`viral-analysis-job:${user.id}`);
+      if (!jobId) return;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken || disposed) return;
+      const generation = ++pollGenerationRef.current;
+      setLoading(true);
+      setRunStage("processing");
+      try {
+        await pollViralJob(jobId, accessToken, user.id, generation);
+      } catch (resumeError) {
+        if (!disposed) setError(resumeError instanceof Error ? resumeError.message : "任务恢复失败。");
+      } finally {
+        if (!disposed && pollGenerationRef.current === generation) {
+          setLoading(false);
+          setRunStage("idle");
+        }
+      }
+    })();
+    return () => {
+      disposed = true;
+      pollGenerationRef.current += 1;
+    };
+  }, [pollViralJob, supabase]);
 
   function applyPipelineResult(payload: ViralPipelineResult) {
     setPipelineMetadata(payload.metadata);
@@ -434,7 +504,10 @@ export function ViralAnalyzerClient({
     if (runStage === "checking") return linkCheckCopy.checkingLink;
     if (runStage === "pipeline") return linkCheckCopy.pipelineReading;
     if (runStage === "uploading") return `正在上传 ${uploadProgress?.percent ?? 0}%`;
-    if (runStage === "processing") return "上传完成，正在提取音频、分段 ASR 与分层汇总";
+    if (runStage === "processing") {
+      if (activeJob) return `${activeJob.stage} · ${activeJob.progress}%`;
+      return "上传完成，后台任务正在启动";
+    }
     if (runStage === "manual") return linkCheckCopy.manualAnalyzing;
     return t.analyzing;
   }
@@ -560,15 +633,30 @@ export function ViralAnalyzerClient({
         formData.set("industry", industry);
         formData.set("language", language);
         formData.set("rewrite_length", rewriteLength);
-        const pipeline = await runUploadedViralPipeline(formData, accessToken, (progress) => {
-          setUploadProgress(progress);
-          setRunStage(progress.stage);
-        });
-        applyPipelineResult(pipeline);
-        if (!pipeline.ok) throw new Error(friendlyPipelineMessage(pipeline));
-        const pipelineResult = pipelineToAnalyzeResult(pipeline);
-        if (!pipelineResult) throw new Error(linkCheckCopy.pipelineEmpty);
-        setResult(pipelineResult);
+        let created;
+        try {
+          created = await createViralJob(formData, accessToken, (progress) => {
+            setUploadProgress(progress);
+            setRunStage(progress.stage);
+          });
+        } catch (jobError) {
+          if (!(jobError instanceof ViralJobApiUnavailableError)) throw jobError;
+          const pipeline = await runUploadedViralPipeline(formData, accessToken, (progress) => {
+            setUploadProgress(progress);
+            setRunStage(progress.stage);
+          });
+          applyPipelineResult(pipeline);
+          if (!pipeline.ok) throw new Error(friendlyPipelineMessage(pipeline));
+          const pipelineResult = pipelineToAnalyzeResult(pipeline);
+          if (!pipelineResult) throw new Error(linkCheckCopy.pipelineEmpty);
+          setResult(pipelineResult);
+          return;
+        }
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) throw new Error(linkCheckCopy.loginError);
+        localStorage.setItem(`viral-analysis-job:${data.user.id}`, created.job_id);
+        const generation = ++pollGenerationRef.current;
+        await pollViralJob(created.job_id, accessToken, data.user.id, generation);
         return;
       }
 
@@ -647,6 +735,17 @@ export function ViralAnalyzerClient({
       setLoading(false);
       setRunStage("idle");
       setUploadProgress(null);
+    }
+  }
+
+  async function handleCancelJob() {
+    if (!activeJob || ["succeeded", "failed", "cancelled"].includes(activeJob.status)) return;
+    try {
+      const accessToken = await getSessionToken();
+      const cancelled = await cancelViralJob(activeJob.id, accessToken);
+      setActiveJob(cancelled);
+    } catch (cancelError) {
+      setError(friendlyError(cancelError));
     }
   }
 
@@ -820,6 +919,15 @@ export function ViralAnalyzerClient({
                   {loading ? <Loader2 className="animate-spin" size={18} /> : <WandSparkles size={18} />}
                   {loading ? loadingLabel() : t.start}
                 </button>
+                {activeJob && !["succeeded", "failed", "cancelled"].includes(activeJob.status) ? (
+                  <button
+                    type="button"
+                    onClick={handleCancelJob}
+                    className="inline-flex h-10 items-center justify-center rounded-md border border-rose-300/30 px-4 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/10 sm:col-span-2"
+                  >
+                    取消后台任务
+                  </button>
+                ) : null}
               </div>
               {linkCheck ? (
                 <div className={linkCheck.ok ? "max-w-full overflow-hidden rounded-md border border-lime/20 bg-lime/10 p-3 text-sm leading-6 text-lime" : "max-w-full overflow-hidden rounded-md border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100"}>

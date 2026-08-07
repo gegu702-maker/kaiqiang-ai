@@ -101,6 +101,12 @@ class Settings(BaseSettings):
     viral_budget_optional_variants_seconds: int = 15
     viral_budget_final_validation_seconds: int = 15
     viral_pipeline_allowed_emails: str = ""
+    viral_async_jobs_enabled: bool = False
+    viral_job_artifact_bucket: str = "viral-job-artifacts-preview"
+    viral_job_poll_seconds: int = 3
+    viral_job_lease_seconds: int = 60
+    viral_job_heartbeat_seconds: int = 15
+    viral_job_stage_timeout_seconds: int = 180
     douyin_cookie_file: str = ""
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""

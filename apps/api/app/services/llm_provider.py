@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import ast
+from contextvars import ContextVar, Token
+from copy import deepcopy
+from dataclasses import dataclass
+import hashlib
 import json
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 from fastapi import HTTPException
@@ -17,6 +21,67 @@ from app.services.viral_deadline import ensure_llm_budget
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LLMReplayContext:
+    cache: dict[str, dict[str, Any]]
+    persist: Callable[[str, str], None]
+
+
+_llm_replay_context: ContextVar[LLMReplayContext | None] = ContextVar(
+    "llm_replay_context", default=None
+)
+
+
+def bind_llm_replay_context(context: LLMReplayContext) -> Token:
+    return _llm_replay_context.set(context)
+
+
+def reset_llm_replay_context(token: Token) -> None:
+    _llm_replay_context.reset(token)
+
+
+def _replay_stage(attempt_label: str, payload: dict[str, Any]) -> str:
+    label = attempt_label.lower()
+    if "fact_review" in label or "current_rewrites" in payload:
+        return "a_fact_review"
+    variant = payload.get("variant") or payload.get("variant_task") or {}
+    variant_index = variant.get("index") if isinstance(variant, dict) else None
+    if (
+        "targeted_diversification" in label
+        or ("source_repair" in label and variant_index in {1, 2})
+        or variant_index in {1, 2}
+    ):
+        return "optional_variants"
+    if any(
+        marker in label
+        for marker in (
+            "primary_convergence",
+            "source_repair",
+            "final_source_reconstruction",
+            "scaffold_polish",
+        )
+    ) or payload.get("primary_convergence"):
+        return "a_targeted_repair"
+    return "a_primary_generation"
+
+
+def _replay_key(
+    *, system: str, payload: dict[str, Any], max_tokens: int, attempt_label: str
+) -> str:
+    canonical = json.dumps(
+        {
+            "attempt_label": attempt_label,
+            "max_tokens": max_tokens,
+            "payload": payload,
+            "system": system,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _safe_upstream_error(response: httpx.Response) -> str:
@@ -174,13 +239,23 @@ class LLMProvider:
         allow_format_repair: bool = True,
         thinking_mode: str | None = None,
     ) -> dict[str, Any]:
+        replay = _llm_replay_context.get()
+        replay_key = _replay_key(
+            system=system,
+            payload=payload,
+            max_tokens=max_tokens,
+            attempt_label=attempt_label,
+        )
+        if replay is not None and replay_key in replay.cache:
+            return deepcopy(replay.cache[replay_key])
+
         # The request deadline is shared across every stage. This guard is the
         # final safety net preventing an LLM call from starting with less than
         # the configured minimum budget for the active stage.
         ensure_llm_budget()
         provider = settings.llm_provider.lower()
         if provider == "deepseek":
-            return await self._chat_json(
+            result = await self._chat_json(
                 base_url=settings.deepseek_base_url.rstrip("/"),
                 api_key=settings.deepseek_api_key,
                 model=settings.deepseek_model,
@@ -193,8 +268,8 @@ class LLMProvider:
                 allow_format_repair=allow_format_repair,
                 thinking_mode=thinking_mode,
             )
-        if provider == "openai":
-            return await self._chat_json(
+        elif provider == "openai":
+            result = await self._chat_json(
                 base_url="https://api.openai.com",
                 api_key=settings.openai_api_key,
                 model=settings.openai_model,
@@ -207,9 +282,19 @@ class LLMProvider:
                 allow_format_repair=allow_format_repair,
                 thinking_mode=None,
             )
-        if provider == "mock":
-            return self._mock(payload)
-        raise HTTPException(status_code=500, detail=f"Unsupported LLM_PROVIDER: {settings.llm_provider}")
+        elif provider == "mock":
+            result = self._mock(payload)
+        else:
+            raise HTTPException(status_code=500, detail=f"Unsupported LLM_PROVIDER: {settings.llm_provider}")
+
+        if replay is not None:
+            replay.cache[replay_key] = deepcopy(result)
+            try:
+                replay.persist(replay_key, _replay_stage(attempt_label, payload))
+            except BaseException:
+                replay.cache.pop(replay_key, None)
+                raise
+        return result
 
     async def _chat_json(
         self,

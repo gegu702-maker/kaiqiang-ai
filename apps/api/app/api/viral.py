@@ -2,10 +2,14 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+import tempfile
+from pathlib import Path
 
 from typing import Literal
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi.responses import JSONResponse
 from supabase import Client
 
 from app.core.auth import get_authenticated_user, get_bearer_token
@@ -13,7 +17,7 @@ from app.core.config import settings
 from app.core.supabase import get_supabase
 from app.services.video_link_resolver import check_video_link, resolve_video_link
 from app.services.llm_provider import LLMProviderError
-from app.services.viral_analyzer import analyze_viral_script
+from app.services.viral_analyzer import INDUSTRY_LABELS, LANGUAGE_LABELS, analyze_viral_script
 from app.services.viral_pipeline import run_uploaded_viral_pipeline, run_viral_pipeline
 from app.services.viral_diagnostics import bind_request_id, new_request_id, reset_request_id
 from app.services.viral_deadline import (
@@ -27,6 +31,8 @@ from app.services.viral_idempotency import (
     IdempotencyOutcome,
     viral_analysis_idempotency,
 )
+from app.services.viral_job_repository import ViralJobRepository, parameter_version
+from app.services.viral_job_worker import PIPELINE_VERSION
 
 router = APIRouter(prefix="/viral", tags=["viral"])
 logger = logging.getLogger(__name__)
@@ -53,6 +59,21 @@ class ViralPipelineRequest(BaseModel):
     industry: str = "personal_brand"
     language: str = "zh"
     rewrite_length: LengthMode = "match_source"
+
+
+def _require_async_jobs() -> None:
+    if not settings.viral_async_jobs_enabled:
+        raise HTTPException(status_code=404, detail="Async viral jobs are disabled.")
+
+
+def _safe_job_response(job: dict) -> dict:
+    allowed = {
+        "id", "request_id", "file_fingerprint", "parameter_version", "status", "stage",
+        "progress", "attempt", "retryable", "next_retry_at", "error_class", "error_code",
+        "safe_error_message", "stage_started_at", "stage_finished_at", "stage_elapsed_ms",
+        "quality", "provenance", "result", "created_at", "updated_at", "completed_at",
+    }
+    return {key: value for key, value in job.items() if key in allowed}
 
 
 def _is_pipeline_tester(email: str | None) -> bool:
@@ -426,6 +447,186 @@ async def run_uploaded_viral_agent_pipeline(
     finally:
         reset_pipeline_deadline(deadline_token)
         reset_request_id(context_token)
+
+
+@router.post("/jobs", status_code=202)
+async def create_or_reuse_viral_job(
+    video_file: UploadFile = File(...),
+    source_url: str = Form(default=""),
+    industry: str = Form(default="personal_brand"),
+    language: str = Form(default="zh"),
+    rewrite_length: LengthMode = Form(default="match_source"),
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> JSONResponse:
+    _require_async_jobs()
+    user = get_authenticated_user(supabase, token)
+    if industry not in INDUSTRY_LABELS:
+        raise HTTPException(status_code=400, detail="Invalid industry.")
+    if language not in LANGUAGE_LABELS:
+        raise HTTPException(status_code=400, detail="Invalid language.")
+    if len(source_url) > 3000:
+        raise HTTPException(status_code=400, detail="Source URL is too long.")
+    request_id = new_request_id()
+    params_json = json.dumps(
+        {
+            "industry": industry,
+            "language": language,
+            "rewrite_length": rewrite_length,
+            "pipeline_version": PIPELINE_VERSION,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    params_hash = hashlib.sha256(params_json.encode()).hexdigest()
+    version = parameter_version(params_hash=params_hash, pipeline_version=PIPELINE_VERSION)
+    repository = ViralJobRepository(supabase)
+    temporary_path: Path | None = None
+    job_id = ""
+    try:
+        suffix = Path(video_file.filename or "upload.bin").suffix[:12] or ".bin"
+        hasher = hashlib.sha256()
+        total = 0
+        with tempfile.NamedTemporaryFile(prefix="viral-upload-", suffix=suffix, delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            while chunk := await video_file.read(1024 * 1024):
+                total += len(chunk)
+                if total > 50 * 1024 * 1024:
+                    raise HTTPException(status_code=413, detail="上传文件超过50 MiB限制。")
+                hasher.update(chunk)
+                temporary.write(chunk)
+        if total <= 0:
+            raise HTTPException(status_code=400, detail="上传文件为空。")
+        fingerprint = hasher.hexdigest()
+        created = repository.create_or_reuse(
+            user_id=user["id"],
+            request_id=request_id,
+            fingerprint=fingerprint,
+            parameter_version_value=version,
+            params_hash=params_hash,
+            pipeline_version=PIPELINE_VERSION,
+        )
+        job_id = str(created["job_id"])
+        if created.get("reused"):
+            existing = repository.get_for_user(job_id=job_id, user_id=user["id"])
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "job_id": job_id,
+                    "request_id": existing.get("request_id") if existing else request_id,
+                    "fingerprint": fingerprint,
+                    "status_url": f"/api/viral/jobs/{job_id}",
+                    "status": created.get("job_status"),
+                    "reused": True,
+                },
+            )
+        object_path = f"{user['id']}/{job_id}/input/{fingerprint}{suffix.lower()}"
+        repository.prepare_upload(
+            job_id=job_id,
+            user_id=user["id"],
+            bucket=settings.viral_job_artifact_bucket,
+            object_path=object_path,
+        )
+        with temporary_path.open("rb") as source:
+            await asyncio.to_thread(
+                repository.upload_file,
+                bucket=settings.viral_job_artifact_bucket,
+                object_path=object_path,
+                source=source,
+                content_type=video_file.content_type or "application/octet-stream",
+            )
+        repository.mark_uploaded(
+            job_id=job_id,
+            user_id=user["id"],
+            bucket=settings.viral_job_artifact_bucket,
+            object_path=object_path,
+            checkpoint={
+                "email": user.get("email") or "",
+                "source_url": source_url,
+                "industry": industry,
+                "language": language,
+                "rewrite_length": rewrite_length,
+                "pipeline_version": PIPELINE_VERSION,
+            },
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "job_id": job_id,
+                "request_id": request_id,
+                "fingerprint": fingerprint,
+                "status_url": f"/api/viral/jobs/{job_id}",
+                "status": "pending",
+                "reused": False,
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        if job_id:
+            repository.fail_upload(
+                job_id=job_id,
+                user_id=user["id"],
+                code="artifact_upload_failed",
+                message=str(error),
+            )
+        logger.exception("viral async upload failed request_id=%s", request_id)
+        raise HTTPException(status_code=503, detail={
+            "code": "artifact_upload_failed",
+            "message": "上传暂时失败。",
+            "retryable": True,
+            "request_id": request_id,
+        }) from error
+    finally:
+        await video_file.close()
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+
+
+@router.get("/jobs/{job_id}")
+async def get_viral_job(
+    job_id: str,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    _require_async_jobs()
+    user = get_authenticated_user(supabase, token)
+    job = ViralJobRepository(supabase).get_for_user(job_id=job_id, user_id=user["id"])
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在。")
+    return _safe_job_response(job)
+
+
+@router.get("/jobs")
+async def list_viral_jobs(
+    limit: int = 20,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> list[dict]:
+    _require_async_jobs()
+    user = get_authenticated_user(supabase, token)
+    return [
+        _safe_job_response(job)
+        for job in ViralJobRepository(supabase).list_for_user(user_id=user["id"], limit=limit)
+    ]
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_viral_job(
+    job_id: str,
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> dict:
+    _require_async_jobs()
+    user = get_authenticated_user(supabase, token)
+    job = ViralJobRepository(supabase).request_cancel(job_id=job_id, user_id=user["id"])
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在。")
+    return _safe_job_response(job)
 
 
 @router.options("/pipeline/upload", include_in_schema=False)

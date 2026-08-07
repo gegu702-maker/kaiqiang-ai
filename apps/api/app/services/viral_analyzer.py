@@ -1153,6 +1153,7 @@ async def analyze_viral_script(
     source_scope: str = "full_content",
     effective_speech_seconds: float | None = None,
     source_fact_sentences: list[dict[str, Any]] | None = None,
+    persist_side_effects: bool = True,
 ) -> dict[str, Any]:
     source_url = source_url.strip()
     raw_script = raw_script.strip()
@@ -4051,36 +4052,37 @@ async def analyze_viral_script(
             allocation.get("provenance"),
         )
 
-    try:
-        supabase.table("viral_analyses").insert(
-            {
-                "user_id": user_id,
-                "source_url": source_url,
-                "raw_script": raw_script,
-                "industry": industry,
-                "language": language,
-                "topic": result["topic"],
-                "hook": result["hook"],
-                "selling_points": result["selling_points"],
-                "structure": result["structure"],
-                "template_text": result["template"],
-                "rewrites": result["rewrites"],
-            }
-        ).execute()
-    except APIError:
-        pass
+    if persist_side_effects:
+        try:
+            supabase.table("viral_analyses").insert(
+                {
+                    "user_id": user_id,
+                    "source_url": source_url,
+                    "raw_script": raw_script,
+                    "industry": industry,
+                    "language": language,
+                    "topic": result["topic"],
+                    "hook": result["hook"],
+                    "selling_points": result["selling_points"],
+                    "structure": result["structure"],
+                    "template_text": result["template"],
+                    "rewrites": result["rewrites"],
+                }
+            ).execute()
+        except APIError:
+            pass
 
-    try:
-        supabase.table("usage_logs").insert(
-            {
-                "user_id": user_id,
-                "action": "viral_analyze",
-                "quantity": 1,
-                "period_start": current_period_start(),
-            }
-        ).execute()
-    except APIError:
-        pass
+        try:
+            supabase.table("usage_logs").insert(
+                {
+                    "user_id": user_id,
+                    "action": "viral_analyze",
+                    "quantity": 1,
+                    "period_start": current_period_start(),
+                }
+            ).execute()
+        except APIError:
+            pass
 
     return {
         **result,

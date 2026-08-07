@@ -311,6 +311,104 @@ export type ViralUploadProgress = {
   stage: "uploading" | "processing";
 };
 
+export type ViralJobCreateResult = {
+  job_id: string;
+  request_id: string;
+  fingerprint: string;
+  status_url: string;
+  status: string;
+  reused: boolean;
+};
+
+export type ViralJobStatus = {
+  id: string;
+  request_id: string;
+  file_fingerprint: string;
+  parameter_version: string;
+  status: "uploading" | "pending" | "running" | "retry_wait" | "cancel_requested" | "succeeded" | "failed" | "cancelled";
+  stage: string;
+  progress: number;
+  attempt: number;
+  retryable: boolean;
+  next_retry_at?: string | null;
+  error_class?: string | null;
+  error_code?: string | null;
+  safe_error_message?: string | null;
+  result?: ViralAnalyzeResult | null;
+  quality?: Record<string, unknown> | null;
+  provenance?: Record<string, unknown> | null;
+  updated_at: string;
+  completed_at?: string | null;
+};
+
+export class ViralJobApiUnavailableError extends Error {
+  constructor() {
+    super("异步任务接口尚未启用。");
+    this.name = "ViralJobApiUnavailableError";
+  }
+}
+
+export async function createViralJob(
+  formData: FormData,
+  accessToken?: string,
+  onProgress?: (progress: ViralUploadProgress) => void,
+): Promise<ViralJobCreateResult> {
+  const url = `${API_URL}/api/viral/jobs`;
+  return new Promise<ViralJobCreateResult>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url);
+    request.timeout = 5 * 60 * 1000;
+    if (accessToken) request.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    request.upload.onprogress = (event) => {
+      const total = event.lengthComputable ? event.total : 0;
+      const percent = total ? Math.min(100, Math.round((event.loaded / total) * 100)) : 0;
+      onProgress?.({ loaded: event.loaded, total, percent, stage: "uploading" });
+    };
+    request.upload.onload = () => onProgress?.({ loaded: 0, total: 0, percent: 100, stage: "processing" });
+    request.onload = () => {
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(request.responseText || "{}");
+      } catch {
+        payload = null;
+      }
+      if (request.status === 202 && payload) {
+        resolve(payload as ViralJobCreateResult);
+        return;
+      }
+      if (request.status === 404) {
+        reject(new ViralJobApiUnavailableError());
+        return;
+      }
+      const detail = payload && typeof payload === "object"
+        ? stringifyDetail((payload as { detail?: unknown }).detail)
+        : request.responseText;
+      reject(new Error(detail || `异步任务创建失败（HTTP ${request.status || "unknown"}）。`));
+    };
+    request.onerror = () => reject(new Error("异步任务上传网络失败。"));
+    request.ontimeout = () => reject(new Error("上传在5分钟内未完成。"));
+    request.onabort = () => reject(new Error("上传已中断。"));
+    request.send(formData);
+  });
+}
+
+export async function getViralJob(jobId: string, accessToken?: string): Promise<ViralJobStatus> {
+  const response = await fetch(`${API_URL}/api/viral/jobs/${encodeURIComponent(jobId)}`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<ViralJobStatus>(response);
+}
+
+export async function cancelViralJob(jobId: string, accessToken?: string): Promise<ViralJobStatus> {
+  const response = await fetch(`${API_URL}/api/viral/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  return parseResponse<ViralJobStatus>(response);
+}
+
 export async function runUploadedViralPipeline(
   formData: FormData,
   accessToken?: string,
