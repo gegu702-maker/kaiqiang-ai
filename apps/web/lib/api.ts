@@ -342,10 +342,24 @@ export type ViralJobStatus = {
 };
 
 export class ViralJobApiUnavailableError extends Error {
-  constructor() {
-    super("异步任务接口尚未启用。");
+  readonly code = "viral_async_jobs_disabled";
+
+  constructor(public readonly originalMessage = "异步任务接口明确返回未启用。") {
+    super(originalMessage);
     this.name = "ViralJobApiUnavailableError";
   }
+}
+
+export function getViralJobFeatureDisabledMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const root = payload as { code?: unknown; message?: unknown; detail?: unknown };
+  const detail = root.detail && typeof root.detail === "object"
+    ? root.detail as { code?: unknown; message?: unknown }
+    : null;
+  const code = detail?.code ?? root.code;
+  if (code !== "viral_async_jobs_disabled") return null;
+  const message = detail?.message ?? root.message;
+  return typeof message === "string" && message.trim() ? message.trim() : "异步任务接口明确返回未启用。";
 }
 
 export async function createViralJob(
@@ -376,8 +390,9 @@ export async function createViralJob(
         resolve(payload as ViralJobCreateResult);
         return;
       }
-      if (request.status === 404) {
-        reject(new ViralJobApiUnavailableError());
+      const featureDisabledMessage = getViralJobFeatureDisabledMessage(payload);
+      if (featureDisabledMessage) {
+        reject(new ViralJobApiUnavailableError(featureDisabledMessage));
         return;
       }
       const detail = payload && typeof payload === "object"

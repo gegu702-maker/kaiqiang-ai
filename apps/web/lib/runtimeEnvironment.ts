@@ -1,8 +1,22 @@
-export const PRODUCTION_SUPABASE_MEDIA_HOSTNAME = "povfvhdnrpytxbbyndit.supabase.co";
-export const PRODUCTION_SUPABASE_MEDIA_ORIGIN = `https://${PRODUCTION_SUPABASE_MEDIA_HOSTNAME}`;
-
 export const isPreviewEnvironment =
   process.env.NEXT_PUBLIC_APP_ENVIRONMENT === "preview";
+
+// The Production media origin is compiled out of Preview builds. Production
+// behavior stays unchanged, while Preview bundles contain no Production ref.
+export const PRODUCTION_SUPABASE_MEDIA_HOSTNAME = isPreviewEnvironment
+  ? ""
+  : "povfvhdnrpytxbbyndit.supabase.co";
+export const PRODUCTION_SUPABASE_MEDIA_ORIGIN = PRODUCTION_SUPABASE_MEDIA_HOSTNAME
+  ? `https://${PRODUCTION_SUPABASE_MEDIA_HOSTNAME}`
+  : "";
+
+function configuredSupabaseHostname(): string {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
 
 export function allowExternalMediaUrl(
   url: string | undefined,
@@ -26,7 +40,8 @@ export function allowExternalMediaUrl(
     if (parsed.protocol !== "https:") {
       return undefined;
     }
-    if (parsed.hostname.toLowerCase() === PRODUCTION_SUPABASE_MEDIA_HOSTNAME) {
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname.endsWith(".supabase.co") && hostname !== configuredSupabaseHostname()) {
       return undefined;
     }
     return value;

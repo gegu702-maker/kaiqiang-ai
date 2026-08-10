@@ -619,9 +619,33 @@ def test_feature_flag_defaults_off_for_rollback() -> None:
     assert settings.viral_async_jobs_enabled is False
 
 
+def test_feature_disabled_signal_is_explicit_and_machine_readable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "viral_async_jobs_enabled", False)
+    with pytest.raises(viral_api.HTTPException) as captured:
+        viral_api._require_async_jobs()
+    assert captured.value.status_code == 404
+    assert captured.value.detail == {
+        "code": "viral_async_jobs_disabled",
+        "message": "Async viral jobs are disabled.",
+    }
+
+
+def test_auth_failure_precedes_feature_disabled_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "viral_async_jobs_enabled", False)
+
+    def reject_auth(_supabase: object, _token: str) -> dict[str, str]:
+        raise viral_api.HTTPException(status_code=401, detail="invalid auth")
+
+    monkeypatch.setattr(viral_api, "get_authenticated_user", reject_auth)
+    with pytest.raises(viral_api.HTTPException) as captured:
+        asyncio.run(viral_api.list_viral_jobs(limit=20, token="invalid", supabase=object()))  # type: ignore[arg-type]
+    assert captured.value.status_code == 401
+    assert captured.value.detail == "invalid auth"
+
+
 def test_frontend_storage_key_is_scoped_by_authenticated_user() -> None:
     source = WEB_CLIENT.read_text(encoding="utf-8")
-    assert "viral-analysis-job:${user.id}" in source
+    assert "viral-analysis-job:${supabaseProjectRef}:${user.id}" in source
     assert "getViralJob(jobId, accessToken)" in source
 
 

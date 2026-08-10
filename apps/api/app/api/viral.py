@@ -63,7 +63,13 @@ class ViralPipelineRequest(BaseModel):
 
 def _require_async_jobs() -> None:
     if not settings.viral_async_jobs_enabled:
-        raise HTTPException(status_code=404, detail="Async viral jobs are disabled.")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "viral_async_jobs_disabled",
+                "message": "Async viral jobs are disabled.",
+            },
+        )
 
 
 def _safe_job_response(job: dict) -> dict:
@@ -459,8 +465,8 @@ async def create_or_reuse_viral_job(
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> JSONResponse:
-    _require_async_jobs()
     user = get_authenticated_user(supabase, token)
+    _require_async_jobs()
     if industry not in INDUSTRY_LABELS:
         raise HTTPException(status_code=400, detail="Invalid industry.")
     if language not in LANGUAGE_LABELS:
@@ -593,8 +599,8 @@ async def get_viral_job(
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> dict:
-    _require_async_jobs()
     user = get_authenticated_user(supabase, token)
+    _require_async_jobs()
     job = ViralJobRepository(supabase).get_for_user(job_id=job_id, user_id=user["id"])
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在。")
@@ -607,8 +613,8 @@ async def list_viral_jobs(
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> list[dict]:
-    _require_async_jobs()
     user = get_authenticated_user(supabase, token)
+    _require_async_jobs()
     return [
         _safe_job_response(job)
         for job in ViralJobRepository(supabase).list_for_user(user_id=user["id"], limit=limit)
@@ -621,8 +627,8 @@ async def cancel_viral_job(
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> dict:
-    _require_async_jobs()
     user = get_authenticated_user(supabase, token)
+    _require_async_jobs()
     job = ViralJobRepository(supabase).request_cancel(job_id=job_id, user_id=user["id"])
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在。")

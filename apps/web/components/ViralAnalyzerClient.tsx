@@ -3,6 +3,7 @@
 import { ArrowRight, Check, Clapperboard, Copy, FileText, LinkIcon, Loader2, Sparkles, UploadCloud, WandSparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
@@ -13,12 +14,19 @@ import {
   getViralJob,
   runUploadedViralPipeline,
   runViralPipeline,
-  ViralJobApiUnavailableError,
   type ViralJobStatus,
   type ViralUploadProgress,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
+import { getSupabaseProjectRef } from "@/lib/supabase/config";
+import {
+  clearCurrentSupabaseBrowserState,
+  clearForeignSupabaseBrowserState,
+  getVerifiedSupabaseAccessToken,
+  PreviewSessionError,
+} from "@/lib/supabase/sessionGuard";
 import type { ViralAnalyzeResult, ViralIndustry, ViralLengthMode, ViralLinkErrorCode, ViralPipelineResult, VideoLinkResolveResult } from "@/lib/types";
+import { submitViralUploadWithExplicitFallback } from "@/lib/viralJobSubmission";
 
 type Locale = "zh" | "en";
 
@@ -249,7 +257,10 @@ export function ViralAnalyzerClient({
   onScriptSelect?: (script: SelectedViralScript) => void;
   onWorkflowStateChange?: (state: ViralAnalyzerWorkflowState) => void;
 }) {
+  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const supabaseProjectRef = useMemo(() => getSupabaseProjectRef(supabaseUrl), [supabaseUrl]);
   const isWorkspace = variant === "workspace";
   const [language, setLanguage] = useState<Locale>("zh");
   const [industry, setIndustry] = useState<ViralIndustry>("ecommerce");
@@ -328,11 +339,11 @@ export function ViralAnalyzerClient({
       if (job.status === "succeeded") {
         if (!job.result) throw new Error("任务已完成，但安全结果字段为空。");
         setResult({ ...job.result, request_id: job.result.request_id || job.request_id });
-        localStorage.removeItem(`viral-analysis-job:${userId}`);
+        localStorage.removeItem(`viral-analysis-job:${supabaseProjectRef}:${userId}`);
         return;
       }
       if (job.status === "failed" || job.status === "cancelled") {
-        localStorage.removeItem(`viral-analysis-job:${userId}`);
+        localStorage.removeItem(`viral-analysis-job:${supabaseProjectRef}:${userId}`);
         throw new Error(
           job.status === "cancelled"
             ? "任务已取消。"
@@ -342,7 +353,7 @@ export function ViralAnalyzerClient({
       await new Promise((resolve) => window.setTimeout(resolve, delayMs));
       delayMs = Math.min(8000, Math.round(delayMs * 1.5));
     }
-  }, []);
+  }, [supabaseProjectRef]);
 
   useEffect(() => {
     let disposed = false;
@@ -350,7 +361,7 @@ export function ViralAnalyzerClient({
       const { data } = await supabase.auth.getUser();
       const user = data.user;
       if (!user || disposed) return;
-      const jobId = localStorage.getItem(`viral-analysis-job:${user.id}`);
+      const jobId = localStorage.getItem(`viral-analysis-job:${supabaseProjectRef}:${user.id}`);
       if (!jobId) return;
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData.session?.access_token;
@@ -373,7 +384,7 @@ export function ViralAnalyzerClient({
       disposed = true;
       pollGenerationRef.current += 1;
     };
-  }, [pollViralJob, supabase]);
+  }, [pollViralJob, supabase, supabaseProjectRef]);
 
   function applyPipelineResult(payload: ViralPipelineResult) {
     setPipelineMetadata(payload.metadata);
@@ -541,13 +552,18 @@ export function ViralAnalyzerClient({
   }
 
   async function getSessionToken() {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      throw new Error(linkCheckCopy.loginError);
+    try {
+      return await getVerifiedSupabaseAccessToken(supabase.auth, supabaseUrl);
+    } catch (sessionError) {
+      if (sessionError instanceof PreviewSessionError) {
+        clearForeignSupabaseBrowserState(supabaseProjectRef);
+        clearCurrentSupabaseBrowserState(supabaseProjectRef);
+        const reason = sessionError.reason === "project_mismatch" ? "project_mismatch" : "session_invalid";
+        router.replace(`/login?next=/studio/viral-analyzer&reason=${reason}`);
+        throw sessionError;
+      }
+      throw sessionError;
     }
-    return session.access_token;
   }
 
   async function handleCheckLink() {
@@ -633,28 +649,30 @@ export function ViralAnalyzerClient({
         formData.set("industry", industry);
         formData.set("language", language);
         formData.set("rewrite_length", rewriteLength);
-        let created;
-        try {
-          created = await createViralJob(formData, accessToken, (progress) => {
+        const submission = await submitViralUploadWithExplicitFallback({
+          createJob: () => createViralJob(formData, accessToken, (progress) => {
             setUploadProgress(progress);
             setRunStage(progress.stage);
-          });
-        } catch (jobError) {
-          if (!(jobError instanceof ViralJobApiUnavailableError)) throw jobError;
-          const pipeline = await runUploadedViralPipeline(formData, accessToken, (progress) => {
-            setUploadProgress(progress);
-            setRunStage(progress.stage);
-          });
+          }),
+          runLegacyPipeline: () => runUploadedViralPipeline(formData, accessToken, (progress) => {
+              setUploadProgress(progress);
+              setRunStage(progress.stage);
+          }),
+        });
+        if (submission.mode === "legacy") {
+          const pipeline = submission.pipeline;
           applyPipelineResult(pipeline);
+          setPipelineWarning(`异步任务接口明确返回未启用，已使用兼容同步模式。原始信号：${submission.originalSignal}`);
           if (!pipeline.ok) throw new Error(friendlyPipelineMessage(pipeline));
           const pipelineResult = pipelineToAnalyzeResult(pipeline);
           if (!pipelineResult) throw new Error(linkCheckCopy.pipelineEmpty);
           setResult(pipelineResult);
           return;
         }
+        const created = submission.job;
         const { data } = await supabase.auth.getUser();
         if (!data.user) throw new Error(linkCheckCopy.loginError);
-        localStorage.setItem(`viral-analysis-job:${data.user.id}`, created.job_id);
+        localStorage.setItem(`viral-analysis-job:${supabaseProjectRef}:${data.user.id}`, created.job_id);
         const generation = ++pollGenerationRef.current;
         await pollViralJob(created.job_id, accessToken, data.user.id, generation);
         return;
