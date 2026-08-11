@@ -61,6 +61,20 @@ class ViralPipelineRequest(BaseModel):
     rewrite_length: LengthMode = "match_source"
 
 
+MAX_VIRAL_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
+class ViralJobInitiateRequest(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=255)
+    file_size: int = Field(..., gt=0)
+    content_type: str = Field(default="application/octet-stream", max_length=128)
+    file_fingerprint: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    source_url: str = Field(default="", max_length=3000)
+    industry: str = "personal_brand"
+    language: str = "zh"
+    rewrite_length: LengthMode = "match_source"
+
+
 def _require_async_jobs() -> None:
     if not settings.viral_async_jobs_enabled:
         raise HTTPException(
@@ -457,28 +471,27 @@ async def run_uploaded_viral_agent_pipeline(
 
 @router.post("/jobs", status_code=202)
 async def create_or_reuse_viral_job(
-    video_file: UploadFile = File(...),
-    source_url: str = Form(default=""),
-    industry: str = Form(default="personal_brand"),
-    language: str = Form(default="zh"),
-    rewrite_length: LengthMode = Form(default="match_source"),
+    payload: ViralJobInitiateRequest,
     token: str = Depends(get_bearer_token),
     supabase: Client = Depends(get_supabase),
 ) -> JSONResponse:
     user = get_authenticated_user(supabase, token)
     _require_async_jobs()
-    if industry not in INDUSTRY_LABELS:
+    if payload.file_size > MAX_VIRAL_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail={
+            "code": "upload_too_large", "stage": "job_creation", "retryable": False,
+            "message": "上传文件超过50 MiB限制。",
+        })
+    if payload.industry not in INDUSTRY_LABELS:
         raise HTTPException(status_code=400, detail="Invalid industry.")
-    if language not in LANGUAGE_LABELS:
+    if payload.language not in LANGUAGE_LABELS:
         raise HTTPException(status_code=400, detail="Invalid language.")
-    if len(source_url) > 3000:
-        raise HTTPException(status_code=400, detail="Source URL is too long.")
     request_id = new_request_id()
     params_json = json.dumps(
         {
-            "industry": industry,
-            "language": language,
-            "rewrite_length": rewrite_length,
+            "industry": payload.industry,
+            "language": payload.language,
+            "rewrite_length": payload.rewrite_length,
             "pipeline_version": PIPELINE_VERSION,
         },
         ensure_ascii=False,
@@ -488,23 +501,8 @@ async def create_or_reuse_viral_job(
     params_hash = hashlib.sha256(params_json.encode()).hexdigest()
     version = parameter_version(params_hash=params_hash, pipeline_version=PIPELINE_VERSION)
     repository = ViralJobRepository(supabase)
-    temporary_path: Path | None = None
-    job_id = ""
     try:
-        suffix = Path(video_file.filename or "upload.bin").suffix[:12] or ".bin"
-        hasher = hashlib.sha256()
-        total = 0
-        with tempfile.NamedTemporaryFile(prefix="viral-upload-", suffix=suffix, delete=False) as temporary:
-            temporary_path = Path(temporary.name)
-            while chunk := await video_file.read(1024 * 1024):
-                total += len(chunk)
-                if total > 50 * 1024 * 1024:
-                    raise HTTPException(status_code=413, detail="上传文件超过50 MiB限制。")
-                hasher.update(chunk)
-                temporary.write(chunk)
-        if total <= 0:
-            raise HTTPException(status_code=400, detail="上传文件为空。")
-        fingerprint = hasher.hexdigest()
+        fingerprint = payload.file_fingerprint
         created = repository.create_or_reuse(
             user_id=user["id"],
             request_id=request_id,
@@ -514,75 +512,143 @@ async def create_or_reuse_viral_job(
             pipeline_version=PIPELINE_VERSION,
         )
         job_id = str(created["job_id"])
-        if created.get("reused"):
-            existing = repository.get_for_user(job_id=job_id, user_id=user["id"])
-            return JSONResponse(
-                status_code=202,
-                content={
-                    "job_id": job_id,
-                    "request_id": existing.get("request_id") if existing else request_id,
-                    "fingerprint": fingerprint,
-                    "status_url": f"/api/viral/jobs/{job_id}",
-                    "status": created.get("job_status"),
-                    "reused": True,
-                },
-            )
-        object_path = f"{user['id']}/{job_id}/input/{fingerprint}{suffix.lower()}"
-        repository.prepare_upload(
-            job_id=job_id,
-            user_id=user["id"],
-            bucket=settings.viral_job_artifact_bucket,
-            object_path=object_path,
-        )
-        with temporary_path.open("rb") as source:
-            await asyncio.to_thread(
-                repository.upload_file,
+        existing = repository.get_for_user(job_id=job_id, user_id=user["id"])
+        effective_request_id = str(existing.get("request_id") if existing else request_id)
+        status = str(created.get("job_status") or "uploading")
+        if status == "uploading":
+            suffix = Path(payload.filename).suffix[:12] or ".bin"
+            object_path = f"{user['id']}/{job_id}/input/{fingerprint}{suffix.lower()}"
+            repository.prepare_upload(
+                job_id=job_id,
+                user_id=user["id"],
                 bucket=settings.viral_job_artifact_bucket,
                 object_path=object_path,
-                source=source,
-                content_type=video_file.content_type or "application/octet-stream",
+                checkpoint={
+                    "email": user.get("email") or "",
+                    "source_url": payload.source_url,
+                    "industry": payload.industry,
+                    "language": payload.language,
+                    "rewrite_length": payload.rewrite_length,
+                    "pipeline_version": PIPELINE_VERSION,
+                    "expected_file_size": payload.file_size,
+                    "content_type": payload.content_type,
+                },
             )
-        repository.mark_uploaded(
-            job_id=job_id,
-            user_id=user["id"],
-            bucket=settings.viral_job_artifact_bucket,
-            object_path=object_path,
-            checkpoint={
-                "email": user.get("email") or "",
-                "source_url": source_url,
-                "industry": industry,
-                "language": language,
-                "rewrite_length": rewrite_length,
-                "pipeline_version": PIPELINE_VERSION,
-            },
-        )
         return JSONResponse(
             status_code=202,
             content={
                 "job_id": job_id,
-                "request_id": request_id,
+                "request_id": effective_request_id,
                 "fingerprint": fingerprint,
                 "status_url": f"/api/viral/jobs/{job_id}",
-                "status": "pending",
-                "reused": False,
+                "upload_url": f"/api/viral/jobs/{job_id}/upload",
+                "status": status,
+                "reused": bool(created.get("reused")),
+                "upload_required": status == "uploading",
             },
         )
+    except Exception as error:
+        logger.exception("viral async initiation failed request_id=%s", request_id)
+        raise HTTPException(status_code=503, detail={
+            "code": "job_initiation_failed",
+            "stage": "job_creation",
+            "message": "异步任务创建暂时失败。",
+            "retryable": True,
+            "request_id": request_id,
+        }) from error
+
+
+@router.post("/jobs/{job_id}/upload", status_code=202)
+async def upload_viral_job_file(
+    job_id: str,
+    video_file: UploadFile = File(...),
+    token: str = Depends(get_bearer_token),
+    supabase: Client = Depends(get_supabase),
+) -> JSONResponse:
+    user = get_authenticated_user(supabase, token)
+    _require_async_jobs()
+    repository = ViralJobRepository(supabase)
+    job = repository.get_internal_for_user(job_id=job_id, user_id=user["id"])
+    if not job:
+        raise HTTPException(status_code=404, detail={"code": "job_not_found", "stage": "uploading"})
+    request_id = str(job.get("request_id") or new_request_id())
+    if job.get("status") != "uploading":
+        return JSONResponse(status_code=202, content={
+            "job_id": job_id,
+            "request_id": request_id,
+            "status": job.get("status"),
+            "status_url": f"/api/viral/jobs/{job_id}",
+            "reused": True,
+        })
+    temporary_path: Path | None = None
+    try:
+        checkpoint = dict(job.get("checkpoint") or {})
+        expected_size = int(checkpoint.get("expected_file_size") or 0)
+        hasher = hashlib.sha256()
+        total = 0
+        suffix = Path(video_file.filename or "upload.bin").suffix[:12] or ".bin"
+        with tempfile.NamedTemporaryFile(prefix="viral-upload-", suffix=suffix, delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            while chunk := await video_file.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_VIRAL_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail={
+                        "code": "upload_too_large", "stage": "uploading", "job_id": job_id,
+                        "request_id": request_id, "retryable": False,
+                    })
+                hasher.update(chunk)
+                temporary.write(chunk)
+        if total <= 0:
+            raise HTTPException(status_code=400, detail={
+                "code": "upload_empty", "stage": "uploading", "job_id": job_id,
+                "request_id": request_id, "retryable": False,
+            })
+        if expected_size and total != expected_size:
+            raise HTTPException(status_code=409, detail={
+                "code": "upload_size_mismatch", "stage": "uploading", "job_id": job_id,
+                "request_id": request_id, "retryable": True,
+            })
+        if hasher.hexdigest() != str(job.get("file_fingerprint") or ""):
+            raise HTTPException(status_code=409, detail={
+                "code": "upload_fingerprint_mismatch", "stage": "uploading", "job_id": job_id,
+                "request_id": request_id, "retryable": True,
+            })
+        bucket = str(job.get("input_bucket") or settings.viral_job_artifact_bucket)
+        object_path = str(job.get("input_object_path") or "")
+        if not object_path:
+            raise RuntimeError("Upload destination was not prepared.")
+        with temporary_path.open("rb") as source:
+            await asyncio.to_thread(
+                repository.upload_file,
+                bucket=bucket,
+                object_path=object_path,
+                source=source,
+                content_type=video_file.content_type or str(checkpoint.get("content_type") or "application/octet-stream"),
+                upsert=True,
+            )
+        repository.mark_uploaded(
+            job_id=job_id,
+            user_id=user["id"],
+            bucket=bucket,
+            object_path=object_path,
+        )
+        return JSONResponse(status_code=202, content={
+            "job_id": job_id,
+            "request_id": request_id,
+            "fingerprint": job.get("file_fingerprint"),
+            "status_url": f"/api/viral/jobs/{job_id}",
+            "upload_url": f"/api/viral/jobs/{job_id}/upload",
+            "status": "pending",
+            "reused": bool(job.get("created_at")),
+            "upload_required": False,
+        })
     except HTTPException:
         raise
     except Exception as error:
-        if job_id:
-            repository.fail_upload(
-                job_id=job_id,
-                user_id=user["id"],
-                code="artifact_upload_failed",
-                message=str(error),
-            )
-        logger.exception("viral async upload failed request_id=%s", request_id)
+        logger.exception("viral async artifact upload failed request_id=%s job_id=%s", request_id, job_id)
         raise HTTPException(status_code=503, detail={
-            "code": "artifact_upload_failed",
-            "message": "上传暂时失败。",
-            "retryable": True,
-            "request_id": request_id,
+            "code": "artifact_upload_failed", "stage": "uploading", "message": "上传暂时失败，任务已保留。",
+            "retryable": True, "request_id": request_id, "job_id": job_id,
         }) from error
     finally:
         await video_file.close()

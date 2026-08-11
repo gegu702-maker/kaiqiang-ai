@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -160,6 +161,32 @@ def test_parameter_version_is_stable_and_parameter_sensitive() -> None:
     assert first != parameter_version(params_hash="a" * 64, pipeline_version="v2")
 
 
+def test_job_initiation_accepts_12_2_mb_and_returns_clear_413_over_50_mib(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accepted = viral_api.ViralJobInitiateRequest(
+        filename="synthetic.mp4",
+        file_size=12_200_000,
+        file_fingerprint="a" * 64,
+    )
+    assert accepted.file_size == 12_200_000
+    oversized = viral_api.ViralJobInitiateRequest(
+            filename="synthetic.mp4",
+            file_size=50 * 1024 * 1024 + 1,
+            file_fingerprint="a" * 64,
+    )
+    monkeypatch.setattr(settings, "viral_async_jobs_enabled", True)
+    monkeypatch.setattr(
+        viral_api,
+        "get_authenticated_user",
+        lambda supabase, token: {"id": "00000000-0000-0000-0000-000000000999", "email": "preview@example.invalid"},
+    )
+    with pytest.raises(viral_api.HTTPException) as captured:
+        asyncio.run(viral_api.create_or_reuse_viral_job(payload=oversized, token="mock", supabase=object()))  # type: ignore[arg-type]
+    assert captured.value.status_code == 413
+    assert captured.value.detail["code"] == "upload_too_large"
+
+
 def test_job_create_api_returns_202_and_reuses_matching_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -196,6 +223,15 @@ def test_job_create_api_returns_202_and_reuses_matching_identity(
             assert kwargs["object_path"].startswith(
                 "00000000-0000-0000-0000-000000000999/00000000-0000-0000-0000-000000000123/input/"
             )
+            for job in records.values():
+                if job["id"] == kwargs["job_id"]:
+                    job.update({
+                        "user_id": kwargs["user_id"],
+                        "input_bucket": kwargs["bucket"],
+                        "input_object_path": kwargs["object_path"],
+                        "checkpoint": kwargs["checkpoint"],
+                        "file_fingerprint": next(key[1] for key, value in records.items() if value is job),
+                    })
 
         def mark_uploaded(self, **kwargs: Any) -> dict[str, Any]:
             for job in records.values():
@@ -208,6 +244,9 @@ def test_job_create_api_returns_202_and_reuses_matching_identity(
             del user_id
             return next((job for job in records.values() if job["id"] == job_id), None)
 
+        def get_internal_for_user(self, *, job_id: str, user_id: str) -> dict[str, Any] | None:
+            return next((job for job in records.values() if job["id"] == job_id and job["user_id"] == user_id), None)
+
         def fail_upload(self, **kwargs: Any) -> None:
             raise AssertionError(f"unexpected upload failure: {kwargs}")
 
@@ -219,13 +258,20 @@ def test_job_create_api_returns_202_and_reuses_matching_identity(
         lambda supabase, token: {"id": "00000000-0000-0000-0000-000000000999", "email": "preview@example.invalid"},
     )
 
+    content = b"synthetic-not-a-real-video"
+    fingerprint = hashlib.sha256(content).hexdigest()
+
     async def create() -> dict[str, Any]:
         response = await viral_api.create_or_reuse_viral_job(
-            video_file=UploadFile(filename="synthetic.mp4", file=BytesIO(b"synthetic-not-a-real-video")),
-            source_url="",
-            industry="knowledge",
-            language="zh",
-            rewrite_length="match_source",
+            payload=viral_api.ViralJobInitiateRequest(
+                filename="synthetic.mp4",
+                file_size=len(content),
+                content_type="video/mp4",
+                file_fingerprint=fingerprint,
+                industry="knowledge",
+                language="zh",
+                rewrite_length="match_source",
+            ),
             token="mock-token",
             supabase=object(),  # type: ignore[arg-type]
         )
@@ -233,12 +279,86 @@ def test_job_create_api_returns_202_and_reuses_matching_identity(
         return json.loads(response.body)
 
     first = asyncio.run(create())
+    assert first["status"] == "uploading"
+    assert first["upload_required"] is True
+    assert uploads == 0
+
+    async def upload() -> dict[str, Any]:
+        response = await viral_api.upload_viral_job_file(
+            job_id=first["job_id"],
+            video_file=UploadFile(filename="synthetic.mp4", file=BytesIO(content)),
+            token="mock-token",
+            supabase=object(),  # type: ignore[arg-type]
+        )
+        assert response.status_code == 202
+        return json.loads(response.body)
+
+    uploaded = asyncio.run(upload())
     second = asyncio.run(create())
     assert first["job_id"] == second["job_id"]
     assert first["request_id"] == second["request_id"]
     assert first["reused"] is False
     assert second["reused"] is True
+    assert uploaded["status"] == "pending"
+    assert second["upload_required"] is False
     assert uploads == 1
+
+
+def test_artifact_upload_failure_keeps_uploading_job_and_returns_safe_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = b"synthetic-upload-failure"
+    job = {
+        "id": "00000000-0000-0000-0000-000000000123",
+        "user_id": "00000000-0000-0000-0000-000000000999",
+        "request_id": "request-safe",
+        "status": "uploading",
+        "file_fingerprint": hashlib.sha256(content).hexdigest(),
+        "input_bucket": "viral-job-artifacts-preview",
+        "input_object_path": "private/internal/path.mp4",
+        "checkpoint": {"expected_file_size": len(content), "content_type": "video/mp4"},
+    }
+
+    class FailingRepository:
+        def __init__(self, supabase: object):
+            del supabase
+
+        def get_internal_for_user(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["job_id"] == job["id"]
+            assert kwargs["user_id"] == job["user_id"]
+            return job
+
+        def upload_file(self, **kwargs: Any) -> None:
+            assert kwargs["upsert"] is True
+            raise RuntimeError("synthetic storage outage")
+
+        def mark_uploaded(self, **kwargs: Any) -> None:
+            raise AssertionError("failed storage upload must not enter pending")
+
+    monkeypatch.setattr(settings, "viral_async_jobs_enabled", True)
+    monkeypatch.setattr(viral_api, "ViralJobRepository", FailingRepository)
+    monkeypatch.setattr(
+        viral_api,
+        "get_authenticated_user",
+        lambda supabase, token: {"id": job["user_id"], "email": "preview@example.invalid"},
+    )
+    with pytest.raises(viral_api.HTTPException) as captured:
+        asyncio.run(viral_api.upload_viral_job_file(
+            job_id=job["id"],
+            video_file=UploadFile(filename="synthetic.mp4", file=BytesIO(content)),
+            token="mock",
+            supabase=object(),  # type: ignore[arg-type]
+        ))
+    assert captured.value.status_code == 503
+    assert captured.value.detail == {
+        "code": "artifact_upload_failed",
+        "stage": "uploading",
+        "message": "上传暂时失败，任务已保留。",
+        "retryable": True,
+        "request_id": "request-safe",
+        "job_id": job["id"],
+    }
+    assert job["status"] == "uploading"
 
 
 def test_safe_error_redacts_secrets_and_internal_paths() -> None:

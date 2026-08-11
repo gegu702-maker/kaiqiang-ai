@@ -15,6 +15,7 @@ import {
   runUploadedViralPipeline,
   runViralPipeline,
   type ViralJobStatus,
+  type ViralJobCreateResult,
   type ViralUploadProgress,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
@@ -37,6 +38,19 @@ type ManualSubmissionCache = {
   result?: ViralAnalyzeResult;
   error?: string;
 };
+
+type PersistedViralJob = Pick<ViralJobCreateResult, "job_id" | "request_id" | "fingerprint" | "status">;
+
+function readPersistedViralJob(raw: string): PersistedViralJob | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<PersistedViralJob>;
+    return typeof parsed.job_id === "string" && typeof parsed.request_id === "string"
+      ? parsed as PersistedViralJob
+      : null;
+  } catch {
+    return raw ? { job_id: raw, request_id: "unavailable", fingerprint: "", status: "unknown" } : null;
+  }
+}
 
 export type ViralAnalyzerWorkflowState = {
   hasLink: boolean;
@@ -269,6 +283,7 @@ export function ViralAnalyzerClient({
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [uploadProgress, setUploadProgress] = useState<ViralUploadProgress | null>(null);
+  const [initiatedJob, setInitiatedJob] = useState<PersistedViralJob | null>(null);
   const [activeJob, setActiveJob] = useState<ViralJobStatus | null>(null);
   const [rewriteLength, setRewriteLength] = useState<ViralLengthMode>("match_source");
   const [result, setResult] = useState<ViralAnalyzeResult | null>(null);
@@ -340,10 +355,12 @@ export function ViralAnalyzerClient({
         if (!job.result) throw new Error("任务已完成，但安全结果字段为空。");
         setResult({ ...job.result, request_id: job.result.request_id || job.request_id });
         localStorage.removeItem(`viral-analysis-job:${supabaseProjectRef}:${userId}`);
+        setInitiatedJob(null);
         return;
       }
       if (job.status === "failed" || job.status === "cancelled") {
         localStorage.removeItem(`viral-analysis-job:${supabaseProjectRef}:${userId}`);
+        setInitiatedJob(null);
         throw new Error(
           job.status === "cancelled"
             ? "任务已取消。"
@@ -361,8 +378,10 @@ export function ViralAnalyzerClient({
       const { data } = await supabase.auth.getUser();
       const user = data.user;
       if (!user || disposed) return;
-      const jobId = localStorage.getItem(`viral-analysis-job:${supabaseProjectRef}:${user.id}`);
-      if (!jobId) return;
+      const stored = localStorage.getItem(`viral-analysis-job:${supabaseProjectRef}:${user.id}`);
+      const persisted = stored ? readPersistedViralJob(stored) : null;
+      if (!persisted) return;
+      setInitiatedJob(persisted);
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData.session?.access_token;
       if (!accessToken || disposed) return;
@@ -370,7 +389,20 @@ export function ViralAnalyzerClient({
       setLoading(true);
       setRunStage("processing");
       try {
-        await pollViralJob(jobId, accessToken, user.id, generation);
+        const recovered = await getViralJob(persisted.job_id, accessToken);
+        if (recovered.status === "uploading") {
+          setActiveJob(recovered);
+          setError([
+            "上次任务已创建，文件尚未完成上传。任务已安全保留。",
+            "code: upload_incomplete",
+            "stage: uploading",
+            `job_id: ${recovered.id}`,
+            `request_id: ${recovered.request_id}`,
+            "retryable: true",
+          ].join("\n"));
+          return;
+        }
+        await pollViralJob(persisted.job_id, accessToken, user.id, generation);
       } catch (resumeError) {
         if (!disposed) setError(resumeError instanceof Error ? resumeError.message : "任务恢复失败。");
       } finally {
@@ -525,6 +557,7 @@ export function ViralAnalyzerClient({
 
   function selectVideoFile(file: File | null) {
     setVideoFile(file);
+    setInitiatedJob(null);
     setVideoDuration(null);
     setUploadProgress(null);
     // A previously analyzed link may have been public-metadata-only. A real
@@ -643,21 +676,45 @@ export function ViralAnalyzerClient({
       if (videoFile) {
         setRunStage("uploading");
         setUploadProgress({ loaded: 0, total: videoFile.size, percent: 0, stage: "uploading" });
-        const formData = new FormData();
-        formData.set("video_file", videoFile);
-        formData.set("source_url", linkCandidate);
-        formData.set("industry", industry);
-        formData.set("language", language);
-        formData.set("rewrite_length", rewriteLength);
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) throw new Error(linkCheckCopy.loginError);
+        const storageKey = `viral-analysis-job:${supabaseProjectRef}:${data.user.id}`;
         const submission = await submitViralUploadWithExplicitFallback({
-          createJob: () => createViralJob(formData, accessToken, (progress) => {
-            setUploadProgress(progress);
-            setRunStage(progress.stage);
-          }),
-          runLegacyPipeline: () => runUploadedViralPipeline(formData, accessToken, (progress) => {
+          createJob: () => createViralJob({
+            videoFile,
+            source_url: linkCandidate,
+            industry,
+            language,
+            rewrite_length: rewriteLength,
+          }, accessToken, (progress) => {
               setUploadProgress(progress);
               setRunStage(progress.stage);
-          }),
+            }, (created) => {
+              localStorage.setItem(storageKey, JSON.stringify({
+                job_id: created.job_id,
+                request_id: created.request_id,
+                fingerprint: created.fingerprint,
+                status: created.status,
+              } satisfies PersistedViralJob));
+              setInitiatedJob({
+                job_id: created.job_id,
+                request_id: created.request_id,
+                fingerprint: created.fingerprint,
+                status: created.status,
+              });
+            }),
+          runLegacyPipeline: () => {
+            const legacyFormData = new FormData();
+            legacyFormData.set("video_file", videoFile);
+            legacyFormData.set("source_url", linkCandidate);
+            legacyFormData.set("industry", industry);
+            legacyFormData.set("language", language);
+            legacyFormData.set("rewrite_length", rewriteLength);
+            return runUploadedViralPipeline(legacyFormData, accessToken, (progress) => {
+              setUploadProgress(progress);
+              setRunStage(progress.stage);
+            });
+          },
         });
         if (submission.mode === "legacy") {
           const pipeline = submission.pipeline;
@@ -670,9 +727,12 @@ export function ViralAnalyzerClient({
           return;
         }
         const created = submission.job;
-        const { data } = await supabase.auth.getUser();
-        if (!data.user) throw new Error(linkCheckCopy.loginError);
-        localStorage.setItem(`viral-analysis-job:${supabaseProjectRef}:${data.user.id}`, created.job_id);
+        localStorage.setItem(storageKey, JSON.stringify({
+          job_id: created.job_id,
+          request_id: created.request_id,
+          fingerprint: created.fingerprint,
+          status: created.status,
+        } satisfies PersistedViralJob));
         const generation = ++pollGenerationRef.current;
         await pollViralJob(created.job_id, accessToken, data.user.id, generation);
         return;
@@ -861,6 +921,11 @@ export function ViralAnalyzerClient({
                     <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-cyan transition-[width]" style={{ width: `${uploadProgress.percent}%` }} /></div>
                     <p className="mt-1 text-xs text-cyan">{uploadProgress.stage === "uploading" ? `上传进度：${uploadProgress.percent}%` : "上传完成，后端处理中"}</p>
                   </div>
+                ) : null}
+                {initiatedJob ? (
+                  <span className="mt-2 block break-all text-xs leading-5 text-slate-400" aria-live="polite">
+                    job_id：{initiatedJob.job_id}<br />request_id：{initiatedJob.request_id}
+                  </span>
                 ) : null}
               </label>
 

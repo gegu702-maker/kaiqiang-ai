@@ -78,7 +78,7 @@ class ViralJobRepository:
         user_id: str,
         bucket: str,
         object_path: str,
-        checkpoint: dict[str, Any],
+        checkpoint: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         result = (
             self.supabase.table("viral_analysis_jobs")
@@ -89,7 +89,7 @@ class ViralJobRepository:
                     "progress": 5,
                     "input_bucket": bucket,
                     "input_object_path": object_path,
-                    "checkpoint": checkpoint,
+                    **({"checkpoint": checkpoint} if checkpoint is not None else {}),
                     "checkpoint_stage": "media_received",
                     "input_expires_at": None,
                     "purge_after": None,
@@ -113,10 +113,14 @@ class ViralJobRepository:
         user_id: str,
         bucket: str,
         object_path: str,
+        checkpoint: dict[str, Any] | None = None,
     ) -> None:
+        values: dict[str, Any] = {"input_bucket": bucket, "input_object_path": object_path}
+        if checkpoint is not None:
+            values.update({"checkpoint": checkpoint, "checkpoint_stage": "uploading"})
         result = (
             self.supabase.table("viral_analysis_jobs")
-            .update({"input_bucket": bucket, "input_object_path": object_path})
+            .update(values)
             .eq("id", job_id)
             .eq("user_id", user_id)
             .eq("status", "uploading")
@@ -176,6 +180,17 @@ class ViralJobRepository:
             self.supabase.table("viral_analysis_jobs")
             .select("*")
             .eq("id", job_id)
+            .limit(1)
+            .execute()
+        )
+        return dict(result.data[0]) if result.data else None
+
+    def get_internal_for_user(self, *, job_id: str, user_id: str) -> dict[str, Any] | None:
+        result = (
+            self.supabase.table("viral_analysis_jobs")
+            .select("*")
+            .eq("id", job_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )

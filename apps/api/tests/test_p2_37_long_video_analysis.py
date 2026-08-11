@@ -1184,14 +1184,18 @@ def test_frontend_upload_branch_sends_real_file_before_link_pipeline():
     assert upload_branch < link_branch
 
 
-def test_frontend_review_player_and_confirmation_flow_are_removed():
+def test_frontend_review_flow_is_removed_and_upload_uses_two_phase_jobs():
     source = (Path(__file__).parents[2] / "web" / "components" / "ViralAnalyzerClient.tsx").read_text(encoding="utf-8")
+    api_source = (Path(__file__).parents[2] / "web" / "lib" / "api.ts").read_text(encoding="utf-8")
 
     assert "SegmentAudioPlayer" not in source
     assert "reviewDrafts" not in source
     assert "确认此段" not in source
-    assert 'formData.set("video_file", videoFile)' in source
-    assert "runUploadedViralPipeline(formData" in source
+    assert "createViralJob({" in source
+    assert 'legacyFormData.set("video_file", videoFile)' in source
+    assert "runUploadedViralPipeline(legacyFormData" in source
+    assert 'const url = `${API_URL}/api/viral/jobs`' in api_source
+    assert 'const url = `${API_URL}${created.upload_url}`' in api_source
 
 
 def test_12_7mb_upload_reaches_video_processing(monkeypatch):

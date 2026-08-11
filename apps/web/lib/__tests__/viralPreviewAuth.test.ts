@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getViralJobFeatureDisabledMessage, ViralJobApiUnavailableError } from "../api";
+import {
+  getViralJobFeatureDisabledMessage,
+  uploadFailureFromHttp,
+  ViralJobApiUnavailableError,
+  ViralUploadError,
+} from "../api";
 import {
   getForeignSupabaseAuthStorageNames,
   getSupabaseAuthStorageKey,
@@ -204,3 +209,34 @@ test("fallback failure preserves the original feature-disabled signal", async ()
     /original feature-disabled signal[\s\S]*legacy failed/,
   );
 });
+
+for (const [status, code] of [[401, "api_unauthorized"], [403, "api_forbidden"], [404, "api_not_found"], [413, "upload_too_large"], [503, "api_server_error"]] as const) {
+  test(`upload HTTP ${status} has a distinct safe classification`, () => {
+    const failure = uploadFailureFromHttp(status, {}, {
+      stage: "uploading",
+      job_id: "00000000-0000-0000-0000-000000000123",
+      request_id: "request-safe",
+    });
+    assert.equal(failure.code, code);
+    assert.equal(failure.status, status);
+    assert.equal(failure.job_id, "00000000-0000-0000-0000-000000000123");
+    assert.equal(failure.request_id, "request-safe");
+  });
+}
+
+for (const code of ["cors_or_network_error", "client_timeout", "request_aborted"] as const) {
+  test(`${code} preserves recoverable job diagnostics`, () => {
+    const error = new ViralUploadError({
+      code,
+      stage: "uploading",
+      job_id: "00000000-0000-0000-0000-000000000123",
+      request_id: "request-safe",
+      retryable: true,
+      detail: "safe detail",
+    });
+    assert.match(error.message, new RegExp(code));
+    assert.match(error.message, /job_id: 00000000-0000-0000-0000-000000000123/);
+    assert.match(error.message, /request_id: request-safe/);
+    assert.doesNotMatch(error.message, /token|secret|object_path/i);
+  });
+}

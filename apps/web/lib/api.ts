@@ -318,7 +318,42 @@ export type ViralJobCreateResult = {
   status_url: string;
   status: string;
   reused: boolean;
+  upload_url: string;
+  upload_required: boolean;
 };
+
+export type ViralJobInitiateInput = {
+  videoFile: File;
+  source_url: string;
+  industry: string;
+  language: Locale;
+  rewrite_length: import("./types").ViralLengthMode;
+};
+
+export type ViralUploadFailure = {
+  code: string;
+  stage: "job_creation" | "uploading";
+  status?: number;
+  job_id?: string;
+  request_id?: string;
+  retryable: boolean;
+  detail: string;
+};
+
+export class ViralUploadError extends Error {
+  constructor(public readonly failure: ViralUploadFailure) {
+    super([
+      failure.detail,
+      `code: ${failure.code}`,
+      `stage: ${failure.stage}`,
+      `Status: ${failure.status || "unavailable"}`,
+      `job_id: ${failure.job_id || "unavailable"}`,
+      `request_id: ${failure.request_id || "unavailable"}`,
+      `retryable: ${failure.retryable}`,
+    ].join("\n"));
+    this.name = "ViralUploadError";
+  }
+}
 
 export type ViralJobStatus = {
   id: string;
@@ -362,12 +397,39 @@ export function getViralJobFeatureDisabledMessage(payload: unknown): string | nu
   return typeof message === "string" && message.trim() ? message.trim() : "异步任务接口明确返回未启用。";
 }
 
-export async function createViralJob(
-  formData: FormData,
+export function uploadFailureFromHttp(status: number, payload: unknown, context: Partial<ViralUploadFailure>): ViralUploadFailure {
+  const root = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  const detail = root.detail && typeof root.detail === "object" ? root.detail as Record<string, unknown> : root;
+  const code = typeof detail.code === "string"
+    ? detail.code
+    : status === 401 ? "api_unauthorized"
+      : status === 403 ? "api_forbidden"
+        : status === 404 ? "api_not_found"
+          : status === 413 ? "upload_too_large"
+            : status >= 500 ? "api_server_error" : "api_http_error";
+  return {
+    code,
+    stage: context.stage || "uploading",
+    status,
+    job_id: typeof detail.job_id === "string" ? detail.job_id : context.job_id,
+    request_id: typeof detail.request_id === "string" ? detail.request_id : context.request_id,
+    retryable: typeof detail.retryable === "boolean" ? detail.retryable : status >= 500,
+    detail: typeof detail.message === "string" ? detail.message : `异步上传请求失败（HTTP ${status}）。`,
+  };
+}
+
+export async function viralFileFingerprint(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function uploadViralJobFile(
+  created: ViralJobCreateResult,
+  videoFile: File,
   accessToken?: string,
   onProgress?: (progress: ViralUploadProgress) => void,
 ): Promise<ViralJobCreateResult> {
-  const url = `${API_URL}/api/viral/jobs`;
+  const url = `${API_URL}${created.upload_url}`;
   return new Promise<ViralJobCreateResult>((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", url);
@@ -390,21 +452,77 @@ export async function createViralJob(
         resolve(payload as ViralJobCreateResult);
         return;
       }
-      const featureDisabledMessage = getViralJobFeatureDisabledMessage(payload);
-      if (featureDisabledMessage) {
-        reject(new ViralJobApiUnavailableError(featureDisabledMessage));
-        return;
-      }
-      const detail = payload && typeof payload === "object"
-        ? stringifyDetail((payload as { detail?: unknown }).detail)
-        : request.responseText;
-      reject(new Error(detail || `异步任务创建失败（HTTP ${request.status || "unknown"}）。`));
+      reject(new ViralUploadError(uploadFailureFromHttp(request.status, payload, {
+        stage: "uploading", job_id: created.job_id, request_id: created.request_id,
+      })));
     };
-    request.onerror = () => reject(new Error("异步任务上传网络失败。"));
-    request.ontimeout = () => reject(new Error("上传在5分钟内未完成。"));
-    request.onabort = () => reject(new Error("上传已中断。"));
+    request.onerror = () => reject(new ViralUploadError({
+      code: "cors_or_network_error", stage: "uploading", job_id: created.job_id,
+      request_id: created.request_id, retryable: true,
+      detail: "浏览器未取得可读响应（CORS 拒绝或网络连接失败）；任务已保留。",
+    }));
+    request.ontimeout = () => reject(new ViralUploadError({
+      code: "client_timeout", stage: "uploading", job_id: created.job_id,
+      request_id: created.request_id, retryable: true, detail: "上传在5分钟内未完成；任务已保留。",
+    }));
+    request.onabort = () => reject(new ViralUploadError({
+      code: "request_aborted", stage: "uploading", job_id: created.job_id,
+      request_id: created.request_id, retryable: true, detail: "上传已中断；任务已保留。",
+    }));
+    const formData = new FormData();
+    formData.set("video_file", videoFile);
     request.send(formData);
   });
+}
+
+export async function createViralJob(
+  input: ViralJobInitiateInput,
+  accessToken?: string,
+  onProgress?: (progress: ViralUploadProgress) => void,
+  onInitiated?: (job: ViralJobCreateResult) => void,
+): Promise<ViralJobCreateResult> {
+  if (input.videoFile.size > 50 * 1024 * 1024) {
+    throw new ViralUploadError({
+      code: "upload_too_large", stage: "job_creation", status: 413, retryable: false,
+      detail: "上传文件超过50 MiB限制。",
+    });
+  }
+  const fingerprint = await viralFileFingerprint(input.videoFile);
+  const url = `${API_URL}/api/viral/jobs`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(accessToken) },
+      body: JSON.stringify({
+        filename: input.videoFile.name,
+        file_size: input.videoFile.size,
+        content_type: input.videoFile.type || "application/octet-stream",
+        file_fingerprint: fingerprint,
+        source_url: input.source_url,
+        industry: input.industry,
+        language: input.language,
+        rewrite_length: input.rewrite_length,
+      }),
+      cache: "no-store",
+    });
+  } catch {
+    throw new ViralUploadError({
+      code: "job_creation_network_error", stage: "job_creation", retryable: true,
+      detail: "异步任务创建请求未取得网络响应。",
+    });
+  }
+  let payload: unknown = null;
+  try { payload = await response.json(); } catch { payload = null; }
+  if (response.status !== 202 || !payload) {
+    const featureDisabledMessage = getViralJobFeatureDisabledMessage(payload);
+    if (featureDisabledMessage) throw new ViralJobApiUnavailableError(featureDisabledMessage);
+    throw new ViralUploadError(uploadFailureFromHttp(response.status, payload, { stage: "job_creation" }));
+  }
+  const created = payload as ViralJobCreateResult;
+  onInitiated?.(created);
+  if (!created.upload_required) return created;
+  return uploadViralJobFile(created, input.videoFile, accessToken, onProgress);
 }
 
 export async function getViralJob(jobId: string, accessToken?: string): Promise<ViralJobStatus> {
