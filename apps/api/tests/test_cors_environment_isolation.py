@@ -8,6 +8,7 @@ from app.core.config import Settings, _parse_cors_origins
 
 
 PREVIEW_ORIGIN = "https://p2-34-preview.vercel.app"
+STABLE_P2_37_ORIGIN = "https://kaiqiang-p2-37-preview.vercel.app"
 
 
 def _settings(environment: str, origins: str = "") -> Settings:
@@ -102,6 +103,20 @@ def test_allowed_preview_origin_receives_cors_header() -> None:
     )
     assert response.headers["access-control-allow-origin"] == PREVIEW_ORIGIN
     assert "access-control-allow-credentials" not in response.headers
+
+
+def test_stable_preview_origin_preflight_allows_diagnostic_header() -> None:
+    response = _cors_client(_settings("preview", f"{PREVIEW_ORIGIN},{STABLE_P2_37_ORIGIN}")).options(
+        "/health",
+        headers={
+            "Origin": STABLE_P2_37_ORIGIN,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "x-kaiqiang-preview-diagnostic",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == STABLE_P2_37_ORIGIN
+    assert "x-kaiqiang-preview-diagnostic" in response.headers["access-control-allow-headers"].lower()
 
 
 @pytest.mark.parametrize("origin", ["https://kaiqiang.ai", "https://unknown.example.com"])

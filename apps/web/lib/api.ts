@@ -25,6 +25,54 @@ const CLIENT_API_URL =
   (process.env.NODE_ENV === "production" ? "https://api.kaiqiang.ai" : "http://localhost:8000");
 const API_URL = typeof window === "undefined" ? process.env.SERVER_API_URL || CLIENT_API_URL : CLIENT_API_URL;
 
+export type PreviewReadiness = {
+  status: "ok" | "degraded";
+  deployment: { id: string; commit_sha: string; service: string };
+  cors: { allowed_origins: string[] };
+  async_jobs_enabled: boolean;
+  background_tasks: Record<string, "running" | "stopped">;
+};
+
+export async function getPreviewReadiness(): Promise<PreviewReadiness> {
+  const url = `${API_URL}/api/diagnostics/preview-readiness`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { "X-Kaiqiang-Preview-Diagnostic": "analyzer-readiness" },
+      cache: "no-store",
+    });
+  } catch {
+    throw new Error([
+      "Preview API 诊断请求未取得可读响应。",
+      "code: preview_diagnostic_unreachable",
+      "stage: readiness",
+      "retryable: true",
+      `endpoint: ${url}`,
+    ].join("\n"));
+  }
+  if (!response.ok) {
+    throw new Error([
+      "Preview API 当前未就绪。",
+      `code: ${response.status === 404 ? "preview_service_unavailable" : "preview_diagnostic_http_error"}`,
+      "stage: readiness",
+      `Status: ${response.status}`,
+      "retryable: true",
+      `endpoint: ${url}`,
+    ].join("\n"));
+  }
+  const payload = await response.json() as PreviewReadiness;
+  if (payload.status !== "ok" || !payload.async_jobs_enabled) {
+    throw new Error([
+      "Preview API 后台任务未就绪。",
+      "code: preview_worker_not_ready",
+      "stage: readiness",
+      "retryable: true",
+      `endpoint: ${url}`,
+    ].join("\n"));
+  }
+  return payload;
+}
+
 function readAdminApiKey(): string {
   const raw = process.env.SERVER_ADMIN_API_KEY ?? process.env.ADMIN_API_KEY ?? "";
   return raw.replace(/^ADMIN_API_KEY=/, "").trim();

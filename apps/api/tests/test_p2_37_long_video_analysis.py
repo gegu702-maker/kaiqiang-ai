@@ -1312,7 +1312,7 @@ def test_frontend_analysis_submission_has_synchronous_duplicate_gate_and_loading
     assert handler.index("analysisInFlightRef.current = true;") < handler.index("setLoading(true);")
     assert "analysisInFlightRef.current = false;" in handler
     assert handler.index("analysisInFlightRef.current = false;") < handler.index("setLoading(false);")
-    assert "disabled={loading || checking}" in component_source
+    assert 'disabled={loading || checking || (Boolean(videoFile) && previewReadiness !== "ready")}' in component_source
     assert "{loading ? loadingLabel() : t.start}" in component_source
     assert "manualSubmissionFingerprint" in component_source
     assert "client_submission_id: submissionId" in component_source

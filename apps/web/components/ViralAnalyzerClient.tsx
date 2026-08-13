@@ -12,6 +12,7 @@ import {
   checkVideoLink,
   createViralJob,
   getViralJob,
+  getPreviewReadiness,
   runUploadedViralPipeline,
   runViralPipeline,
   type ViralJobStatus,
@@ -296,6 +297,8 @@ export function ViralAnalyzerClient({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [previewReadiness, setPreviewReadiness] = useState<"checking" | "ready" | "unavailable">("checking");
+  const [previewReadinessError, setPreviewReadinessError] = useState("");
   const [runStage, setRunStage] = useState<"idle" | "checking" | "uploading" | "processing" | "pipeline" | "manual">("idle");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const analysisInFlightRef = useRef(false);
@@ -343,6 +346,22 @@ export function ViralAnalyzerClient({
       hasRewrites: Boolean(result?.rewrites?.length),
     });
   }, [linkCheck, onWorkflowStateChange, pipelineMetadata, result]);
+
+  useEffect(() => {
+    let active = true;
+    getPreviewReadiness()
+      .then(() => {
+        if (!active) return;
+        setPreviewReadiness("ready");
+        setPreviewReadinessError("");
+      })
+      .catch((readinessError: unknown) => {
+        if (!active) return;
+        setPreviewReadiness("unavailable");
+        setPreviewReadinessError(readinessError instanceof Error ? readinessError.message : "Preview API 与跨域路径不可用。");
+      });
+    return () => { active = false; };
+  }, []);
 
   const pollViralJob = useCallback(async (jobId: string, accessToken: string, userId: string, generation: number) => {
     let delayMs = 1500;
@@ -627,6 +646,10 @@ export function ViralAnalyzerClient({
 
   async function handleAnalyze() {
     if (analysisInFlightRef.current) return;
+    if (videoFile && previewReadiness !== "ready") {
+      setError(previewReadinessError || "Preview API 尚未通过浏览器跨域就绪检查，未发送任务创建请求。");
+      return;
+    }
     analysisInFlightRef.current = true;
     const sourceLooksLikeUrl = looksLikeUrl(sourceUrl);
     const scriptLooksLikeUrl = looksLikeUrl(rawScript);
@@ -995,13 +1018,25 @@ export function ViralAnalyzerClient({
                 </button>
                 <button
                   type="button"
-                  disabled={loading || checking}
+                  disabled={loading || checking || (Boolean(videoFile) && previewReadiness !== "ready")}
                   onClick={handleAnalyze}
                   className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-cyan px-5 text-sm font-semibold text-ink transition hover:bg-cyan/90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading ? <Loader2 className="animate-spin" size={18} /> : <WandSparkles size={18} />}
                   {loading ? loadingLabel() : t.start}
                 </button>
+                {videoFile ? (
+                  <p
+                    data-preview-readiness={previewReadiness}
+                    className={previewReadiness === "ready" ? "text-xs text-lime sm:col-span-2" : "whitespace-pre-wrap text-xs text-amber-100 sm:col-span-2"}
+                  >
+                    {previewReadiness === "checking"
+                      ? "正在验证 Preview API 与跨域路径…"
+                      : previewReadiness === "ready"
+                        ? "Preview API 与跨域路径已就绪。"
+                        : previewReadinessError || "Preview API 与跨域路径不可用；已阻止任务创建。"}
+                  </p>
+                ) : null}
                 {activeJob && !["succeeded", "failed", "cancelled"].includes(activeJob.status) ? (
                   <button
                     type="button"

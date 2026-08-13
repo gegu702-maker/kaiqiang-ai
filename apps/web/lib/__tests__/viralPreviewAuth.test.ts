@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  getPreviewReadiness,
   getViralJobFeatureDisabledMessage,
   uploadFailureFromHttp,
   ViralJobApiUnavailableError,
@@ -24,6 +25,45 @@ const previewRef = "a".repeat(20);
 const productionRef = "b".repeat(20);
 const previewUrl = `https://${previewRef}.supabase.co`;
 const now = 2_000_000_000;
+
+test("Preview readiness uses a safe preflight-triggering header and accepts a healthy deployment", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestHeaders: HeadersInit | undefined;
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    requestHeaders = init?.headers;
+    return new Response(JSON.stringify({
+      status: "ok",
+      deployment: { id: "safe", commit_sha: "safe", service: "preview-api" },
+      cors: { allowed_origins: ["https://kaiqiang-p2-37-preview.vercel.app"] },
+      async_jobs_enabled: true,
+      background_tasks: { "viral-job-worker": "running" },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const payload = await getPreviewReadiness();
+    assert.equal(payload.status, "ok");
+    assert.deepEqual(requestHeaders, { "X-Kaiqiang-Preview-Diagnostic": "analyzer-readiness" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Preview readiness network failure is classified without sending a job", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    requests.push(String(input));
+    throw new TypeError("Failed to fetch");
+  }) as typeof fetch;
+  try {
+    await assert.rejects(getPreviewReadiness(), /preview_diagnostic_unreachable[\s\S]*stage: readiness/);
+    assert.equal(requests.length, 1);
+    assert.match(requests[0], /\/api\/diagnostics\/preview-readiness$/);
+    assert.doesNotMatch(requests[0], /\/api\/viral\/jobs/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 function jwt(projectRef: string, exp: number, aud: string | string[] = "authenticated") {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
